@@ -1,15 +1,16 @@
+use std::{collections::HashMap, sync::atomic::Ordering};
+
+use anyhow::Error;
+use swc_common::{collections::AHashMap, Span, SyntaxContext, DUMMY_SP};
+use swc_ecma_ast::{ModuleItem, *};
+use swc_ecma_utils::{quote_ident, undefined, ExprFactory};
+use swc_ecma_visit::{noop_visit_mut_type, VisitMut, VisitMutWith};
+
 use crate::{
     bundler::{chunk::merge::Ctx, load::TransformedModule},
     modules::Modules,
     Bundler, Load, Resolve,
 };
-use anyhow::Error;
-use std::sync::atomic::Ordering;
-use swc_atoms::js_word;
-use swc_common::{Span, SyntaxContext, DUMMY_SP};
-use swc_ecma_ast::{ModuleItem, *};
-use swc_ecma_utils::{quote_ident, undefined, ExprFactory};
-use swc_ecma_visit::{noop_visit_mut_type, VisitMut, VisitMutWith};
 
 impl<L, R> Bundler<'_, L, R>
 where
@@ -66,6 +67,7 @@ where
 
         let stmt = ModuleItem::Stmt(wrap_module(
             SyntaxContext::empty(),
+            SyntaxContext::empty().apply_mark(self.unresolved_mark),
             info.local_ctxt(),
             load_var,
             module.into(),
@@ -89,14 +91,26 @@ where
 
 fn wrap_module(
     helper_ctxt: SyntaxContext,
+    unresolved_ctxt: SyntaxContext,
     local_ctxt: SyntaxContext,
     load_var: Ident,
-    dep: Module,
+    mut dep: Module,
 ) -> Stmt {
+    {
+        // Remap syntax context of `module` and `exports`
+        // Those are unresolved, but it's actually an injected variable.
+
+        let mut from = HashMap::default();
+        from.insert(("module".into(), unresolved_ctxt), local_ctxt);
+        from.insert(("exports".into(), unresolved_ctxt), local_ctxt);
+
+        dep.visit_mut_with(&mut Remapper { vars: from })
+    }
+
     // ... body of foo
     let module_fn = Expr::Fn(FnExpr {
         ident: None,
-        function: Function {
+        function: Box::new(Function {
             params: vec![
                 // module
                 Param {
@@ -134,17 +148,18 @@ fn wrap_module(
             is_async: false,
             type_params: None,
             return_type: None,
-        },
+        }),
     });
 
     // var load = __swcpack_require__.bind(void 0, moduleDecl)
-    let load_var_init = Stmt::Decl(Decl::Var(VarDecl {
+
+    Stmt::Decl(Decl::Var(Box::new(VarDecl {
         span: DUMMY_SP,
         kind: VarDeclKind::Var,
         declare: false,
         decls: vec![VarDeclarator {
             span: DUMMY_SP,
-            name: Pat::Ident(load_var.clone().into()),
+            name: Pat::Ident(load_var.into()),
             init: Some(Box::new(Expr::Call(CallExpr {
                 span: DUMMY_SP,
                 callee: Ident::new(
@@ -158,9 +173,7 @@ fn wrap_module(
             }))),
             definite: false,
         }],
-    }));
-
-    load_var_init
+    })))
 }
 
 struct RequireReplacer<'a, 'b, L, R>
@@ -184,36 +197,27 @@ where
     fn visit_mut_call_expr(&mut self, node: &mut CallExpr) {
         node.visit_mut_children_with(self);
 
-        match &node.callee {
-            ExprOrSuper::Expr(e) => {
-                match &**e {
-                    Expr::Ident(i) => {
-                        // TODO: Check for global mark
-                        if i.sym == *"require" && node.args.len() == 1 {
-                            match &*node.args[0].expr {
-                                Expr::Lit(Lit::Str(module_name)) => {
-                                    if self.bundler.is_external(&module_name.value) {
-                                        return;
-                                    }
-                                    let load = CallExpr {
-                                        span: node.span,
-                                        callee: Ident::new("load".into(), i.span).as_callee(),
-                                        args: vec![],
-                                        type_args: None,
-                                    };
-                                    self.replaced = true;
-                                    *node = load.clone();
-
-                                    tracing::trace!("Found, and replacing require");
-                                }
-                                _ => {}
-                            }
+        if let Callee::Expr(e) = &node.callee {
+            if let Expr::Ident(i) = &**e {
+                // TODO: Check for global mark
+                if i.sym == *"require" && node.args.len() == 1 {
+                    if let Expr::Lit(Lit::Str(module_name)) = &*node.args[0].expr {
+                        if self.bundler.is_external(&module_name.value) {
+                            return;
                         }
+                        let load = CallExpr {
+                            span: node.span,
+                            callee: Ident::new("load".into(), i.span).as_callee(),
+                            args: vec![],
+                            type_args: None,
+                        };
+                        self.replaced = true;
+                        *node = load;
+
+                        tracing::trace!("Found, and replacing require");
                     }
-                    _ => {}
                 }
             }
-            _ => {}
         }
     }
 
@@ -224,119 +228,119 @@ where
             return;
         }
 
-        match node {
-            ModuleItem::ModuleDecl(ModuleDecl::Import(i)) => {
-                let dep_module_id = self
-                    .base
-                    .imports
-                    .specifiers
-                    .iter()
-                    .find(|(src, _)| src.src.value == i.src.value)
-                    .map(|v| v.0.module_id);
-                let dep_module_id = match dep_module_id {
-                    Some(v) => v,
-                    _ => {
-                        return;
+        if let ModuleItem::ModuleDecl(ModuleDecl::Import(i)) = node {
+            let dep_module_id = self
+                .base
+                .imports
+                .specifiers
+                .iter()
+                .find(|(src, _)| src.src.value == i.src.value)
+                .map(|v| v.0.module_id);
+            let dep_module_id = match dep_module_id {
+                Some(v) => v,
+                _ => {
+                    return;
+                }
+            };
+            // Replace imports iff dependency is common js module.
+            let dep_module = self.bundler.scope.get_module(dep_module_id).unwrap();
+            if !self.bundler.scope.is_cjs(dep_module_id) && dep_module.is_es6 {
+                return;
+            }
+
+            let load_var = self.bundler.make_cjs_load_var(&dep_module, i.span);
+            // Replace import progress from 'progress';
+            // Side effect import
+            if i.specifiers.is_empty() {
+                self.replaced = true;
+                *node = ModuleItem::Stmt(
+                    CallExpr {
+                        span: DUMMY_SP,
+                        callee: load_var.as_callee(),
+                        args: vec![],
+                        type_args: None,
                     }
-                };
-                // Replace imports iff dependency is common js module.
-                let dep_module = self.bundler.scope.get_module(dep_module_id).unwrap();
-                if !self.bundler.scope.is_cjs(dep_module_id) && dep_module.is_es6 {
-                    return;
-                }
+                    .into_stmt(),
+                );
+                return;
+            }
 
-                let load_var = self.bundler.make_cjs_load_var(&dep_module, i.span);
-                // Replace import progress from 'progress';
-                // Side effect import
-                if i.specifiers.is_empty() {
-                    self.replaced = true;
-                    *node = ModuleItem::Stmt(
-                        CallExpr {
-                            span: DUMMY_SP,
-                            callee: load_var.clone().as_callee(),
-                            args: vec![],
-                            type_args: None,
-                        }
-                        .into_stmt(),
-                    );
-                    return;
-                }
-
-                let mut props = vec![];
-                // TODO
-                for spec in i.specifiers.clone() {
-                    match spec {
-                        ImportSpecifier::Named(s) => {
-                            if let Some(imported) = s.imported {
-                                props.push(ObjectPatProp::KeyValue(KeyValuePatProp {
-                                    key: imported.into(),
-                                    value: Box::new(s.local.into()),
-                                }));
-                            } else {
-                                props.push(ObjectPatProp::Assign(AssignPatProp {
-                                    span: s.span,
-                                    key: s.local,
-                                    value: None,
-                                }));
-                            }
-                        }
-                        ImportSpecifier::Default(s) => {
+            let mut props = vec![];
+            // TODO
+            for spec in i.specifiers.clone() {
+                match spec {
+                    ImportSpecifier::Named(s) => match s.imported {
+                        Some(ModuleExportName::Ident(imported)) => {
                             props.push(ObjectPatProp::KeyValue(KeyValuePatProp {
-                                key: PropName::Ident(Ident::new("default".into(), DUMMY_SP)),
+                                key: imported.into(),
                                 value: Box::new(s.local.into()),
                             }));
                         }
-                        ImportSpecifier::Namespace(ns) => {
-                            self.replaced = true;
-                            *node = ModuleItem::Stmt(Stmt::Decl(Decl::Var(VarDecl {
-                                span: i.span,
-                                kind: VarDeclKind::Var,
-                                declare: false,
-                                decls: vec![VarDeclarator {
-                                    span: ns.span,
-                                    name: ns.local.into(),
-                                    init: Some(Box::new(
-                                        CallExpr {
-                                            span: DUMMY_SP,
-                                            callee: load_var.clone().as_callee(),
-                                            args: vec![],
-                                            type_args: None,
-                                        }
-                                        .into(),
-                                    )),
-                                    definite: false,
-                                }],
-                            })));
-                            return;
+                        Some(ModuleExportName::Str(..)) => {
+                            unimplemented!("module string names unimplemented")
                         }
+                        _ => {
+                            props.push(ObjectPatProp::Assign(AssignPatProp {
+                                span: s.span,
+                                key: s.local,
+                                value: None,
+                            }));
+                        }
+                    },
+                    ImportSpecifier::Default(s) => {
+                        props.push(ObjectPatProp::KeyValue(KeyValuePatProp {
+                            key: PropName::Ident(Ident::new("default".into(), DUMMY_SP)),
+                            value: Box::new(s.local.into()),
+                        }));
+                    }
+                    ImportSpecifier::Namespace(ns) => {
+                        self.replaced = true;
+                        *node = ModuleItem::Stmt(Stmt::Decl(Decl::Var(Box::new(VarDecl {
+                            span: i.span,
+                            kind: VarDeclKind::Var,
+                            declare: false,
+                            decls: vec![VarDeclarator {
+                                span: ns.span,
+                                name: ns.local.into(),
+                                init: Some(Box::new(
+                                    CallExpr {
+                                        span: DUMMY_SP,
+                                        callee: load_var.as_callee(),
+                                        args: vec![],
+                                        type_args: None,
+                                    }
+                                    .into(),
+                                )),
+                                definite: false,
+                            }],
+                        }))));
+                        return;
                     }
                 }
-
-                self.replaced = true;
-                *node = ModuleItem::Stmt(Stmt::Decl(Decl::Var(VarDecl {
-                    span: i.span,
-                    kind: VarDeclKind::Var,
-                    declare: false,
-                    decls: vec![VarDeclarator {
-                        span: i.span,
-                        name: Pat::Object(ObjectPat {
-                            span: DUMMY_SP,
-                            props,
-                            optional: false,
-                            type_ann: None,
-                        }),
-                        init: Some(Box::new(Expr::Call(CallExpr {
-                            span: DUMMY_SP,
-                            callee: load_var.clone().as_callee(),
-                            type_args: None,
-                            args: vec![],
-                        }))),
-                        definite: false,
-                    }],
-                })));
-                return;
             }
-            _ => {}
+
+            self.replaced = true;
+            *node = ModuleItem::Stmt(Stmt::Decl(Decl::Var(Box::new(VarDecl {
+                span: i.span,
+                kind: VarDeclKind::Var,
+                declare: false,
+                decls: vec![VarDeclarator {
+                    span: i.span,
+                    name: Pat::Object(ObjectPat {
+                        span: DUMMY_SP,
+                        props,
+                        optional: false,
+                        type_ann: None,
+                    }),
+                    init: Some(Box::new(Expr::Call(CallExpr {
+                        span: DUMMY_SP,
+                        callee: load_var.as_callee(),
+                        type_args: None,
+                        args: vec![],
+                    }))),
+                    definite: false,
+                }],
+            }))));
         }
     }
 }
@@ -351,30 +355,31 @@ impl VisitMut for DefaultHandler {
     fn visit_mut_expr(&mut self, e: &mut Expr) {
         e.visit_mut_children_with(self);
 
-        match e {
-            Expr::Ident(i) => {
-                if i.sym == js_word!("default") {
-                    *e = Expr::Member(MemberExpr {
-                        span: i.span,
-                        obj: ExprOrSuper::Expr(Box::new(Expr::Ident(Ident::new(
-                            "module".into(),
-                            DUMMY_SP.with_ctxt(self.local_ctxt),
-                        )))),
-                        prop: Box::new(Expr::Ident(quote_ident!("exports"))),
-                        computed: false,
-                    });
-                    return;
-                }
+        if let Expr::Ident(i) = e {
+            if i.sym == "default" {
+                *e = Expr::Member(MemberExpr {
+                    span: i.span,
+                    obj: Box::new(Expr::Ident(Ident::new(
+                        "module".into(),
+                        DUMMY_SP.with_ctxt(self.local_ctxt),
+                    ))),
+                    prop: MemberProp::Ident(quote_ident!("exports")),
+                });
             }
-            _ => {}
         }
     }
+}
 
-    fn visit_mut_member_expr(&mut self, e: &mut MemberExpr) {
-        e.obj.visit_mut_with(self);
+struct Remapper {
+    vars: AHashMap<Id, SyntaxContext>,
+}
 
-        if e.computed {
-            e.prop.visit_mut_with(self);
+impl VisitMut for Remapper {
+    noop_visit_mut_type!();
+
+    fn visit_mut_ident(&mut self, i: &mut Ident) {
+        if let Some(v) = self.vars.get(&i.to_id()).copied() {
+            i.span.ctxt = v;
         }
     }
 }

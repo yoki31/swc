@@ -2,70 +2,70 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                0,
+                1,
             ),
             hi: BytePos(
-                0,
+                1,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    0,
+                    1,
                 ),
                 hi: BytePos(
-                    0,
+                    1,
                 ),
                 ctxt: #0,
             },
-            value: Atom('' type=static),
+            value: "",
         },
         tags: [
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        0,
+                        1,
                     ),
                     hi: BytePos(
-                        3,
+                        4,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            0,
+                            1,
                         ),
                         hi: BytePos(
-                            3,
+                            4,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('see' type=inline),
+                    value: "see",
                 },
                 tag: See(
                     SeeTag {
                         span: Span {
                             lo: BytePos(
-                                0,
+                                1,
                             ),
                             hi: BytePos(
-                                3,
+                                4,
                             ),
                             ctxt: #0,
                         },
                         text: Text {
                             span: Span {
                                 lo: BytePos(
-                                    0,
+                                    1,
                                 ),
                                 hi: BytePos(
-                                    11,
+                                    12,
                                 ),
                                 ctxt: #0,
                             },
-                            value: Atom('{@link bar}' type=dynamic),
+                            value: "{@link bar}",
                         },
                     },
                 ),
@@ -75,70 +75,70 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                47,
+                48,
             ),
             hi: BytePos(
-                47,
+                48,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    47,
+                    48,
                 ),
                 hi: BytePos(
-                    47,
+                    48,
                 ),
                 ctxt: #0,
             },
-            value: Atom('' type=static),
+            value: "",
         },
         tags: [
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        47,
+                        48,
                     ),
                     hi: BytePos(
-                        50,
+                        51,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            47,
+                            48,
                         ),
                         hi: BytePos(
-                            50,
+                            51,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('see' type=inline),
+                    value: "see",
                 },
                 tag: See(
                     SeeTag {
                         span: Span {
                             lo: BytePos(
-                                47,
+                                48,
                             ),
                             hi: BytePos(
-                                50,
+                                51,
                             ),
                             ctxt: #0,
                         },
                         text: Text {
                             span: Span {
                                 lo: BytePos(
-                                    47,
+                                    48,
                                 ),
                                 hi: BytePos(
-                                    73,
+                                    74,
                                 ),
                                 ctxt: #0,
                             },
-                            value: Atom('http://example.com/someref' type=dynamic),
+                            value: "http://example.com/someref",
                         },
                     },
                 ),

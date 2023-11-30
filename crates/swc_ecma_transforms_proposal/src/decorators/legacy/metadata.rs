@@ -1,37 +1,41 @@
-use super::EnumKind;
-use swc_atoms::js_word;
-use swc_common::{collections::AHashMap, util::move_map::MoveMap, Spanned, DUMMY_SP};
+use std::ops::Deref;
+
+use swc_atoms::JsWord;
+use swc_common::{
+    collections::AHashMap,
+    util::{move_map::MoveMap, take::Take},
+    Spanned, DUMMY_SP,
+};
 use swc_ecma_ast::*;
-use swc_ecma_utils::{ident::IdentLike, member_expr, quote_ident, undefined, ExprFactory, Id};
-use swc_ecma_visit::{noop_fold_type, Fold, FoldWith};
+use swc_ecma_transforms_base::helper;
+use swc_ecma_utils::{quote_ident, undefined, ExprFactory};
+use swc_ecma_visit::{VisitMut, VisitMutWith};
+
+use super::EnumKind;
 
 /// https://github.com/leonardfactory/babel-plugin-transform-typescript-metadata/blob/master/src/parameter/parameterVisitor.ts
 pub(super) struct ParamMetadata;
 
-/// TODO: VisitMut
-impl Fold for ParamMetadata {
-    noop_fold_type!();
+impl VisitMut for ParamMetadata {
+    fn visit_mut_class(&mut self, cls: &mut Class) {
+        cls.visit_mut_children_with(self);
 
-    fn fold_class(&mut self, mut cls: Class) -> Class {
-        cls = cls.fold_children_with(self);
-        let mut decorators = cls.decorators;
+        let mut decorators = cls.decorators.take();
 
-        cls.body = cls.body.move_map(|m| match m {
+        cls.body = cls.body.take().move_map(|m| match m {
             ClassMember::Constructor(mut c) => {
                 for (idx, param) in c.params.iter_mut().enumerate() {
                     //
                     match param {
                         ParamOrTsParamProp::TsParamProp(p) => {
                             for decorator in p.decorators.drain(..) {
-                                let new_dec =
-                                    self.create_param_decorator(idx, decorator.expr, true);
+                                let new_dec = self.create_param_decorator(idx, decorator.expr);
                                 decorators.push(new_dec);
                             }
                         }
                         ParamOrTsParamProp::Param(param) => {
                             for decorator in param.decorators.drain(..) {
-                                let new_dec =
-                                    self.create_param_decorator(idx, decorator.expr, true);
+                                let new_dec = self.create_param_decorator(idx, decorator.expr);
                                 decorators.push(new_dec);
                             }
                         }
@@ -43,98 +47,71 @@ impl Fold for ParamMetadata {
             _ => m,
         });
         cls.decorators = decorators;
-
-        cls
     }
 
-    fn fold_class_method(&mut self, mut m: ClassMethod) -> ClassMethod {
+    fn visit_mut_class_method(&mut self, m: &mut ClassMethod) {
         for (idx, param) in m.function.params.iter_mut().enumerate() {
             for decorator in param.decorators.drain(..) {
-                let new_dec = self.create_param_decorator(idx, decorator.expr, false);
+                let new_dec = self.create_param_decorator(idx, decorator.expr);
                 m.function.decorators.push(new_dec);
             }
         }
-
-        m
     }
 }
 
 impl ParamMetadata {
-    fn create_param_decorator(
-        &self,
-        param_index: usize,
-        decorator_expr: Box<Expr>,
-        is_constructor: bool,
-    ) -> Decorator {
+    fn create_param_decorator(&self, param_index: usize, decorator_expr: Box<Expr>) -> Decorator {
         Decorator {
             span: DUMMY_SP,
-            expr: Box::new(Expr::Fn(FnExpr {
-                ident: None,
-                function: Function {
-                    params: vec![
-                        Param {
-                            span: DUMMY_SP,
-                            decorators: Default::default(),
-                            pat: Pat::Ident(quote_ident!("target").into()),
-                        },
-                        Param {
-                            span: DUMMY_SP,
-                            decorators: Default::default(),
-                            pat: Pat::Ident(quote_ident!("key").into()),
-                        },
-                    ],
-                    body: Some(BlockStmt {
-                        span: DUMMY_SP,
-                        stmts: vec![Stmt::Return(ReturnStmt {
-                            span: DUMMY_SP,
-                            arg: Some(Box::new(Expr::Call(CallExpr {
-                                span: DUMMY_SP,
-                                callee: decorator_expr.as_callee(),
-                                args: vec![
-                                    quote_ident!("target").as_arg(),
-                                    if is_constructor {
-                                        quote_ident!("undefined").as_arg()
-                                    } else {
-                                        quote_ident!("key").as_arg()
-                                    },
-                                    Lit::Num(Number {
-                                        span: DUMMY_SP,
-                                        value: param_index as _,
-                                    })
-                                    .as_arg(),
-                                ],
-                                type_args: Default::default(),
-                            }))),
-                        })],
-                    }),
-                    decorators: Default::default(),
-                    span: Default::default(),
-                    is_generator: Default::default(),
-                    is_async: Default::default(),
-                    type_params: Default::default(),
-                    return_type: Default::default(),
-                },
+            expr: Box::new(Expr::Call(CallExpr {
+                span: decorator_expr.span(),
+                callee: helper!(ts, ts_param),
+                args: vec![param_index.as_arg(), decorator_expr.as_arg()],
+                type_args: Default::default(),
             })),
         }
     }
 }
 
+type EnumMapType = AHashMap<JsWord, EnumKind>;
+
+pub(super) struct EnumMap<'a>(&'a EnumMapType);
+
+impl Deref for EnumMap<'_> {
+    type Target = EnumMapType;
+
+    fn deref(&self) -> &Self::Target {
+        self.0
+    }
+}
+
+impl EnumMap<'_> {
+    fn get_kind_as_str(&self, param: Option<&TsTypeAnn>) -> Option<&'static str> {
+        param
+            .and_then(|t| t.type_ann.as_ts_type_ref())
+            .and_then(|t| t.type_name.as_ident())
+            .and_then(|t| self.get(&t.sym))
+            .map(|kind| match kind {
+                EnumKind::Mixed => "Object",
+                EnumKind::Str => "String",
+                EnumKind::Num => "Number",
+            })
+    }
+}
+
 /// https://github.com/leonardfactory/babel-plugin-transform-typescript-metadata/blob/master/src/metadata/metadataVisitor.ts
 pub(super) struct Metadata<'a> {
-    pub(super) enums: &'a AHashMap<Id, EnumKind>,
+    pub(super) enums: EnumMap<'a>,
 
     pub(super) class_name: Option<&'a Ident>,
 }
 
-/// TODO: VisitMut
-impl Fold for Metadata<'_> {
-    noop_fold_type!();
-
-    fn fold_class(&mut self, mut c: Class) -> Class {
-        c = c.fold_children_with(self);
+impl VisitMut for Metadata<'_> {
+    fn visit_mut_class(&mut self, c: &mut Class) {
+        c.visit_mut_children_with(self);
 
         if c.decorators.is_empty() {
-            return c;
+            return;
         }
 
         let constructor = c.body.iter().find_map(|m| match m {
@@ -142,7 +119,7 @@ impl Fold for Metadata<'_> {
             _ => None,
         });
         if constructor.is_none() {
-            return c;
+            return;
         }
 
         {
@@ -163,7 +140,7 @@ impl Fold for Metadata<'_> {
                         .map(|v| match v {
                             ParamOrTsParamProp::TsParamProp(p) => {
                                 let ann = match &p.param {
-                                    TsParamPropParam::Ident(i) => i.type_ann.as_ref(),
+                                    TsParamPropParam::Ident(i) => i.type_ann.as_deref(),
                                     TsParamPropParam::Assign(a) => get_type_ann_of_pat(&a.left),
                                 };
                                 Some(serialize_type(self.class_name, ann).as_arg())
@@ -179,12 +156,11 @@ impl Fold for Metadata<'_> {
             );
             c.decorators.push(dec);
         }
-        c
     }
 
-    fn fold_class_method(&mut self, mut m: ClassMethod) -> ClassMethod {
+    fn visit_mut_class_method(&mut self, m: &mut ClassMethod) {
         if m.function.decorators.is_empty() {
-            return m;
+            return;
         }
 
         {
@@ -213,120 +189,108 @@ impl Fold for Metadata<'_> {
             );
             m.function.decorators.push(dec);
         }
-        m
+        {
+            // Copy tsc behaviour
+            // https://github.com/microsoft/TypeScript/blob/5e8c261b6ab746213f19ee3501eb8c48a6215dd7/src/compiler/transformers/typeSerializer.ts#L242
+            let dec = self.create_metadata_design_decorator(
+                "design:returntype",
+                if m.function.is_async {
+                    quote_ident!("Promise").as_arg()
+                } else {
+                    let return_type = m.function.return_type.as_deref();
+
+                    if let Some(kind) = self.enums.get_kind_as_str(return_type) {
+                        quote_ident!(kind).as_arg()
+                    } else {
+                        serialize_type(self.class_name, return_type).as_arg()
+                    }
+                },
+            );
+            m.function.decorators.push(dec);
+        }
     }
 
-    fn fold_class_prop(&mut self, mut p: ClassProp) -> ClassProp {
-        if p.decorators.is_empty() {
-            return p;
+    fn visit_mut_class_prop(&mut self, p: &mut ClassProp) {
+        if p.decorators.is_empty() || p.type_ann.is_none() {
+            return;
         }
 
-        if p.type_ann.is_none() {
-            return p;
-        }
+        let dec = self.create_metadata_design_decorator("design:type", {
+            let prop_type = p.type_ann.as_deref();
 
-        if let Some(name) = p
-            .type_ann
-            .as_ref()
-            .map(|ty| &ty.type_ann)
-            .map(|type_ann| match &**type_ann {
-                TsType::TsTypeRef(r) => Some(r),
-                _ => None,
-            })
-            .flatten()
-            .map(|r| match &r.type_name {
-                TsEntityName::TsQualifiedName(_) => None,
-                TsEntityName::Ident(i) => Some(i),
-            })
-            .flatten()
-        {
-            if let Some(kind) = self.enums.get(&name.to_id()) {
-                let dec = self.create_metadata_design_decorator(
-                    "design:type",
-                    match kind {
-                        EnumKind::Mixed => quote_ident!("Object").as_arg(),
-                        EnumKind::Str => quote_ident!("String").as_arg(),
-                        EnumKind::Num => quote_ident!("Number").as_arg(),
-                    },
-                );
-                p.decorators.push(dec);
-                return p;
+            if let Some(kind) = self.enums.get_kind_as_str(prop_type) {
+                quote_ident!(kind).as_arg()
+            } else {
+                serialize_type(self.class_name, prop_type).as_arg()
             }
-        }
-
-        let dec = self.create_metadata_design_decorator(
-            "design:type",
-            serialize_type(self.class_name, p.type_ann.as_ref()).as_arg(),
-        );
+        });
         p.decorators.push(dec);
-
-        p
     }
 }
 
-impl Metadata<'_> {
+impl<'a> Metadata<'a> {
+    pub(super) fn new(enums: &'a EnumMapType, class_name: Option<&'a Ident>) -> Self {
+        Self {
+            enums: EnumMap(enums),
+            class_name,
+        }
+    }
+
     fn create_metadata_design_decorator(&self, design: &str, type_arg: ExprOrSpread) -> Decorator {
         Decorator {
             span: DUMMY_SP,
-            expr: Box::new(Expr::Bin(BinExpr {
+            expr: Box::new(Expr::Call(CallExpr {
                 span: DUMMY_SP,
-                left: Box::new(Expr::Bin(BinExpr {
-                    span: DUMMY_SP,
-                    left: Box::new(Expr::Bin(BinExpr {
-                        span: DUMMY_SP,
-                        left: Box::new(Expr::Unary(UnaryExpr {
-                            span: DUMMY_SP,
-                            op: op!("typeof"),
-                            arg: Box::new(Expr::Ident(quote_ident!("Reflect"))),
-                        })),
-                        op: op!("!=="),
-                        right: Box::new(Expr::Lit(Lit::Str(Str {
-                            span: DUMMY_SP,
-                            value: "undefined".into(),
-                            has_escape: false,
-                            kind: Default::default(),
-                        }))),
-                    })),
-                    op: op!("&&"),
-                    right: Box::new(Expr::Bin(BinExpr {
-                        span: DUMMY_SP,
-                        left: Box::new(Expr::Unary(UnaryExpr {
-                            span: DUMMY_SP,
-                            op: op!("typeof"),
-                            arg: member_expr!(DUMMY_SP, Reflect.metadata),
-                        })),
-                        op: op!("==="),
-                        right: Box::new(Expr::Lit(Lit::Str(Str {
-                            span: DUMMY_SP,
-                            value: "function".into(),
-                            has_escape: false,
-                            kind: Default::default(),
-                        }))),
-                    })),
-                })),
-                op: op!("&&"),
-                right: Box::new(Expr::Call(CallExpr {
-                    span: DUMMY_SP,
-                    callee: member_expr!(DUMMY_SP, Reflect.metadata).as_callee(),
-                    args: vec![
-                        Str {
-                            span: DUMMY_SP,
-                            value: design.into(),
-                            has_escape: false,
-                            kind: Default::default(),
-                        }
-                        .as_arg(),
-                        type_arg,
-                    ],
-
-                    type_args: Default::default(),
-                })),
+                callee: helper!(ts, ts_metadata),
+                args: vec![design.as_arg(), type_arg],
+                type_args: Default::default(),
             })),
         }
     }
 }
 
 fn serialize_type(class_name: Option<&Ident>, param: Option<&TsTypeAnn>) -> Expr {
+    fn check_object_existed(expr: Box<Expr>) -> Box<Expr> {
+        match *expr {
+            Expr::Member(ref member_expr) => {
+                let obj_expr = member_expr.obj.clone();
+                Box::new(Expr::Bin(BinExpr {
+                    span: DUMMY_SP,
+                    left: check_object_existed(obj_expr),
+                    op: op!("||"),
+                    right: Box::new(Expr::Bin(BinExpr {
+                        span: DUMMY_SP,
+                        left: Box::new(Expr::Unary(UnaryExpr {
+                            span: DUMMY_SP,
+                            op: op!("typeof"),
+                            arg: expr,
+                        })),
+                        op: op!("==="),
+                        right: Box::new(Expr::Lit(Lit::Str(Str {
+                            span: DUMMY_SP,
+                            value: "undefined".into(),
+                            raw: None,
+                        }))),
+                    })),
+                }))
+            }
+            _ => Box::new(Expr::Bin(BinExpr {
+                span: DUMMY_SP,
+                left: Box::new(Expr::Unary(UnaryExpr {
+                    span: DUMMY_SP,
+                    op: op!("typeof"),
+                    arg: expr,
+                })),
+                op: op!("==="),
+                right: Box::new(Expr::Lit(Lit::Str(Str {
+                    span: DUMMY_SP,
+                    value: "undefined".into(),
+                    raw: None,
+                }))),
+            })),
+        }
+    }
+
     fn serialize_type_ref(class_name: &str, ty: &TsTypeRef) -> Expr {
         match &ty.type_name {
             // We should omit references to self (class) since it will throw a ReferenceError at
@@ -338,52 +302,6 @@ fn serialize_type(class_name: Option<&Ident>, param: Option<&TsTypeAnn>) -> Expr
         }
 
         let member_expr = ts_entity_to_member_expr(&ty.type_name);
-
-        fn check_object_existed(expr: Box<Expr>) -> Box<Expr> {
-            match *expr {
-                Expr::Member(ref member_expr) => {
-                    let obj_expr = match member_expr.obj {
-                        ExprOrSuper::Expr(ref exp) => exp.clone(),
-                        ExprOrSuper::Super(_) => panic!("Unreachable code path"),
-                    };
-                    Box::new(Expr::Bin(BinExpr {
-                        span: DUMMY_SP,
-                        left: check_object_existed(obj_expr),
-                        op: op!("||"),
-                        right: Box::new(Expr::Bin(BinExpr {
-                            span: DUMMY_SP,
-                            left: Box::new(Expr::Unary(UnaryExpr {
-                                span: DUMMY_SP,
-                                op: op!("typeof"),
-                                arg: expr.clone(),
-                            })),
-                            op: op!("==="),
-                            right: Box::new(Expr::Lit(Lit::Str(Str {
-                                span: DUMMY_SP,
-                                value: "undefined".into(),
-                                has_escape: false,
-                                kind: Default::default(),
-                            }))),
-                        })),
-                    }))
-                }
-                _ => Box::new(Expr::Bin(BinExpr {
-                    span: DUMMY_SP,
-                    left: Box::new(Expr::Unary(UnaryExpr {
-                        span: DUMMY_SP,
-                        op: op!("typeof"),
-                        arg: expr.clone(),
-                    })),
-                    op: op!("==="),
-                    right: Box::new(Expr::Lit(Lit::Str(Str {
-                        span: DUMMY_SP,
-                        value: "undefined".into(),
-                        has_escape: false,
-                        kind: Default::default(),
-                    }))),
-                })),
-            }
-        }
 
         // We don't know if type is just a type (interface, etc.) or a concrete value
         // (class, etc.)
@@ -401,14 +319,12 @@ fn serialize_type(class_name: Option<&Ident>, param: Option<&TsTypeAnn>) -> Expr
 
     fn serialize_type_list(class_name: &str, types: &[Box<TsType>]) -> Expr {
         let mut u = None;
-
         for ty in types {
             // Skip parens if need be
             let ty = match &**ty {
                 TsType::TsParenthesizedType(ty) => &ty.type_ann,
                 _ => ty,
             };
-
             match &**ty {
                 // Always elide `never` from the union/intersection if possible
                 TsType::TsKeywordType(TsKeywordType {
@@ -428,21 +344,17 @@ fn serialize_type(class_name: Option<&Ident>, param: Option<&TsTypeAnn>) -> Expr
                     kind: TsKeywordTypeKind::TsUndefinedKeyword,
                     ..
                 }) => {
-                    continue;
+                    return quote_ident!("Object").into();
                 }
 
                 _ => {}
             }
 
-            let item = serialize_type_node(class_name, &ty);
+            let item = serialize_type_node(class_name, ty);
 
             // One of the individual is global object, return immediately
-            match item {
-                Expr::Ident(Ident {
-                    sym: js_word!("Object"),
-                    ..
-                }) => return item,
-                _ => {}
+            if item.is_ident_ref_to("Object") {
+                return item;
             }
 
             // If there exists union that is not void 0 expression, check if the
@@ -469,7 +381,10 @@ fn serialize_type(class_name: Option<&Ident>, param: Option<&TsTypeAnn>) -> Expr
             }
         }
 
-        *undefined(DUMMY_SP)
+        match u {
+            Some(i) => i,
+            _ => quote_ident!("Object").into(),
+        }
     }
 
     fn serialize_type_node(class_name: &str, ty: &TsType) -> Expr {
@@ -490,9 +405,9 @@ fn serialize_type(class_name: Option<&Ident>, param: Option<&TsTypeAnn>) -> Expr
             | TsType::TsKeywordType(TsKeywordType {
                 kind: TsKeywordTypeKind::TsNeverKeyword,
                 ..
-            }) => return *undefined(span),
+            }) => *undefined(span),
 
-            TsType::TsParenthesizedType(ty) => serialize_type_node(class_name, &*ty.type_ann),
+            TsType::TsParenthesizedType(ty) => serialize_type_node(class_name, &ty.type_ann),
 
             TsType::TsFnOrConstructorType(_) => quote_ident!("Function").into(),
 
@@ -522,11 +437,17 @@ fn serialize_type(class_name: Option<&Ident>, param: Option<&TsTypeAnn>) -> Expr
             | TsType::TsKeywordType(TsKeywordType {
                 kind: TsKeywordTypeKind::TsNumberKeyword,
                 ..
-            })
-            | TsType::TsKeywordType(TsKeywordType {
+            }) => quote_ident!("Number").into(),
+
+            TsType::TsKeywordType(TsKeywordType {
                 kind: TsKeywordTypeKind::TsBigIntKeyword,
                 ..
-            }) => quote_ident!("Number").into(),
+            }) => Expr::Cond(CondExpr {
+                span: DUMMY_SP,
+                test: check_object_existed(quote_ident!("BigInt").into()),
+                cons: quote_ident!("Object").into(),
+                alt: quote_ident!("BigInt").into(),
+            }),
 
             TsType::TsLitType(ty) => {
                 // TODO: Proper error reporting
@@ -577,7 +498,7 @@ fn serialize_type(class_name: Option<&Ident>, param: Option<&TsTypeAnn>) -> Expr
         None => return *undefined(DUMMY_SP),
     };
 
-    serialize_type_node(class_name.map(|v| &*v.sym).unwrap_or(""), &**param)
+    serialize_type_node(class_name.map(|v| &*v.sym).unwrap_or(""), param)
 }
 
 fn ts_entity_to_member_expr(type_name: &TsEntityName) -> Expr {
@@ -587,9 +508,8 @@ fn ts_entity_to_member_expr(type_name: &TsEntityName) -> Expr {
 
             Expr::Member(MemberExpr {
                 span: DUMMY_SP,
-                obj: obj.as_obj(),
-                prop: Box::new(Expr::Ident(q.right.clone())),
-                computed: false,
+                obj: obj.into(),
+                prop: MemberProp::Ident(q.right.clone()),
             })
         }
         TsEntityName::Ident(i) => Expr::Ident(i.clone()),
@@ -598,23 +518,22 @@ fn ts_entity_to_member_expr(type_name: &TsEntityName) -> Expr {
 
 fn get_type_ann_of_pat(p: &Pat) -> Option<&TsTypeAnn> {
     match p {
-        Pat::Ident(p) => &p.type_ann,
-        Pat::Array(p) => &p.type_ann,
-        Pat::Rest(p) => &p.type_ann,
-        Pat::Object(p) => &p.type_ann,
+        Pat::Ident(p) => p.type_ann.as_deref(),
+        Pat::Array(p) => p.type_ann.as_deref(),
+        Pat::Rest(p) => p.type_ann.as_deref(),
+        Pat::Object(p) => p.type_ann.as_deref(),
         Pat::Assign(p) => {
-            return p.type_ann.as_ref().or_else(|| get_type_ann_of_pat(&p.left));
+            return get_type_ann_of_pat(&p.left);
         }
-        Pat::Invalid(_) => return None,
-        Pat::Expr(_) => return None,
+        Pat::Invalid(_) => None,
+        Pat::Expr(_) => None,
     }
-    .as_ref()
 }
 
 fn is_str(ty: &TsType) -> bool {
     match ty {
         TsType::TsLitType(TsLitType {
-            lit: TsLit::Str(..),
+            lit: TsLit::Str(..) | TsLit::Tpl(..),
             ..
         })
         | TsType::TsKeywordType(TsKeywordType {

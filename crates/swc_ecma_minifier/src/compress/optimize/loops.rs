@@ -1,16 +1,11 @@
-use crate::{
-    compress::optimize::{unused::UnreachableHandler, Optimizer},
-    mode::Mode,
-};
 use swc_common::{util::take::Take, DUMMY_SP};
 use swc_ecma_ast::*;
 use swc_ecma_utils::{ExprExt, Value::Known};
 
+use crate::compress::{optimize::Optimizer, util::UnreachableHandler};
+
 /// Methods related to the option `loops`.
-impl<M> Optimizer<'_, M>
-where
-    M: Mode,
-{
+impl Optimizer<'_> {
     /// `for(a;b;c;) break;` => `a;b;`
     pub(super) fn optimize_loops_with_break(&mut self, s: &mut Stmt) {
         if !self.options.loops {
@@ -24,26 +19,13 @@ where
         };
 
         // We only care about instant breaks.
-        match &*f.body {
-            Stmt::Break(BreakStmt { label: None, .. }) => {}
-            Stmt::Break(BreakStmt {
-                label: Some(label), ..
-            }) => {
-                if let Some(closest_label) = self.label.clone() {
-                    if closest_label.0 != label.sym {
-                        return;
-                    }
-                } else {
-                    return;
-                }
-            }
-            _ => {
-                return;
-            }
-        }
+        let label = match &mut *f.body {
+            Stmt::Break(b) => b.label.take(),
+            _ => return,
+        };
 
         self.changed = true;
-        tracing::debug!("loops: Removing a for loop with instant break");
+        report_change!("loops: Removing a for loop with instant break");
         self.prepend_stmts
             .extend(f.init.take().map(|init| match init {
                 VarDeclOrExpr::VarDecl(var) => Stmt::Decl(Decl::Var(var)),
@@ -58,6 +40,13 @@ where
                 expr,
             })
         }));
+        if label.is_some() {
+            self.prepend_stmts.push(Stmt::Break(BreakStmt {
+                span: DUMMY_SP,
+                label,
+            }));
+        }
+
         *s = Stmt::Empty(EmptyStmt { span: DUMMY_SP })
     }
 
@@ -70,13 +59,13 @@ where
 
         match stmt {
             Stmt::While(w) => {
-                let (purity, val) = w.test.as_bool();
+                let (purity, val) = w.test.cast_to_bool(&self.expr_ctx);
                 if let Known(false) = val {
                     if purity.is_pure() {
                         let changed = UnreachableHandler::preserve_vars(stmt);
                         self.changed |= changed;
                         if changed {
-                            tracing::debug!(
+                            report_change!(
                                 "loops: Removing unreachable while statement without side effects"
                             );
                         }
@@ -84,21 +73,19 @@ where
                         let changed = UnreachableHandler::preserve_vars(&mut w.body);
                         self.changed |= changed;
                         if changed {
-                            tracing::debug!(
-                                "loops: Removing unreachable body of a while statement"
-                            );
+                            report_change!("loops: Removing unreachable body of a while statement");
                         }
                     }
                 }
             }
             Stmt::For(f) => {
                 if let Some(test) = &mut f.test {
-                    let (purity, val) = test.as_bool();
+                    let (purity, val) = test.cast_to_bool(&self.expr_ctx);
                     if let Known(false) = val {
                         let changed = UnreachableHandler::preserve_vars(&mut f.body);
                         self.changed |= changed;
                         if changed {
-                            tracing::debug!("loops: Removing unreachable body of a for statement");
+                            report_change!("loops: Removing unreachable body of a for statement");
                         }
                         self.changed |= f.init.is_some() | f.update.is_some();
 
@@ -116,12 +103,11 @@ where
                         }));
                         f.update = None;
                         *stmt = *f.body.take();
-                        return;
                     } else if let Known(true) = val {
                         if purity.is_pure() {
                             self.changed = true;
-                            tracing::debug!(
-                                "loops: Remving `test` part of a for stmt as it's always true"
+                            report_change!(
+                                "loops: Removing `test` part of a for stmt as it's always true"
                             );
                             f.test = None;
                         }
@@ -129,12 +115,6 @@ where
                 }
             }
             _ => {}
-        }
-    }
-
-    pub(super) fn drop_if_break(&mut self, _s: &ForStmt) {
-        if !self.options.loops {
-            return;
         }
     }
 
@@ -149,14 +129,13 @@ where
             Some(init) => match init {
                 VarDeclOrExpr::VarDecl(_) => {}
                 VarDeclOrExpr::Expr(init) => {
-                    let new = self.ignore_return_value(&mut **init);
+                    let new = self.ignore_return_value(init);
                     if let Some(new) = new {
                         *init = Box::new(new);
-                        return;
                     } else {
                         s.init = None;
                         self.changed = true;
-                        tracing::debug!(
+                        report_change!(
                             "loops: Removed side-effect-free expressions in `init` of a for stmt"
                         );
                     }

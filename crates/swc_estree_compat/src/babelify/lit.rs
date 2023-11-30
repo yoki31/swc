@@ -1,11 +1,11 @@
-use crate::babelify::{Babelify, Context};
+use serde::{Deserialize, Serialize};
+use swc_ecma_ast::{BigInt, Bool, Lit, Null, Number, Regex, Str};
 use swc_estree_ast::{
     BigIntLiteral, BooleanLiteral, JSXText as BabelJSXText, Literal, NullLiteral, NumericLiteral,
     RegExpLiteral, StringLiteral,
 };
 
-use serde::{Deserialize, Serialize};
-use swc_ecma_ast::{BigInt, Bool, Lit, Null, Number, Regex, Str};
+use crate::babelify::{Babelify, Context};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum LitOutput {
@@ -36,6 +36,11 @@ impl Babelify for Str {
         StringLiteral {
             base: ctx.base(self.span),
             value: self.value,
+            // TODO improve me
+            raw: match self.raw {
+                Some(value) => value,
+                _ => "".into(),
+            },
         }
     }
 }
@@ -79,6 +84,11 @@ impl Babelify for BigInt {
         BigIntLiteral {
             base: ctx.base(self.span),
             value: self.value.to_string(),
+            // TODO improve me
+            raw: match self.raw {
+                Some(value) => value,
+                _ => "".into(),
+            },
         }
     }
 }

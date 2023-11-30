@@ -5,6 +5,6 @@ function* gen(i) {
     console.log(result);
     yield 2;
 }
-var x1 = gen(1);
-console.log(x1.next("first").value);
-console.log(x1.next("second").value);
+var x = gen(1);
+console.log(x.next("first").value);
+console.log(x.next("second").value);

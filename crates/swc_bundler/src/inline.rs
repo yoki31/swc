@@ -1,9 +1,11 @@
-use crate::{id::Id, modules::Modules, util::Readonly};
 use swc_common::{collections::AHashMap, SyntaxContext, DUMMY_SP};
 use swc_ecma_ast::*;
 use swc_ecma_visit::{
-    noop_visit_mut_type, noop_visit_type, Node, Visit, VisitMut, VisitMutWith, VisitWith,
+    noop_visit_mut_type, noop_visit_type, visit_mut_obj_and_computed, Visit, VisitMut,
+    VisitMutWith, VisitWith,
 };
+
+use crate::{id::Id, modules::Modules, util::Readonly};
 
 #[derive(Debug, Default)]
 pub(crate) struct InlineData {
@@ -27,10 +29,7 @@ pub(crate) fn inline(injected_ctxt: SyntaxContext, module: &mut Modules) {
 
     let mut v = Inliner { data: data.into() };
     module.par_visit_mut_with(&mut v);
-    module.retain_mut(|_, s| match s {
-        ModuleItem::Stmt(Stmt::Empty(..)) => false,
-        _ => true,
-    });
+    module.retain_mut(|_, s| !matches!(s, ModuleItem::Stmt(Stmt::Empty(..))));
 }
 
 #[derive(Debug)]
@@ -60,15 +59,15 @@ impl Visit for Analyzer<'_> {
     noop_visit_type!();
 
     /// Noop
-    fn visit_module_decl(&mut self, _: &ModuleDecl, _: &dyn Node) {}
+    fn visit_module_decl(&mut self, _: &ModuleDecl) {}
 
     /// Noop. We don't inline variables declared in subscopes.
-    fn visit_function(&mut self, _: &Function, _: &dyn Node) {}
+    fn visit_function(&mut self, _: &Function) {}
 
     /// Noop. We don't inline variables declared in subscopes.
-    fn visit_block_stmt(&mut self, _: &BlockStmt, _: &dyn Node) {}
+    fn visit_block_stmt(&mut self, _: &BlockStmt) {}
 
-    fn visit_var_decl(&mut self, n: &VarDecl, _: &dyn Node) {
+    fn visit_var_decl(&mut self, n: &VarDecl) {
         if n.span.ctxt != self.injected_ctxt || n.kind != VarDeclKind::Const {
             return;
         }
@@ -76,19 +75,18 @@ impl Visit for Analyzer<'_> {
         n.visit_children_with(self);
     }
 
-    fn visit_var_declarator(&mut self, n: &VarDeclarator, _: &dyn Node) {
+    fn visit_var_declarator(&mut self, n: &VarDeclarator) {
         n.visit_children_with(self);
-        match (&n.name, n.init.as_deref()) {
-            (Pat::Ident(from), Some(Expr::Ident(to))) => {
-                self.store(from.id.clone().into(), to.into());
-            }
-            _ => {}
+        if let (Pat::Ident(from), Some(Expr::Ident(to))) = (&n.name, n.init.as_deref()) {
+            self.store(from.id.clone().into(), to.into());
         }
     }
 }
 
 impl VisitMut for Inliner {
     noop_visit_mut_type!();
+
+    visit_mut_obj_and_computed!();
 
     /// Don't modify exported ident.
     fn visit_mut_export_named_specifier(&mut self, n: &mut ExportNamedSpecifier) {
@@ -106,22 +104,10 @@ impl VisitMut for Inliner {
         }
     }
 
-    /// General logic for member expression.s
-    fn visit_mut_member_expr(&mut self, n: &mut MemberExpr) {
-        n.obj.visit_mut_with(self);
-
-        if n.computed {
-            n.prop.visit_mut_with(self);
-        }
-    }
-
     fn visit_mut_module_items(&mut self, n: &mut Vec<ModuleItem>) {
         n.visit_mut_children_with(self);
 
-        n.retain(|v| match v {
-            ModuleItem::Stmt(Stmt::Empty(..)) => false,
-            _ => true,
-        });
+        n.retain(|v| !matches!(v, ModuleItem::Stmt(Stmt::Empty(..))));
     }
 
     fn visit_mut_prop(&mut self, n: &mut Prop) {
@@ -137,7 +123,6 @@ impl VisitMut for Inliner {
                         key: PropName::Ident(orig),
                         value: Box::new(Expr::Ident(i.clone())),
                     });
-                    return;
                 }
             }
             _ => {
@@ -171,13 +156,10 @@ impl VisitMut for Inliner {
 
     fn visit_mut_var_declarators(&mut self, n: &mut Vec<VarDeclarator>) {
         n.retain(|d| {
-            match &d.name {
-                Pat::Ident(name) => {
-                    if self.data.ids.contains_key(&name.id.clone().into()) {
-                        return false;
-                    }
+            if let Pat::Ident(name) = &d.name {
+                if self.data.ids.contains_key(&name.id.clone().into()) {
+                    return false;
                 }
-                _ => {}
             }
 
             true

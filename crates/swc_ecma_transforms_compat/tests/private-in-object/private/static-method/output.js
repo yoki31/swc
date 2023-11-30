@@ -1,9 +1,9 @@
-let Foo = function() {
+let Foo = /*#__PURE__*/ function() {
     "use strict";
     function Foo() {
-        _classCallCheck(this, Foo);
+        _class_call_check(this, Foo);
     }
-    _createClass(Foo, [
+    _create_class(Foo, [
         {
             key: "test",
             value: function test(other) {
@@ -13,5 +13,4 @@ let Foo = function() {
     ]);
     return Foo;
 }();
-function foo() {
-}
+function foo() {}

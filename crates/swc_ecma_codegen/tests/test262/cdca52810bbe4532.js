@@ -1,8 +1,7 @@
 function a() {
-    b.c('d');
+    b.c("d");
 }
 a();
-{
-}function a() {
-    b.c('e');
+{}function a() {
+    b.c("e");
 }

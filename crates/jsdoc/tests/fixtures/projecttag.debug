@@ -2,70 +2,70 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                0,
+                1,
             ),
             hi: BytePos(
-                0,
+                1,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    0,
+                    1,
                 ),
                 hi: BytePos(
-                    52,
+                    53,
                 ),
                 ctxt: #0,
             },
-            value: Atom('An automated documentation generator for JavaScript.' type=dynamic),
+            value: "An automated documentation generator for JavaScript.",
         },
         tags: [
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        0,
+                        1,
                     ),
                     hi: BytePos(
-                        7,
+                        8,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            0,
+                            1,
                         ),
                         hi: BytePos(
-                            7,
+                            8,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('project' type=inline),
+                    value: "project",
                 },
                 tag: Unknown(
                     UnknownTag {
                         span: Span {
                             lo: BytePos(
-                                0,
+                                1,
                             ),
                             hi: BytePos(
-                                7,
+                                8,
                             ),
                             ctxt: #0,
                         },
                         extras: Text {
                             span: Span {
                                 lo: BytePos(
-                                    0,
+                                    1,
                                 ),
                                 hi: BytePos(
-                                    5,
+                                    6,
                                 ),
                                 ctxt: #0,
                             },
-                            value: Atom('JSDoc' type=inline),
+                            value: "JSDoc",
                         },
                     },
                 ),
@@ -73,47 +73,47 @@
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        0,
+                        1,
                     ),
                     hi: BytePos(
-                        7,
+                        8,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            0,
+                            1,
                         ),
                         hi: BytePos(
-                            7,
+                            8,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('version' type=inline),
+                    value: "version",
                 },
                 tag: Version(
                     VersionTag {
                         span: Span {
                             lo: BytePos(
-                                0,
+                                1,
                             ),
                             hi: BytePos(
-                                7,
+                                8,
                             ),
                             ctxt: #0,
                         },
                         value: Text {
                             span: Span {
                                 lo: BytePos(
-                                    0,
+                                    1,
                                 ),
                                 hi: BytePos(
-                                    5,
+                                    6,
                                 ),
                                 ctxt: #0,
                             },
-                            value: Atom('3.0.0' type=inline),
+                            value: "3.0.0",
                         },
                     },
                 ),
@@ -121,47 +121,47 @@
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        0,
+                        1,
                     ),
                     hi: BytePos(
-                        9,
+                        10,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            0,
+                            1,
                         ),
                         hi: BytePos(
-                            9,
+                            10,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('copyright' type=dynamic),
+                    value: "copyright",
                 },
                 tag: Copyright(
                     CopyrightTag {
                         span: Span {
                             lo: BytePos(
-                                0,
+                                1,
                             ),
                             hi: BytePos(
-                                9,
+                                10,
                             ),
                             ctxt: #0,
                         },
                         text: Text {
                             span: Span {
                                 lo: BytePos(
-                                    0,
+                                    1,
                                 ),
                                 hi: BytePos(
-                                    44,
+                                    45,
                                 ),
                                 ctxt: #0,
                             },
-                            value: Atom('2011 (c) Michael Mathews <micmath@gmail.com>' type=dynamic),
+                            value: "2011 (c) Michael Mathews <micmath@gmail.com>",
                         },
                     },
                 ),
@@ -169,47 +169,47 @@
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        0,
+                        1,
                     ),
                     hi: BytePos(
-                        7,
+                        8,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            0,
+                            1,
                         ),
                         hi: BytePos(
-                            7,
+                            8,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('license' type=inline),
+                    value: "license",
                 },
                 tag: License(
                     LicenseTag {
                         span: Span {
                             lo: BytePos(
-                                0,
+                                1,
                             ),
                             hi: BytePos(
-                                7,
+                                8,
                             ),
                             ctxt: #0,
                         },
                         identifier: Text {
                             span: Span {
                                 lo: BytePos(
-                                    0,
+                                    1,
                                 ),
                                 hi: BytePos(
-                                    61,
+                                    62,
                                 ),
                                 ctxt: #0,
                             },
-                            value: Atom('Apache Version 2 <http://www.apache.org/licenses/LICENSE-2.0>' type=dynamic),
+                            value: "Apache Version 2 <http://www.apache.org/licenses/LICENSE-2.0>",
                         },
                     },
                 ),

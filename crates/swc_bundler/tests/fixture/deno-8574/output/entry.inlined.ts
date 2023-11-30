@@ -27,8 +27,7 @@ if (typeof window !== "undefined") {
 } else if (typeof self !== "undefined") {
     globalContext = self;
 } else {
-    globalContext = {
-    };
+    globalContext = {};
 }
 if (typeof globalContext.setTimeout === "function") {
     cachedSetTimeout = setTimeout;
@@ -136,14 +135,10 @@ var platform = "browser";
 var browser = true;
 var argv = [];
 var version = "";
-var versions = {
-};
-var release = {
-};
-var config = {
-};
-function noop() {
-}
+var versions = {};
+var release = {};
+var config = {};
+function noop() {}
 var on = noop;
 var addListener = noop;
 var once = noop;
@@ -163,21 +158,20 @@ function chdir(dir) {
 function umask() {
     return 0;
 }
-var performance = globalContext.performance || {
-};
+var performance = globalContext.performance || {};
 var performanceNow = performance.now || performance.mozNow || performance.msNow || performance.oNow || performance.webkitNow || function() {
     return new Date().getTime();
 };
 function hrtime(previousTimestamp) {
-    var clocktime = performanceNow.call(performance) * 0.001;
+    var clocktime = performanceNow.call(performance) * 1e-3;
     var seconds = Math.floor(clocktime);
-    var nanoseconds = Math.floor(clocktime % 1 * 1000000000);
+    var nanoseconds = Math.floor(clocktime % 1 * 1e9);
     if (previousTimestamp) {
         seconds = seconds - previousTimestamp[0];
         nanoseconds = nanoseconds - previousTimestamp[1];
         if (nanoseconds < 0) {
             seconds--;
-            nanoseconds += 1000000000;
+            nanoseconds += 1e9;
         }
     }
     return [
@@ -189,7 +183,7 @@ var startTime = new Date();
 function uptime() {
     var currentTime = new Date();
     var dif = currentTime - startTime;
-    return dif / 1000;
+    return dif / 1e3;
 }
 var process = {
     nextTick,
@@ -229,18 +223,15 @@ function getUserAgent() {
 }
 function lowercaseKeys(object) {
     if (!object) {
-        return {
-        };
+        return {};
     }
     return Object.keys(object).reduce((newObj, key)=>{
         newObj[key.toLowerCase()] = object[key];
         return newObj;
-    }, {
-    });
+    }, {});
 }
 function mergeDeep(defaults, options) {
-    const result = Object.assign({
-    }, defaults);
+    const result = Object.assign({}, defaults);
     Object.keys(options).forEach((key)=>{
         if (isPlainObject(options[key])) {
             if (!(key in defaults)) Object.assign(result, {
@@ -273,20 +264,16 @@ function merge(defaults, route, options) {
             url: method
         }, options);
     } else {
-        options = Object.assign({
-        }, route);
+        options = Object.assign({}, route);
     }
     options.headers = lowercaseKeys(options.headers);
     removeUndefinedProperties(options);
     removeUndefinedProperties(options.headers);
-    const mergedOptions = mergeDeep(defaults || {
-    }, options);
+    const mergedOptions = mergeDeep(defaults || {}, options);
     if (defaults && defaults.mediaType.previews.length) {
-        mergedOptions.mediaType.previews = defaults.mediaType.previews.filter((preview)=>!mergedOptions.mediaType.previews.includes(preview)
-        ).concat(mergedOptions.mediaType.previews);
+        mergedOptions.mediaType.previews = defaults.mediaType.previews.filter((preview)=>!mergedOptions.mediaType.previews.includes(preview)).concat(mergedOptions.mediaType.previews);
     }
-    mergedOptions.mediaType.previews = mergedOptions.mediaType.previews.map((preview)=>preview.replace(/-preview/, "")
-    );
+    mergedOptions.mediaType.previews = mergedOptions.mediaType.previews.map((preview)=>preview.replace(/-preview/, ""));
     return mergedOptions;
 }
 function addQueryParameters(url, parameters) {
@@ -311,16 +298,13 @@ function extractUrlVariableNames(url) {
     if (!matches) {
         return [];
     }
-    return matches.map(removeNonChars).reduce((a, b)=>a.concat(b)
-    , []);
+    return matches.map(removeNonChars).reduce((a, b)=>a.concat(b), []);
 }
 function omit(object, keysToOmit) {
-    return Object.keys(object).filter((option)=>!keysToOmit.includes(option)
-    ).reduce((obj, key)=>{
+    return Object.keys(object).filter((option)=>!keysToOmit.includes(option)).reduce((obj, key)=>{
         obj[key] = object[key];
         return obj;
-    }, {
-    });
+    }, {});
 }
 function encodeReserved(str) {
     return str.split(/(%[0-9A-Fa-f]{2})/g).map(function(part) {
@@ -451,8 +435,7 @@ function expand(template, context) {
 function parse(options) {
     let method = options.method.toUpperCase();
     let url = (options.url || "/").replace(/:([a-z]\w+)/g, "{$1}");
-    let headers = Object.assign({
-    }, options.headers);
+    let headers = Object.assign({}, options.headers);
     let body;
     let parameters = omit(options, [
         "method",
@@ -467,14 +450,12 @@ function parse(options) {
     if (!/^http/.test(url)) {
         url = options.baseUrl + url;
     }
-    const omittedParameters = Object.keys(options).filter((option)=>urlVariableNames.includes(option)
-    ).concat("baseUrl");
+    const omittedParameters = Object.keys(options).filter((option)=>urlVariableNames.includes(option)).concat("baseUrl");
     const remainingParameters = omit(parameters, omittedParameters);
     const isBinaryRequest = /application\/octet-stream/i.test(headers.accept);
     if (!isBinaryRequest) {
         if (options.mediaType.format) {
-            headers.accept = headers.accept.split(/,/).map((preview)=>preview.replace(/application\/vnd(\.\w+)(\.v3)?(\.\w+)?(\+json)?$/, `application/vnd$1$2.${options.mediaType.format}`)
-            ).join(",");
+            headers.accept = headers.accept.split(/,/).map((preview)=>preview.replace(/application\/vnd(\.\w+)(\.v3)?(\.\w+)?(\+json)?$/, `application/vnd$1$2.${options.mediaType.format}`)).join(",");
         }
         if (options.mediaType.previews.length) {
             const previewsFromAcceptHeader = headers.accept.match(/[\w-]+(?=-preview)/g) || [];
@@ -548,8 +529,8 @@ const DEFAULTS = {
 };
 const endpoint = withDefaults(null, DEFAULTS);
 class Deprecation extends Error {
-    constructor(message2){
-        super(message2);
+    constructor(message){
+        super(message);
         if (Error.captureStackTrace) {
             Error.captureStackTrace(this, this.constructor);
         }
@@ -616,11 +597,10 @@ function onceStrict(fn) {
     return f;
 }
 once_1.strict = strict;
-const logOnce = once_1((deprecation2)=>console.warn(deprecation2)
-);
+const logOnce = once_1((deprecation2)=>console.warn(deprecation2));
 class RequestError extends Error {
-    constructor(message1, statusCode, options){
-        super(message1);
+    constructor(message, statusCode, options){
+        super(message);
         if (Error.captureStackTrace) {
             Error.captureStackTrace(this, this.constructor);
         }
@@ -632,13 +612,10 @@ class RequestError extends Error {
                 return statusCode;
             }
         });
-        this.headers = options.headers || {
-        };
-        const requestCopy = Object.assign({
-        }, options.request);
+        this.headers = options.headers || {};
+        const requestCopy = Object.assign({}, options.request);
         if (options.request.headers.authorization) {
-            requestCopy.headers = Object.assign({
-            }, options.request.headers, {
+            requestCopy.headers = Object.assign({}, options.request.headers, {
                 authorization: options.request.headers.authorization.replace(/ .*$/, " [REDACTED]")
             });
         }
@@ -671,8 +648,7 @@ function fetchWrapper(requestOptions) {
     if (isPlainObject(requestOptions.body) || Array.isArray(requestOptions.body)) {
         requestOptions.body = JSON.stringify(requestOptions.body);
     }
-    let headers = {
-    };
+    let headers = {};
     let status;
     let url;
     const fetch = requestOptions.request && requestOptions.request.fetch || nodeFetch;
@@ -716,8 +692,7 @@ function fetchWrapper(requestOptions) {
                     Object.assign(error, responseBody);
                     let errors = responseBody.errors;
                     error.message = error.message + ": " + errors.map(JSON.stringify).join(", ");
-                } catch (e) {
-                }
+                } catch (e) {}
                 throw error;
             });
         }
@@ -772,11 +747,11 @@ const request = withDefaults1(endpoint, {
         "user-agent": `octokit-request.js/${VERSION1} ${getUserAgent()}`
     }
 });
-const { data: data1  } = await request('GET /repos/{owner}/{repo}/license', {
+const { data } = await request("GET /repos/{owner}/{repo}/license", {
     headers: {
-        authorization: `token ${Deno.env.get('GITHUB_TOKEN')}`
+        authorization: `token ${Deno.env.get("GITHUB_TOKEN")}`
     },
-    owner: 'denoland',
-    repo: 'deno'
+    owner: "denoland",
+    repo: "deno"
 });
-console.log(data1.license.name);
+console.log(data.license.name);

@@ -1,6 +1,0 @@
-error: Expected ident
- --> $DIR/tests/test262-parser/fail/d184090674ec7862.js:1:12
-  |
-1 | function t(null) { }
-  |            ^^^^
-

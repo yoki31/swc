@@ -1,6 +1,6 @@
 const swc = require("../../");
 
-it("should emit _interopRequireDefault", () => {
+it("should emit _interop_require_default", () => {
     const out = swc.transformSync(`import foo from "foo"`, {
         module: {
             type: "commonjs"
@@ -8,13 +8,11 @@ it("should emit _interopRequireDefault", () => {
     });
     expect(out.map).toBeFalsy();
 
-    expect(out.code).toContain(`function _interopRequireDefault`);
-    expect(out.code).toContain(
-        `var _foo = _interopRequireDefault(require("foo"))`
-    );
+    expect(out.code).toContain(`function _interop_require_default`);
+    expect(out.code).toContain(`_interop_require_default(require("foo"))`);
 });
 
-it("should emit _interopRequireWildcard", () => {
+it("should emit _interop_require_wildcard", () => {
     const out = swc.transformSync('import * as foo from "foo"', {
         module: {
             type: "commonjs"
@@ -22,13 +20,13 @@ it("should emit _interopRequireWildcard", () => {
     });
     expect(out.map).toBeFalsy();
 
-    expect(out.code).toContain(`function _interopRequireWildcard`);
+    expect(out.code).toContain(`function _interop_require_wildcard`);
     expect(out.code).toContain(
-        `var foo = _interopRequireWildcard(require("foo"))`
+        `_interop_require_wildcard(require("foo"))`
     );
 });
 
-it("should work with amd and expternal helpers", () => {
+it("should work with amd and external helpers", () => {
     const out = swc.transformSync(
         `class Foo {}
     class Bar extends Foo {}`,
@@ -46,6 +44,23 @@ it("should work with amd and expternal helpers", () => {
     expect(out.map).toBeFalsy();
 
     expect(out.code).toContain(`define("a",`);
-    expect(out.code).toContain(`swcHelpers.classCallCheck(this, Foo);`);
-    expect(out.code).toContain(`swcHelpers.inherits(Bar, Foo);`);
+    expect(out.code).toContain(`_class_call_check._(this, Foo);`);
+    expect(out.code).toContain(`_inherits._(Bar, Foo);`);
+});
+
+it('should not require filename if no exports in umd', () => {
+    const code = `console.log('test')`;
+
+    const out = swc.transformSync(code, {
+        jsc: {
+            parser: {
+                syntax: 'ecmascript',
+            },
+        },
+        module: {
+            type: 'umd',
+        },
+        isModule: true,
+    });
+    expect(out.code).toContain(`function(global`);
 });

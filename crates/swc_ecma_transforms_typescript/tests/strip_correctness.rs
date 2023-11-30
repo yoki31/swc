@@ -3,84 +3,165 @@ use std::{
     path::PathBuf,
     sync::{Arc, RwLock},
 };
-use swc_common::FileName;
+
+use swc_common::{FileName, Mark};
 use swc_ecma_ast::*;
 use swc_ecma_codegen::{self, Emitter};
-use swc_ecma_parser::{lexer::Lexer, EsConfig, Parser, StringInput, Syntax, TsConfig};
-use swc_ecma_transforms_base::fixer::fixer;
-use swc_ecma_transforms_typescript::{strip, strip::strip_with_config};
+use swc_ecma_parser::{lexer::Lexer, EsConfig, Parser, Syntax, TsConfig};
+use swc_ecma_transforms_base::{fixer::fixer, hygiene::hygiene, resolver};
+use swc_ecma_transforms_typescript::typescript;
 use swc_ecma_visit::{Fold, FoldWith};
 
+#[testing::fixture("../swc_ecma_parser/tests/tsc/**/*.ts")]
+#[testing::fixture("../swc_ecma_parser/tests/tsc/**/*.tsx")]
 #[testing::fixture("../swc_ecma_parser/tests/typescript/**/*.ts")]
 #[testing::fixture("../swc_ecma_parser/tests/typescript/**/*.tsx")]
 fn identity(entry: PathBuf) {
     let file_name = entry
         .to_string_lossy()
         .replace("\\\\", "/")
-        .replace("\\", "/");
+        .replace('\\', "/");
 
     let ignored = &[
         // Cannot run the test with current test suite
-        "tsc/directives/multilinex",
+        "multilinex",
         // Stack size
         "stack-size",
         "issue-716",
-        "tsc/types/specifyingTypes/typeLiterals/parenthesizedTypes/input.ts",
+        "parenthesizedTypes.ts",
         // TODO: Unignore unicode escape test
         "unicodeExtendedEscapes",
         // Trolling with yield
-        "tsc/es6/yieldExpressions/generatorTypeCheck40/input.ts",
-        "tsc/es6/yieldExpressions/generatorTypeCheck55/input.ts",
-        "tsc/es6/yieldExpressions/generatorTypeCheck60/input.ts",
-        "tsc/es6/functionDeclarations/FunctionDeclaration6_es6/input.ts",
-        "tsc/es6/functionDeclarations/FunctionDeclaration7_es6/input.ts",
+        "generatorTypeCheck40.ts",
+        "generatorTypeCheck55.ts",
+        "generatorTypeCheck60.ts",
+        "FunctionDeclaration6_es6.ts",
+        "FunctionDeclaration7_es6.ts",
         // Trolling with pattern
-        "tsc/es6/destructuring/restPropertyWithBindingPattern/input.ts",
-        "tsc/expressions/optionalChaining/elementAccessChain/elementAccessChain.3/input.ts",
-        "tsc/expressions/optionalChaining/propertyAccessChain/propertyAccessChain.3/input.ts",
+        "restPropertyWithBindingPattern.ts",
+        "elementAccessChain.3",
+        "propertyAccessChain.3",
         // TODO: Unignore
         // These tests are hard to debug because file is large
-        "tsc/es7/exponentiationOperator/emitCompoundExponentiationAssignmentWithIndexingOnLHS3/\
-         input.ts",
-        "tsc/es7/exponentiationOperator/emitExponentiationOperator1/input.ts",
-        "tsc/es7/exponentiationOperator/emitExponentiationOperator3/input.ts",
-        "tsc/es7/exponentiationOperator/emitExponentiationOperator4/input.ts",
-        "tsc/es7/exponentiationOperator/emitExponentiationOperatorInTempalteString4/input.ts",
-        "tsc/es7/exponentiationOperator/emitExponentiationOperatorInTempalteString4ES6/input.ts",
-        "tsc/es7/exponentiationOperator/\
-         exponentiationOperatorWithInvalidSimpleUnaryExpressionOperands/input.ts",
+        "emitCompoundExponentiationAssignmentWithIndexingOnLHS3.ts",
+        "emitExponentiationOperator1.ts",
+        "emitExponentiationOperator3.ts",
+        "emitExponentiationOperator4.ts",
+        "emitExponentiationOperatorInTempalteString4.ts",
+        "emitExponentiationOperatorInTempalteString4ES6.ts",
+        "exponentiationOperatorWithInvalidSimpleUnaryExpressionOperands.ts",
         // `let[0] = 'foo'` is useless
-        "tsc/expressions/elementAccess/letIdentifierInElementAccess01/input.ts",
+        "letIdentifierInElementAccess01.ts",
         // Parser issue
-        "tsc/expressions/superCalls/errorSuperCalls/input.ts",
+        "errorSuperCalls.ts",
+        "tsc/parserAccessors8.ts",
         // TypeScript parser issue
-        "tsc/expressions/objectLiterals/objectLiteralGettersAndSetters/input.ts",
-        "tsc/parser/ecmascript5/SuperExpressions/parserSuperExpression2/input.ts",
+        "objectLiteralGettersAndSetters.ts",
+        "parserSuperExpression2.ts",
         // TODO: Unignore
-        "tsc/jsx",
-        "tsc/types/contextualTypes/jsxAttributes/\
-         contextuallyTypedStringLiteralsInJsxAttributes01x/input.tsx",
-        "tsc/types/contextualTypes/jsxAttributes/\
-         contextuallyTypedStringLiteralsInJsxAttributes02x/input.tsx",
+        "inlineJsxFactoryDeclarationsx",
+        "tsxAttributeResolution5x",
+        "jsxReactTestSuitex",
+        "tsxErrorRecovery2",
+        "tsxErrorRecovery3",
+        "tsxReactEmitNestingx",
+        "tsxTypeArgumentsJsxPreserveOutputx",
+        "unicodeEscapesInJsxtagsx",
+        "tsc/contextuallyTypedStringLiteralsInJsxAttributes01x.tsx",
+        "tsc/contextuallyTypedStringLiteralsInJsxAttributes02x.tsx",
         // TODO: Unignore
         // Tests require ast change
-        "tsc/types/thisType/thisTypeInAccessors/input.ts",
-        "tsc/types/thisType/thisTypeInAccessorsNegative/input.ts",
+        "tsc/thisTypeInAccessors.ts",
+        "tsc/thisTypeInAccessorsNegative.ts",
         // Invalid syntax
-        "tsc/types/rest/objectRestNegative/input.ts",
-        "tsc/jsdoc/jsdocDisallowedInTypescript/input.ts",
-        "tsc/types/rest/restElementMustBeLast/input.ts",
-        "tsc/types/rest/objectRestPropertyMustBeLast/input.ts",
-        "tsc/types/objectTypeLiteral/propertySignatures/propertyNamesOfReservedWords/input.ts",
-        "tsc/types/objectTypeLiteral/callSignatures/callSignaturesWithParameterInitializers/input.\
-         ts",
+        "tsc/computedPropertyNames49_ES5.ts",
+        "tsc/computedPropertyNames49_ES6.ts",
+        "tsc/computedPropertyNames50_ES5.ts",
+        "tsc/computedPropertyNames50_ES6.ts",
+        "tsc/deleteOperatorInvalidOperations.ts",
+        "tsc/generatorTypeCheck59.ts",
+        "tsc/generatorTypeCheck61.ts",
+        "tsc/jsxAndTypeAssertion.tsx",
+        "tsc/jsxEsprimaFbTestSuite.tsx",
+        "tsc/jsxInvalidEsprimaTestSuite.tsx",
+        "tsc/jsxParsingError2.tsx",
+        "tsc/jsxParsingError3.tsx",
+        "tsc/logicalNotOperatorInvalidOperations.ts",
+        "tsc/parseIncompleteBinaryExpression1.ts",
+        "tsc/parser512325.ts",
+        "tsc/parserComputedPropertyName1.ts",
+        "tsc/parserES5ForOfStatement21.ts",
+        "tsc/parserES5ForOfStatement2.ts",
+        "tsc/parserEnumDeclaration4.ts",
+        "tsc/parserErrorRecoveryIfStatement2.ts",
+        "tsc/parserErrorRecoveryIfStatement3.ts",
+        "tsc/parserForInStatement2.ts",
+        "tsc/parserForOfStatement21.ts",
+        "tsc/parserForOfStatement2.ts",
+        "tsc/parserShorthandPropertyAssignment3.ts",
+        "tsc/parserShorthandPropertyAssignment4.ts",
+        "tsc/parserTypeAssertionInObjectCreationExpression1.ts",
+        "tsc/taggedTemplatesWithTypeArguments2.ts",
+        "tsc/tsxAttributeInvalidNames.tsx",
+        "tsc/tsxErrorRecovery1.tsx",
+        "tsc/tsxFragmentErrors.tsx",
+        "tsc/tsxGenericArrowFunctionParsing.tsx",
+        "tsc/tsxStatelessFunctionComponents1.tsx",
+        "tsc/typeofOperatorInvalidOperations.ts",
+        "tsc/voidOperatorInvalidOperations.ts",
+        "tsc/objectRestNegative.ts",
+        "tsc/jsdocDisallowedInTypescript.ts",
+        "tsc/restElementMustBeLast.ts",
+        "tsc/objectRestPropertyMustBeLast.ts",
+        "tsc/propertyNamesOfReservedWords.ts",
+        "tsc/callSignaturesWithParameterInitializers.ts",
+        "parserForOfStatement23",
+        "parserForOfStatement24",
+        "constEnum4",
+        "checkJsxNamespaceNamesQuestionableForms",
+        "classExtendingOptionalChain",
+        "inlineJsxFactoryDeclarations",
+        "interfaceExtendingOptionalChain",
+        "inlineJsxFactoryDeclarations",
+        "interfaceExtendingOptionalChain",
+        "interfacesWithPredefinedTypesAsNames",
+        "jsxReactTestSuite",
+        "namedTupleMembersErrors",
+        "tsxAttributeResolution5",
+        "tsxReactEmitNesting",
+        "tsxTypeArgumentsJsxPreserveOutput",
+        "unicodeEscapesInJsxtags",
+        "autoAccessor",
+        "parserArrowFunctionExpression11.ts",
+        // decorator
+        "issue-2417",
+        // TODO: Script mode
+        "asyncArrowFunction3_es2017.ts",
+        "asyncArrowFunction3_es5.ts",
+        "asyncArrowFunction3_es6.ts",
+        "asyncArrowFunction4_es2017.ts",
+        "asyncArrowFunction4_es5.ts",
+        "asyncArrowFunction4_es6.ts",
+        "asyncFunctionDeclaration11_es2017.ts",
+        "asyncFunctionDeclaration11_es5.ts",
+        "asyncFunctionDeclaration11_es6.ts",
+        "asyncFunctionDeclaration2_es2017.ts",
+        "asyncFunctionDeclaration2_es5.ts",
+        "asyncFunctionDeclaration2_es6.ts",
+        "asyncFunctionDeclaration3_es2017.ts",
+        "asyncFunctionDeclaration3_es5.ts",
+        "asyncFunctionDeclaration3_es6.ts",
+        "asyncFunctionDeclaration4_es2017.ts",
+        "asyncFunctionDeclaration4_es5.ts",
+        "asyncFunctionDeclaration4_es6.ts",
+        "topLevelAwait.2.ts",
     ];
 
     // TODO: Unignore const enum test
-    let ignore = file_name.contains("export-import-require/input.ts")
-        || file_name.contains("v4/issue-866/input.ts")
+    let ignore = file_name.contains("export-import-require")
+        || file_name.contains("issue-866")
         || file_name.contains("jsdocTypeFromChainedAssignment3")
-        || file_name.contains("tsc/enums/enumConstantMembers/input.ts")
+        || file_name.contains("enumConstantMembers")
         || ignored.iter().any(|ignored| file_name.contains(ignored));
 
     if ignore {
@@ -91,14 +172,13 @@ fn identity(entry: PathBuf) {
         let src = cm.load_file(&entry).expect("failed to load file");
         println!("{}", src.src);
 
-        let mut parser: Parser<Lexer<StringInput>> = Parser::new(
+        let mut parser: Parser<Lexer> = Parser::new(
             Syntax::Typescript(TsConfig {
                 tsx: file_name.contains("tsx"),
                 decorators: true,
-                dynamic_import: true,
                 dts: false,
                 no_early_errors: false,
-                import_assertions: true,
+                disallow_ambiguous_jsx_like: false,
             }),
             (&*src).into(),
             None,
@@ -108,7 +188,7 @@ fn identity(entry: PathBuf) {
 
         {
             let mut emitter = Emitter {
-                cfg: swc_ecma_codegen::Config { minify: false },
+                cfg: swc_ecma_codegen::Config::default(),
                 cm: cm.clone(),
                 wr: Box::new(swc_ecma_codegen::text_writer::JsWriter::new(
                     cm.clone(),
@@ -120,46 +200,45 @@ fn identity(entry: PathBuf) {
             };
 
             // Parse source
-            let module = parser
+            let program = parser
                 .parse_typescript_module()
                 .map(|p| {
-                    p.fold_with(&mut strip_with_config(strip::Config {
-                        no_empty_export: true,
-                        ..Default::default()
-                    }))
-                    .fold_with(&mut fixer(None))
+                    let unresolved_mark = Mark::new();
+                    let top_level_mark = Mark::new();
+                    Program::Module(p)
+                        .fold_with(&mut resolver(unresolved_mark, top_level_mark, true))
+                        .fold_with(&mut typescript(
+                            typescript::Config {
+                                no_empty_export: true,
+                                ..Default::default()
+                            },
+                            top_level_mark,
+                        ))
+                        .fold_with(&mut hygiene())
+                        .fold_with(&mut fixer(None))
                 })
                 .map_err(|e| {
                     eprintln!("failed to parse as typescript module");
                     e.into_diagnostic(handler).emit();
                 })?;
 
-            emitter.emit_module(&module).unwrap();
+            emitter.emit_program(&program).unwrap();
         }
 
-        let js_content = String::from_utf8_lossy(&*wr.0.read().unwrap()).to_string();
+        let js_content = String::from_utf8_lossy(&wr.0.read().unwrap()).to_string();
 
         println!("---------------- JS ----------------\n\n{}", js_content);
 
         let js_fm = cm.new_source_file(FileName::Anon, js_content.clone());
 
-        let mut parser: Parser<Lexer<StringInput>> = Parser::new(
+        let mut parser: Parser<Lexer> = Parser::new(
             Syntax::Es(EsConfig {
                 jsx: file_name.contains("tsx"),
-                num_sep: true,
-                class_private_props: true,
-                class_private_methods: true,
-                class_props: true,
                 decorators: true,
                 decorators_before_export: true,
                 export_default_from: true,
-                export_namespace_from: true,
-                dynamic_import: true,
-                nullish_coalescing: true,
-                optional_chaining: true,
-                import_meta: true,
-                top_level_await: true,
-                private_in_object: true,
+                import_attributes: true,
+                allow_super_outside_method: true,
                 ..Default::default()
             }),
             (&*js_fm).into(),
@@ -213,12 +292,9 @@ impl Fold for Normalizer {
 
         match name {
             PropName::Ident(i) => PropName::Str(Str {
+                raw: None,
                 value: i.sym,
                 span: i.span,
-                has_escape: false,
-                kind: StrKind::Normal {
-                    contains_quote: false,
-                },
             }),
             PropName::Num(n) => {
                 let s = if n.value.is_infinite() {
@@ -231,10 +307,9 @@ impl Fold for Normalizer {
                     format!("{}", n.value)
                 };
                 PropName::Str(Str {
+                    raw: None,
                     value: s.into(),
                     span: n.span,
-                    has_escape: false,
-                    kind: Default::default(),
                 })
             }
             _ => name,

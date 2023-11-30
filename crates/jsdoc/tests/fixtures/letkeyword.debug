@@ -2,71 +2,70 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                73,
+                74,
             ),
             hi: BytePos(
-                73,
+                74,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    73,
+                    74,
                 ),
                 hi: BytePos(
-                    98,
+                    99,
                 ),
                 ctxt: #0,
             },
-            value: Atom('My example module.
-                 *' type=dynamic),
+            value: "My example module.\n     *",
         },
         tags: [
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        73,
+                        74,
                     ),
                     hi: BytePos(
-                        80,
+                        81,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            73,
+                            74,
                         ),
                         hi: BytePos(
-                            80,
+                            81,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('exports' type=inline),
+                    value: "exports",
                 },
                 tag: Exports(
                     ExportsTag {
                         span: Span {
                             lo: BytePos(
-                                73,
+                                74,
                             ),
                             hi: BytePos(
-                                80,
+                                81,
                             ),
                             ctxt: #0,
                         },
                         module_name: Text {
                             span: Span {
                                 lo: BytePos(
-                                    73,
+                                    74,
                                 ),
                                 hi: BytePos(
-                                    86,
+                                    87,
                                 ),
                                 ctxt: #0,
                             },
-                            value: Atom('exampleModule' type=dynamic),
+                            value: "exampleModule",
                         },
                     },
                 ),
@@ -76,24 +75,24 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                170,
+                171,
             ),
             hi: BytePos(
-                170,
+                171,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    170,
+                    171,
                 ),
                 hi: BytePos(
-                    188,
+                    189,
                 ),
                 ctxt: #0,
             },
-            value: Atom('My example method.' type=dynamic),
+            value: "My example method.",
         },
         tags: [],
     },

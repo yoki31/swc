@@ -1,12 +1,14 @@
-use super::{Emitter, Result};
-use crate::{list::ListFormat, text_writer::WriteJs};
-use swc_common::Spanned;
+use swc_common::{SourceMapper, Spanned};
 use swc_ecma_ast::*;
 use swc_ecma_codegen_macros::emitter;
 
-impl<'a, W> Emitter<'a, W>
+use super::{Emitter, Result};
+use crate::text_writer::WriteJs;
+
+impl<'a, W, S: SourceMapper> Emitter<'a, W, S>
 where
     W: WriteJs,
+    S: SourceMapperExt,
 {
     #[emitter]
     fn emit_jsx_element(&mut self, node: &JSXElement) -> Result {
@@ -26,13 +28,19 @@ where
         punct!("<");
         emit!(node.name);
 
-        space!();
+        if let Some(type_args) = &node.type_args {
+            emit!(type_args);
+        }
 
-        self.emit_list(
-            node.span(),
-            Some(&node.attrs),
-            ListFormat::JsxElementAttributes,
-        )?;
+        if !node.attrs.is_empty() {
+            space!();
+
+            self.emit_list(
+                node.span(),
+                Some(&node.attrs),
+                ListFormat::JsxElementAttributes,
+            )?;
+        }
 
         if node.self_closing {
             punct!("/");
@@ -145,12 +153,12 @@ where
     }
 
     #[emitter]
-    fn emit_jsx_opening_fragment(&mut self, node: &JSXOpeningFragment) -> Result {
+    fn emit_jsx_opening_fragment(&mut self, _: &JSXOpeningFragment) -> Result {
         punct!("<>")
     }
 
     #[emitter]
-    fn emit_jsx_closing_fragment(&mut self, node: &JSXClosingFragment) -> Result {
+    fn emit_jsx_closing_fragment(&mut self, _: &JSXClosingFragment) -> Result {
         punct!("</>")
     }
 
@@ -162,11 +170,11 @@ where
     }
 
     #[emitter]
-    fn emit_jsx_empty_expr(&mut self, node: &JSXEmptyExpr) -> Result {}
+    fn emit_jsx_empty_expr(&mut self, _: &JSXEmptyExpr) -> Result {}
 
     #[emitter]
     fn emit_jsx_text(&mut self, node: &JSXText) -> Result {
-        self.emit_js_word(node.span(), &node.value)?;
+        self.emit_atom(node.span(), &node.value)?;
     }
 
     #[emitter]

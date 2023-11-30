@@ -2,56 +2,56 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                0,
+                1,
             ),
             hi: BytePos(
-                16,
+                17,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    0,
+                    1,
                 ),
                 hi: BytePos(
-                    0,
+                    1,
                 ),
                 ctxt: #0,
             },
-            value: Atom('' type=static),
+            value: "",
         },
         tags: [
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        0,
+                        1,
                     ),
                     hi: BytePos(
-                        7,
+                        8,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            0,
+                            1,
                         ),
                         hi: BytePos(
-                            7,
+                            8,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('typedef' type=inline),
+                    value: "typedef",
                 },
                 tag: TypeDef(
                     TypeDefTag {
                         span: Span {
                             lo: BytePos(
-                                0,
+                                1,
                             ),
                             hi: BytePos(
-                                7,
+                                8,
                             ),
                             ctxt: #0,
                         },
@@ -59,23 +59,23 @@
                             Text {
                                 span: Span {
                                     lo: BytePos(
-                                        0,
+                                        1,
                                     ),
                                     hi: BytePos(
-                                        17,
+                                        18,
                                     ),
                                     ctxt: #0,
                                 },
-                                value: Atom('{(string|number)}' type=dynamic),
+                                value: "{(string|number)}",
                             },
                         ),
                         name_path: NamePath {
                             span: Span {
                                 lo: BytePos(
-                                    0,
+                                    1,
                                 ),
                                 hi: BytePos(
-                                    16,
+                                    17,
                                 ),
                                 ctxt: #0,
                             },
@@ -83,14 +83,14 @@
                                 Text {
                                     span: Span {
                                         lo: BytePos(
-                                            0,
+                                            1,
                                         ),
                                         hi: BytePos(
-                                            0,
+                                            1,
                                         ),
                                         ctxt: #0,
                                     },
-                                    value: Atom('' type=static),
+                                    value: "",
                                 },
                             ],
                         },
@@ -102,56 +102,56 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                51,
+                52,
             ),
             hi: BytePos(
-                51,
+                52,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    51,
+                    52,
                 ),
                 hi: BytePos(
-                    51,
+                    52,
                 ),
                 ctxt: #0,
             },
-            value: Atom('' type=static),
+            value: "",
         },
         tags: [
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        51,
+                        52,
                     ),
                     hi: BytePos(
-                        58,
+                        59,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            51,
+                            52,
                         ),
                         hi: BytePos(
-                            58,
+                            59,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('typedef' type=inline),
+                    value: "typedef",
                 },
                 tag: TypeDef(
                     TypeDefTag {
                         span: Span {
                             lo: BytePos(
-                                51,
+                                52,
                             ),
                             hi: BytePos(
-                                58,
+                                59,
                             ),
                             ctxt: #0,
                         },
@@ -159,23 +159,23 @@
                             Text {
                                 span: Span {
                                     lo: BytePos(
-                                        51,
+                                        52,
                                     ),
                                     hi: BytePos(
-                                        59,
+                                        60,
                                     ),
                                     ctxt: #0,
                                 },
-                                value: Atom('{string}' type=dynamic),
+                                value: "{string}",
                             },
                         ),
                         name_path: NamePath {
                             span: Span {
                                 lo: BytePos(
-                                    51,
+                                    52,
                                 ),
                                 hi: BytePos(
-                                    51,
+                                    52,
                                 ),
                                 ctxt: #0,
                             },
@@ -183,14 +183,14 @@
                                 Text {
                                     span: Span {
                                         lo: BytePos(
-                                            51,
+                                            52,
                                         ),
                                         hi: BytePos(
-                                            51,
+                                            52,
                                         ),
                                         ctxt: #0,
                                     },
-                                    value: Atom('' type=static),
+                                    value: "",
                                 },
                             ],
                         },
@@ -202,56 +202,56 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                92,
+                93,
             ),
             hi: BytePos(
-                104,
+                105,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    92,
+                    93,
                 ),
                 hi: BytePos(
-                    92,
+                    93,
                 ),
                 ctxt: #0,
             },
-            value: Atom('' type=static),
+            value: "",
         },
         tags: [
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        92,
+                        93,
                     ),
                     hi: BytePos(
-                        99,
+                        100,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            92,
+                            93,
                         ),
                         hi: BytePos(
-                            99,
+                            100,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('typedef' type=inline),
+                    value: "typedef",
                 },
                 tag: TypeDef(
                     TypeDefTag {
                         span: Span {
                             lo: BytePos(
-                                92,
+                                93,
                             ),
                             hi: BytePos(
-                                99,
+                                100,
                             ),
                             ctxt: #0,
                         },
@@ -259,23 +259,23 @@
                             Text {
                                 span: Span {
                                     lo: BytePos(
-                                        92,
+                                        93,
                                     ),
                                     hi: BytePos(
-                                        109,
+                                        110,
                                     ),
                                     ctxt: #0,
                                 },
-                                value: Atom('{calc.NumberLike}' type=dynamic),
+                                value: "{calc.NumberLike}",
                             },
                         ),
                         name_path: NamePath {
                             span: Span {
                                 lo: BytePos(
-                                    92,
+                                    93,
                                 ),
                                 hi: BytePos(
-                                    104,
+                                    105,
                                 ),
                                 ctxt: #0,
                             },
@@ -283,14 +283,14 @@
                                 Text {
                                     span: Span {
                                         lo: BytePos(
-                                            92,
+                                            93,
                                         ),
                                         hi: BytePos(
-                                            92,
+                                            93,
                                         ),
                                         ctxt: #0,
                                     },
-                                    value: Atom('' type=static),
+                                    value: "",
                                 },
                             ],
                         },
@@ -302,56 +302,56 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                153,
+                154,
             ),
             hi: BytePos(
-                177,
+                178,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    153,
+                    154,
                 ),
                 hi: BytePos(
-                    153,
+                    154,
                 ),
                 ctxt: #0,
             },
-            value: Atom('' type=static),
+            value: "",
         },
         tags: [
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        153,
+                        154,
                     ),
                     hi: BytePos(
-                        158,
+                        159,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            153,
+                            154,
                         ),
                         hi: BytePos(
-                            158,
+                            159,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('param' type=inline),
+                    value: "param",
                 },
                 tag: Parameter(
                     ParameterTag {
                         span: Span {
                             lo: BytePos(
-                                153,
+                                154,
                             ),
                             hi: BytePos(
-                                158,
+                                159,
                             ),
                             ctxt: #0,
                         },
@@ -360,14 +360,14 @@
                             Text {
                                 span: Span {
                                     lo: BytePos(
-                                        153,
+                                        154,
                                     ),
                                     hi: BytePos(
-                                        170,
+                                        171,
                                     ),
                                     ctxt: #0,
                                 },
-                                value: Atom('{calc.NumberLike}' type=dynamic),
+                                value: "{calc.NumberLike}",
                             },
                         ),
                         desc: Text {
@@ -380,7 +380,7 @@
                                 ),
                                 ctxt: #0,
                             },
-                            value: Atom('' type=static),
+                            value: "",
                         },
                     },
                 ),

@@ -4,7 +4,7 @@ use swc::{
 };
 use swc_common::FileName;
 use swc_ecma_ast::EsVersion;
-use swc_ecma_parser::{EsConfig, Syntax, TsConfig};
+use swc_ecma_parser::{Syntax, TsConfig};
 use testing::Tester;
 
 fn compile(src: &str, options: Options) -> String {
@@ -13,21 +13,14 @@ fn compile(src: &str, options: Options) -> String {
             let c = Compiler::new(cm.clone());
 
             let fm = cm.new_source_file(FileName::Real("input.js".into()), src.into());
-            let s = c.process_js_file(
-                fm,
-                &handler,
-                &Options {
-                    is_module: IsModule::Bool(true),
-                    ..options
-                },
-            );
+            let s = c.process_js_file(fm, &handler, &options);
 
             match s {
                 Ok(v) => {
                     if handler.has_errors() {
                         Err(())
                     } else {
-                        Ok(v.code.into())
+                        Ok(v.code)
                     }
                 }
                 Err(..) => Err(()),
@@ -60,11 +53,7 @@ const someValue = 'test' ?? 'default value';",
         Options {
             config: Config {
                 jsc: JscConfig {
-                    syntax: Some(Syntax::Es(EsConfig {
-                        nullish_coalescing: true,
-                        optional_chaining: true,
-                        ..Default::default()
-                    })),
+                    syntax: Some(Syntax::Es(Default::default())),
                     ..Default::default()
                 },
                 ..Default::default()
@@ -82,10 +71,7 @@ fn issue_834_3() {
         Options {
             config: Config {
                 jsc: JscConfig {
-                    syntax: Some(Syntax::Es(EsConfig {
-                        nullish_coalescing: true,
-                        ..Default::default()
-                    })),
+                    syntax: Some(Syntax::Es(Default::default())),
                     ..Default::default()
                 },
                 ..Default::default()
@@ -157,7 +143,10 @@ fn is_module_unknown_script() {
         source,
         Options {
             swcrc: false,
-            is_module: IsModule::Unknown,
+            config: Config {
+                is_module: Some(IsModule::Unknown),
+                ..Default::default()
+            },
             ..Default::default()
         },
     );
@@ -174,7 +163,10 @@ fn is_module_unknown_module() {
         source,
         Options {
             swcrc: false,
-            is_module: IsModule::Unknown,
+            config: Config {
+                is_module: Some(IsModule::Unknown),
+                ..Default::default()
+            },
             ..Default::default()
         },
     );

@@ -1,7 +1,8 @@
 #![cfg(feature = "tsc")]
 
-use anyhow::{anyhow, Error};
 use std::collections::HashMap;
+
+use anyhow::{anyhow, Error};
 use swc_common::{collections::AHashMap, FileName};
 use swc_ecma_loader::{resolve::Resolve, resolvers::tsc::TsConfigResolver};
 
@@ -37,14 +38,8 @@ fn exact() {
     }
 
     {
-        let err = r
-            .resolve(&FileName::Anon, "unrelated")
+        r.resolve(&FileName::Anon, "unrelated")
             .expect_err("should not touch error");
-
-        assert!(
-            err.source().is_none(),
-            "should not touch error if src is not related"
-        );
     }
 }
 

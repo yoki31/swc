@@ -2,72 +2,72 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                0,
+                1,
             ),
             hi: BytePos(
-                0,
+                1,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    0,
+                    1,
                 ),
                 hi: BytePos(
-                    11,
+                    12,
                 ),
                 ctxt: #0,
             },
-            value: Atom('document me' type=dynamic),
+            value: "document me",
         },
         tags: [],
     },
     JsDoc {
         span: Span {
             lo: BytePos(
-                37,
+                38,
             ),
             hi: BytePos(
-                37,
+                38,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    37,
+                    38,
                 ),
                 hi: BytePos(
-                    48,
+                    49,
                 ),
                 ctxt: #0,
             },
-            value: Atom('document me' type=dynamic),
+            value: "document me",
         },
         tags: [],
     },
     JsDoc {
         span: Span {
             lo: BytePos(
-                82,
+                83,
             ),
             hi: BytePos(
-                82,
+                83,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    82,
+                    83,
                 ),
                 hi: BytePos(
-                    93,
+                    94,
                 ),
                 ctxt: #0,
             },
-            value: Atom('document me' type=dynamic),
+            value: "document me",
         },
         tags: [],
     },

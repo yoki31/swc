@@ -1,3 +1,6 @@
+use is_macro::Is;
+use swc_common::{ast_node, util::take::Take, EqIgnoreSpan, Span, DUMMY_SP};
+
 use crate::{
     decl::Decl,
     expr::{ClassExpr, Expr, FnExpr},
@@ -6,8 +9,6 @@ use crate::{
     typescript::{TsExportAssignment, TsImportEqualsDecl, TsInterfaceDecl, TsNamespaceExportDecl},
     ObjectLit,
 };
-use is_macro::Is;
-use swc_common::{ast_node, util::take::Take, EqIgnoreSpan, Span, DUMMY_SP};
 
 #[ast_node]
 #[derive(Eq, Hash, Is, EqIgnoreSpan)]
@@ -32,7 +33,7 @@ pub enum ModuleDecl {
     ExportAll(ExportAll),
 
     #[tag("TsImportEqualsDeclaration")]
-    TsImportEquals(TsImportEqualsDecl),
+    TsImportEquals(Box<TsImportEqualsDecl>),
 
     #[tag("TsExportAssignment")]
     TsExportAssignment(TsExportAssignment),
@@ -53,7 +54,7 @@ impl Take for ModuleDecl {
 pub struct ExportDefaultExpr {
     pub span: Span,
 
-    #[serde(rename = "expression")]
+    #[cfg_attr(feature = "serde-impl", serde(rename = "expression"))]
     pub expr: Box<Expr>,
 }
 
@@ -63,7 +64,7 @@ pub struct ExportDefaultExpr {
 pub struct ExportDecl {
     pub span: Span,
 
-    #[serde(rename = "declaration")]
+    #[cfg_attr(feature = "serde-impl", serde(rename = "declaration"))]
     pub decl: Decl,
 }
 
@@ -73,17 +74,17 @@ pub struct ExportDecl {
 pub struct ImportDecl {
     pub span: Span,
 
-    #[serde(default)]
+    #[cfg_attr(feature = "serde-impl", serde(default))]
     pub specifiers: Vec<ImportSpecifier>,
 
-    #[serde(rename = "source")]
-    pub src: Str,
+    #[cfg_attr(feature = "serde-impl", serde(rename = "source"))]
+    pub src: Box<Str>,
 
-    #[serde(default, rename = "typeOnly")]
+    #[cfg_attr(feature = "serde-impl", serde(default, rename = "typeOnly"))]
     pub type_only: bool,
 
-    #[serde(default)]
-    pub asserts: Option<ObjectLit>,
+    #[cfg_attr(feature = "serde-impl", serde(default))]
+    pub with: Option<Box<ObjectLit>>,
 }
 
 impl Take for ImportDecl {
@@ -93,7 +94,7 @@ impl Take for ImportDecl {
             specifiers: Take::dummy(),
             src: Take::dummy(),
             type_only: Default::default(),
-            asserts: Take::dummy(),
+            with: Take::dummy(),
         }
     }
 }
@@ -105,11 +106,25 @@ impl Take for ImportDecl {
 pub struct ExportAll {
     pub span: Span,
 
-    #[serde(rename = "source")]
-    pub src: Str,
+    #[cfg_attr(feature = "serde-impl", serde(rename = "source"))]
+    pub src: Box<Str>,
 
-    #[serde(default)]
-    pub asserts: Option<ObjectLit>,
+    #[cfg_attr(feature = "serde-impl", serde(rename = "typeOnly"))]
+    pub type_only: bool,
+
+    #[cfg_attr(feature = "serde-impl", serde(default))]
+    pub with: Option<Box<ObjectLit>>,
+}
+
+impl Take for ExportAll {
+    fn dummy() -> Self {
+        Self {
+            span: DUMMY_SP,
+            src: Take::dummy(),
+            type_only: Default::default(),
+            with: Take::dummy(),
+        }
+    }
 }
 
 /// `export { foo } from 'mod'`
@@ -122,14 +137,26 @@ pub struct NamedExport {
 
     pub specifiers: Vec<ExportSpecifier>,
 
-    #[serde(rename = "source")]
-    pub src: Option<Str>,
+    #[cfg_attr(feature = "serde-impl", serde(rename = "source"))]
+    pub src: Option<Box<Str>>,
 
-    #[serde(rename = "typeOnly")]
+    #[cfg_attr(feature = "serde-impl", serde(rename = "typeOnly"))]
     pub type_only: bool,
 
-    #[serde(default)]
-    pub asserts: Option<ObjectLit>,
+    #[cfg_attr(feature = "serde-impl", serde(default))]
+    pub with: Option<Box<ObjectLit>>,
+}
+
+impl Take for NamedExport {
+    fn dummy() -> Self {
+        Self {
+            span: DUMMY_SP,
+            specifiers: Take::dummy(),
+            src: Take::dummy(),
+            type_only: Default::default(),
+            with: Take::dummy(),
+        }
+    }
 }
 
 #[ast_node("ExportDefaultDeclaration")]
@@ -153,7 +180,7 @@ pub enum DefaultDecl {
     Fn(FnExpr),
 
     #[tag("TsInterfaceDeclaration")]
-    TsInterfaceDecl(TsInterfaceDecl),
+    TsInterfaceDecl(Box<TsInterfaceDecl>),
 }
 
 #[ast_node]
@@ -197,10 +224,10 @@ pub struct ImportNamedSpecifier {
 
     pub local: Ident,
 
-    #[serde(default)]
-    pub imported: Option<Ident>,
+    #[cfg_attr(feature = "serde-impl", serde(default))]
+    pub imported: Option<ModuleExportName>,
 
-    #[serde(default)]
+    #[cfg_attr(feature = "serde-impl", serde(default))]
     pub is_type_only: bool,
 }
 
@@ -225,7 +252,7 @@ pub enum ExportSpecifier {
 pub struct ExportNamespaceSpecifier {
     pub span: Span,
 
-    pub name: Ident,
+    pub name: ModuleExportName,
 }
 
 // export v from 'mod';
@@ -243,11 +270,23 @@ pub struct ExportDefaultSpecifier {
 pub struct ExportNamedSpecifier {
     pub span: Span,
     /// `foo` in `export { foo as bar }`
-    pub orig: Ident,
+    pub orig: ModuleExportName,
     /// `Some(bar)` in `export { foo as bar }`
-    #[serde(default)]
-    pub exported: Option<Ident>,
+    #[cfg_attr(feature = "serde-impl", serde(default))]
+    pub exported: Option<ModuleExportName>,
     /// `type` in `export { type foo as bar }`
-    #[serde(default)]
+    #[cfg_attr(feature = "serde-impl", serde(default))]
     pub is_type_only: bool,
+}
+
+#[ast_node]
+#[derive(Eq, Hash, EqIgnoreSpan)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
+// https://tc39.es/ecma262/#prod-ModuleExportName
+pub enum ModuleExportName {
+    #[tag("Identifier")]
+    Ident(Ident),
+
+    #[tag("StringLiteral")]
+    Str(Str),
 }

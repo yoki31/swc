@@ -1,10 +1,9 @@
 if (a) {
     // optimize it
     (function() {
-        b('c');
+        b("c");
     }());
     try {
         b("d");
-    } catch (e) {
-    }
+    } catch (e) {}
 }

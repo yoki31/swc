@@ -1,8 +1,9 @@
-use crate::{Bundler, Load, Resolve};
 use swc_common::pass::Repeat;
 use swc_ecma_ast::*;
-use swc_ecma_transforms_optimization::simplify::{const_propgation::constant_propagation, dce};
+use swc_ecma_transforms_optimization::simplify::{const_propagation::constant_propagation, dce};
 use swc_ecma_visit::FoldWith;
+
+use crate::{Bundler, Load, Resolve};
 
 impl<L, R> Bundler<'_, L, R>
 where
@@ -18,12 +19,18 @@ where
             if !self.config.disable_inliner {
                 node = node.fold_with(&mut constant_propagation())
             }
-
-            node = node.fold_with(&mut Repeat::new(dce::dce(dce::Config {
-                // TODO(kdy1): Apply mark to wrapped esms and use it at here.
-                module_mark: None,
-            })));
-
+            if !self.config.disable_dce {
+                node = node.fold_with(&mut Repeat::new(dce::dce(
+                    dce::Config {
+                        // TODO(kdy1): Apply mark to wrapped esms and use it at here.
+                        module_mark: None,
+                        top_level: true,
+                        top_retain: Default::default(),
+                        preserve_imports_with_side_effects: true,
+                    },
+                    self.unresolved_mark,
+                )));
+            }
             node
         })
     }

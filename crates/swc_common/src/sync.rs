@@ -33,34 +33,36 @@
 //! `rustc_erase_owner!` erases a OwningRef owner into Erased or Erased + Send +
 //! Sync depending on the value of cfg!(parallel_queries).
 
-#[cfg(feature = "concurrent")]
-use parking_lot::{Mutex as InnerLock, RwLock as InnerRwLock};
 #[cfg(not(feature = "concurrent"))]
 use std::cell::{RefCell as InnerRwLock, RefCell as InnerLock};
-use std::fmt;
-
-#[cfg(feature = "concurrent")]
-pub use self::concurrent::*;
-#[cfg(not(feature = "concurrent"))]
-pub use self::single::*;
 use std::{
     cmp::Ordering,
     collections::HashMap,
+    fmt,
     fmt::{Debug, Formatter},
     hash::{BuildHasher, Hash},
 };
 
 #[cfg(feature = "concurrent")]
+use parking_lot::{Mutex as InnerLock, RwLock as InnerRwLock};
+
+#[cfg(feature = "concurrent")]
+pub use self::concurrent::*;
+#[cfg(not(feature = "concurrent"))]
+pub use self::single::*;
+
+#[cfg(feature = "concurrent")]
 mod concurrent {
+    pub use std::{
+        marker::{Send, Sync},
+        sync::Arc as Lrc,
+    };
+
     pub use once_cell::sync::{Lazy, OnceCell};
     pub use parking_lot::{
         MappedMutexGuard as MappedLockGuard, MappedRwLockReadGuard as MappedReadGuard,
         MappedRwLockWriteGuard as MappedWriteGuard, MutexGuard as LockGuard,
         RwLockReadGuard as ReadGuard, RwLockWriteGuard as WriteGuard,
-    };
-    pub use std::{
-        marker::{Send, Sync},
-        sync::Arc as Lrc,
     };
 }
 
@@ -279,12 +281,14 @@ impl<T> RwLock<T> {
         f(&*self.read())
     }
 
+    #[allow(clippy::result_unit_err)]
     #[cfg(not(feature = "concurrent"))]
     #[inline(always)]
     pub fn try_write(&self) -> Result<WriteGuard<'_, T>, ()> {
         self.0.try_borrow_mut().map_err(|_| ())
     }
 
+    #[allow(clippy::result_unit_err)]
     #[cfg(feature = "concurrent")]
     #[inline(always)]
     pub fn try_write(&self) -> Result<WriteGuard<'_, T>, ()> {

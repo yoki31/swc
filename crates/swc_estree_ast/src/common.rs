@@ -1,12 +1,13 @@
-use crate::{
-    class::*, comment::Comment, decl::*, expr::*, flow::*, jsx::*, lit::*, module::*, object::*,
-    pat::*, stmt::*, typescript::*,
-};
 use serde::{Deserialize, Serialize};
 use swc_atoms::JsWord;
 use swc_common::ast_serde;
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+use crate::{
+    class::*, comment::Comment, decl::*, expr::*, flow::*, jsx::*, lit::*, module::*, object::*,
+    pat::*, stmt::*, typescript::*,
+};
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct LineCol {
     pub line: usize,
@@ -19,7 +20,7 @@ impl LineCol {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Loc {
     pub start: LineCol,
@@ -35,8 +36,9 @@ impl Loc {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde-impl", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde-impl", serde(rename_all = "camelCase"))]
 pub struct BaseNode {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub leading_comments: Vec<Comment>,
@@ -46,14 +48,14 @@ pub struct BaseNode {
     pub trailing_comments: Vec<Comment>,
 
     #[serde(default)]
-    pub start: Option<usize>,
+    pub start: Option<u32>,
     #[serde(default)]
-    pub end: Option<usize>,
+    pub end: Option<u32>,
 
     #[serde(default, skip_serializing_if = "crate::flavor::Flavor::skip_range")]
-    pub range: Option<[usize; 2]>,
+    pub range: Option<[u32; 2]>,
 
-    #[serde(default, skip_serializing_if = "crate::flavor::Flavor::skip_loc")]
+    #[serde(default)]
     pub loc: Option<Loc>,
 }
 
@@ -407,7 +409,7 @@ pub struct Decorator {
     pub expression: Box<Expression>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[ast_serde("Noop")]
 pub struct Noop {
     #[serde(flatten)]
@@ -520,7 +522,7 @@ pub struct PrivateName {
     pub id: Identifier,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Access {
     Public,
@@ -537,7 +539,7 @@ pub struct MetaProperty {
     pub property: Identifier,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[ast_serde("Directive")]
 pub struct Directive {
     #[serde(flatten)]
@@ -545,7 +547,7 @@ pub struct Directive {
     pub value: DirectiveLiteral,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[ast_serde("DirectiveLiteral")]
 pub struct DirectiveLiteral {
     #[serde(flatten)]
@@ -570,7 +572,7 @@ pub struct PipelineTopicExpression {
     pub expression: Box<Expression>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum PlaceholderExpectedNode {
     Identifier,
     StringLiteral,

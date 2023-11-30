@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use std::{clone::Clone, cmp::Eq, hash::Hash};
+
 use swc_common::{Span, SyntaxContext, DUMMY_SP};
 use swc_ecma_ast::*;
 use swc_ecma_utils::ident::IdentLike;
@@ -16,7 +17,7 @@ const TRACK: bool = false;
 
 pub(crate) trait VarDeclaratorExt: Into<VarDeclarator> {
     fn into_module_item(self, injected_ctxt: SyntaxContext, name: &str) -> ModuleItem {
-        ModuleItem::Stmt(Stmt::Decl(Decl::Var(VarDecl {
+        ModuleItem::Stmt(Stmt::Decl(Decl::Var(Box::new(VarDecl {
             span: DUMMY_SP.with_ctxt(injected_ctxt),
             kind: VarDeclKind::Const,
             declare: false,
@@ -25,16 +26,15 @@ pub(crate) trait VarDeclaratorExt: Into<VarDeclarator> {
                     self.into(),
                     Str {
                         span: DUMMY_SP,
+                        raw: None,
                         value: name.into(),
-                        has_escape: false,
-                        kind: Default::default(),
                     }
                     .assign_to(Ident::new("INJECTED_FROM".into(), DUMMY_SP)),
                 ]
             } else {
                 vec![self.into()]
             },
-        })))
+        }))))
     }
 }
 
@@ -50,11 +50,8 @@ pub(crate) trait ExprExt: Into<Expr> {
         let lhs = lhs.into_id();
 
         if cfg!(debug_assertions) {
-            match &init {
-                Expr::Ident(rhs) => {
-                    debug_assert_ne!(lhs, rhs.to_id());
-                }
-                _ => {}
+            if let Expr::Ident(rhs) = &init {
+                debug_assert_ne!(lhs, rhs.to_id());
             }
         }
 
@@ -104,7 +101,7 @@ where
     V: Clone,
 {
     #[cfg(feature = "concurrent")]
-    inner: dashmap::DashMap<K, V, ahash::RandomState>,
+    inner: dashmap::DashMap<K, V, swc_common::collections::ARandomState>,
     #[cfg(not(feature = "concurrent"))]
     inner: std::cell::RefCell<swc_common::collections::AHashMap<K, V>>,
 }
@@ -128,20 +125,12 @@ where
 {
     #[cfg(feature = "concurrent")]
     pub fn get(&self, k: &K) -> Option<V> {
-        if let Some(v) = self.inner.get(k) {
-            Some(v.value().clone())
-        } else {
-            None
-        }
+        self.inner.get(k).map(|v| v.value().clone())
     }
 
     #[cfg(not(feature = "concurrent"))]
     pub fn get(&self, k: &K) -> Option<V> {
-        if let Some(v) = self.inner.borrow().get(k) {
-            Some(v.clone())
-        } else {
-            None
-        }
+        self.inner.borrow().get(k).map(|v| v.clone())
     }
 
     #[cfg(feature = "concurrent")]

@@ -2,56 +2,56 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                0,
+                1,
             ),
             hi: BytePos(
-                0,
+                1,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    0,
+                    1,
                 ),
                 hi: BytePos(
-                    0,
+                    1,
                 ),
                 ctxt: #0,
             },
-            value: Atom('' type=static),
+            value: "",
         },
         tags: [
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        0,
+                        1,
                     ),
                     hi: BytePos(
-                        9,
+                        10,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            0,
+                            1,
                         ),
                         hi: BytePos(
-                            9,
+                            10,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('protected' type=static),
+                    value: "protected",
                 },
                 tag: Protected(
                     ProtectedTag {
                         span: Span {
                             lo: BytePos(
-                                0,
+                                1,
                             ),
                             hi: BytePos(
-                                9,
+                                10,
                             ),
                             ctxt: #0,
                         },
@@ -59,14 +59,14 @@
                             Text {
                                 span: Span {
                                     lo: BytePos(
-                                        0,
+                                        1,
                                     ),
                                     hi: BytePos(
-                                        8,
+                                        9,
                                     ),
                                     ctxt: #0,
                                 },
-                                value: Atom('{number}' type=dynamic),
+                                value: "{number}",
                             },
                         ),
                     },
@@ -77,57 +77,56 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                48,
+                49,
             ),
             hi: BytePos(
-                48,
+                49,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    48,
+                    49,
                 ),
                 hi: BytePos(
-                    71,
+                    72,
                 ),
                 ctxt: #0,
             },
-            value: Atom('Unique ID generator.
-             *' type=dynamic),
+            value: "Unique ID generator.\n *",
         },
         tags: [
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        48,
+                        49,
                     ),
                     hi: BytePos(
-                        59,
+                        60,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            48,
+                            49,
                         ),
                         hi: BytePos(
-                            59,
+                            60,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('constructor' type=static),
+                    value: "constructor",
                 },
                 tag: Class(
                     ClassTag {
                         span: Span {
                             lo: BytePos(
-                                48,
+                                49,
                             ),
                             hi: BytePos(
-                                59,
+                                60,
                             ),
                             ctxt: #0,
                         },
@@ -141,24 +140,24 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                124,
+                125,
             ),
             hi: BytePos(
-                124,
+                125,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    124,
+                    125,
                 ),
                 hi: BytePos(
-                    145,
+                    146,
                 ),
                 ctxt: #0,
             },
-            value: Atom('Generate a unique ID.' type=dynamic),
+            value: "Generate a unique ID.",
         },
         tags: [],
     },

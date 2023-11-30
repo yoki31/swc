@@ -1,5 +1,19 @@
 #![allow(dead_code)]
 
+use anyhow::{Context, Error};
+use is_macro::Is;
+#[cfg(feature = "rayon")]
+use rayon::iter::ParallelIterator;
+use swc_common::{sync::Lrc, FileName, SourceFile, SyntaxContext};
+use swc_ecma_ast::{
+    CallExpr, Callee, Expr, Ident, ImportDecl, ImportSpecifier, MemberExpr, MemberProp, Module,
+    ModuleDecl, ModuleExportName, Str, SuperProp, SuperPropExpr,
+};
+use swc_ecma_transforms_base::resolver;
+use swc_ecma_visit::{
+    noop_visit_mut_type, noop_visit_type, FoldWith, Visit, VisitMut, VisitMutWith, VisitWith,
+};
+
 use super::{export::Exports, helpers::Helpers, Bundler};
 use crate::{
     bundler::{export::RawExports, import::RawImports},
@@ -8,20 +22,6 @@ use crate::{
     util,
     util::IntoParallelIterator,
     Load, Resolve,
-};
-use anyhow::{Context, Error};
-use is_macro::Is;
-#[cfg(feature = "rayon")]
-use rayon::iter::ParallelIterator;
-use swc_atoms::js_word;
-use swc_common::{sync::Lrc, FileName, SourceFile, SyntaxContext, DUMMY_SP};
-use swc_ecma_ast::{
-    CallExpr, Expr, ExprOrSuper, Ident, ImportDecl, ImportSpecifier, Invalid, MemberExpr, Module,
-    ModuleDecl, Str,
-};
-use swc_ecma_transforms_base::resolver::resolver_with_mark;
-use swc_ecma_visit::{
-    noop_visit_mut_type, noop_visit_type, FoldWith, Node, Visit, VisitMut, VisitMutWith, VisitWith,
 };
 /// Module after applying transformations.
 #[derive(Debug, Clone)]
@@ -73,14 +73,14 @@ where
             tracing::trace!("load_transformed: ({})", file_name);
 
             // In case of common module
-            if let Some(cached) = self.scope.get_module_by_path(&file_name) {
+            if let Some(cached) = self.scope.get_module_by_path(file_name) {
                 tracing::debug!("Cached: {}", file_name);
                 return Ok(Some(cached));
             }
 
-            let (_, data) = self.load(&file_name).context("Bundler.load() failed")?;
+            let (_, data) = self.load(file_name).context("Bundler.load() failed")?;
             let (v, mut files) = self
-                .analyze(&file_name, data)
+                .analyze(file_name, data)
                 .context("failed to analyze module")?;
             files.dedup_by_key(|v| v.1.clone());
 
@@ -117,7 +117,7 @@ where
 
             let data = self
                 .loader
-                .load(&file_name)
+                .load(file_name)
                 .with_context(|| format!("Bundler.loader.load({}) failed", file_name))?;
             self.scope.mark_as_loaded(module_id);
             Ok((module_id, data))
@@ -136,7 +136,9 @@ where
 
             data.module.visit_mut_with(&mut ClearMark);
 
-            let mut module = data.module.fold_with(&mut resolver_with_mark(local_mark));
+            let mut module =
+                data.module
+                    .fold_with(&mut resolver(self.unresolved_mark, local_mark, false));
 
             // {
             //     let code = self
@@ -183,7 +185,7 @@ where
                     forced_es6: false,
                     found_other: false,
                 };
-                module.visit_with(&Invalid { span: DUMMY_SP } as _, &mut v);
+                module.visit_with(&mut v);
                 v.forced_es6 || !v.found_other
             };
 
@@ -299,9 +301,9 @@ where
                         ImportDecl {
                             span: src.span,
                             specifiers: vec![],
-                            src,
+                            src: Box::new(src),
                             type_only: false,
-                            asserts: None,
+                            with: None,
                         },
                         true,
                         false,
@@ -338,7 +340,7 @@ where
                     module_id: id,
                     local_ctxt: SyntaxContext::empty().apply_mark(local_mark),
                     export_ctxt: SyntaxContext::empty().apply_mark(export_mark),
-                    src: decl.src,
+                    src: *decl.src,
                 };
                 files.push((src.clone(), file_name));
 
@@ -346,13 +348,22 @@ where
                 let mut specifiers = vec![];
                 for s in decl.specifiers {
                     match s {
-                        ImportSpecifier::Named(s) => specifiers.push(Specifier::Specific {
-                            local: s.local.into(),
-                            alias: s.imported.map(From::from),
-                        }),
+                        ImportSpecifier::Named(s) => {
+                            let imported = match s.imported {
+                                Some(ModuleExportName::Ident(ident)) => Some(ident),
+                                Some(ModuleExportName::Str(..)) => {
+                                    unimplemented!("module string names unimplemented")
+                                }
+                                _ => None,
+                            };
+                            specifiers.push(Specifier::Specific {
+                                local: s.local.into(),
+                                alias: imported.map(From::from),
+                            })
+                        }
                         ImportSpecifier::Default(s) => specifiers.push(Specifier::Specific {
                             local: s.local.into(),
-                            alias: Some(Id::new(js_word!("default"), s.span.ctxt())),
+                            alias: Some(Id::new("default".into(), s.span.ctxt())),
                         }),
                         ImportSpecifier::Namespace(s) => {
                             specifiers.push(Specifier::Namespace {
@@ -400,7 +411,7 @@ pub(crate) struct Source {
     pub local_ctxt: SyntaxContext,
     pub export_ctxt: SyntaxContext,
 
-    // Clone is relatively cheap, thanks to string_cache.
+    // Clone is relatively cheap, thanks to hstr.
     pub src: Str,
 }
 
@@ -415,54 +426,45 @@ struct Es6ModuleDetector {
 impl Visit for Es6ModuleDetector {
     noop_visit_type!();
 
-    fn visit_call_expr(&mut self, e: &CallExpr, _: &dyn Node) {
+    fn visit_call_expr(&mut self, e: &CallExpr) {
         e.visit_children_with(self);
 
         match &e.callee {
-            ExprOrSuper::Expr(e) => match &**e {
-                Expr::Ident(Ident {
-                    sym: js_word!("require"),
-                    ..
-                }) => {
+            Callee::Expr(e) => {
+                if let Expr::Ident(Ident { sym: _require, .. }) = &**e {
                     self.found_other = true;
                 }
-                _ => {}
-            },
-            ExprOrSuper::Super(_) => {}
-        }
-    }
-
-    fn visit_member_expr(&mut self, e: &MemberExpr, _: &dyn Node) {
-        e.obj.visit_with(e as _, self);
-
-        if e.computed {
-            e.prop.visit_with(e as _, self);
-        }
-
-        match &e.obj {
-            ExprOrSuper::Expr(e) => {
-                match &**e {
-                    Expr::Ident(i) => {
-                        // TODO: Check syntax context (Check if marker is the global mark)
-                        if i.sym == *"module" {
-                            self.found_other = true;
-                        }
-
-                        if i.sym == *"exports" {
-                            self.found_other = true;
-                        }
-                    }
-
-                    _ => {}
-                }
             }
-            _ => {}
+            Callee::Super(_) | Callee::Import(_) => {}
         }
-
-        //
     }
 
-    fn visit_module_decl(&mut self, decl: &ModuleDecl, _: &dyn Node) {
+    fn visit_member_expr(&mut self, e: &MemberExpr) {
+        e.obj.visit_with(self);
+
+        if let MemberProp::Computed(c) = &e.prop {
+            c.visit_with(self);
+        }
+
+        if let Expr::Ident(i) = &*e.obj {
+            // TODO: Check syntax context (Check if marker is the global mark)
+            if i.sym == *"module" {
+                self.found_other = true;
+            }
+
+            if i.sym == *"exports" {
+                self.found_other = true;
+            }
+        }
+    }
+
+    fn visit_super_prop_expr(&mut self, e: &SuperPropExpr) {
+        if let SuperProp::Computed(c) = &e.prop {
+            c.visit_with(self);
+        }
+    }
+
+    fn visit_module_decl(&mut self, decl: &ModuleDecl) {
         match decl {
             ModuleDecl::Import(_)
             | ModuleDecl::ExportDecl(_)

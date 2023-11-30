@@ -1,16 +1,15 @@
 //! Compatibility for terser config.
 
-use super::{true_by_default, CompressOptions, TopLevelOptions};
-use crate::option::PureGetterOption;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use swc_atoms::JsWord;
-use swc_common::{
-    collections::AHashMap, input::SourceFileInput, sync::Lrc, FileName, SourceMap, DUMMY_SP,
-};
+use swc_common::{collections::AHashMap, sync::Lrc, FileName, SourceMap, DUMMY_SP};
 use swc_ecma_ast::*;
-use swc_ecma_parser::{lexer::Lexer, Parser};
+use swc_ecma_parser::parse_file_as_expr;
 use swc_ecma_utils::drop_span;
+
+use super::{default_passes, true_by_default, CompressOptions, TopLevelOptions};
+use crate::option::PureGetterOption;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -96,19 +95,19 @@ pub struct TerserCompressorOptions {
     pub comparisons: Option<bool>,
 
     #[serde(default)]
-    pub computed_props: bool,
+    pub computed_props: Option<bool>,
 
     #[serde(default)]
-    pub conditionals: bool,
+    pub conditionals: Option<bool>,
 
     #[serde(default)]
-    pub dead_code: bool,
+    pub dead_code: Option<bool>,
 
     #[serde(default = "true_by_default")]
     pub defaults: bool,
 
     #[serde(default)]
-    pub directives: bool,
+    pub directives: Option<bool>,
 
     #[serde(default)]
     pub drop_console: bool,
@@ -116,7 +115,7 @@ pub struct TerserCompressorOptions {
     #[serde(default)]
     pub drop_debugger: Option<bool>,
 
-    #[serde(default = "ecma_default")]
+    #[serde(default)]
     pub ecma: TerserEcmaVersion,
 
     #[serde(default)]
@@ -152,8 +151,8 @@ pub struct TerserCompressorOptions {
     #[serde(default)]
     pub keep_classnames: bool,
 
-    #[serde(default)]
-    pub keep_fargs: Option<bool>,
+    #[serde(default = "true_by_default")]
+    pub keep_fargs: bool,
 
     #[serde(default)]
     pub keep_fnames: bool,
@@ -167,7 +166,7 @@ pub struct TerserCompressorOptions {
     #[serde(default)]
     pub negate_iife: Option<bool>,
 
-    #[serde(default)]
+    #[serde(default = "default_passes")]
     pub passes: usize,
 
     #[serde(default)]
@@ -180,10 +179,10 @@ pub struct TerserCompressorOptions {
     pub pure_funcs: Vec<String>,
 
     #[serde(default)]
-    pub reduce_funcs: bool,
+    pub reduce_funcs: Option<bool>,
 
     #[serde(default)]
-    pub reduce_vars: bool,
+    pub reduce_vars: Option<bool>,
 
     #[serde(default)]
     pub sequences: Option<TerserSequenceOptions>,
@@ -192,7 +191,7 @@ pub struct TerserCompressorOptions {
     pub side_effects: Option<bool>,
 
     #[serde(default)]
-    pub switches: bool,
+    pub switches: Option<bool>,
 
     #[serde(default)]
     pub top_retain: Option<TerserTopRetainOption>,
@@ -240,72 +239,15 @@ pub struct TerserCompressorOptions {
 
     #[serde(default)]
     pub module: bool,
+
+    #[serde(default)]
+    pub const_to_let: Option<bool>,
+
+    #[serde(default)]
+    pub pristine_globals: Option<bool>,
 }
 
-impl Default for TerserCompressorOptions {
-    fn default() -> Self {
-        Self {
-            arguments: Default::default(),
-            arrows: Default::default(),
-            booleans: Default::default(),
-            booleans_as_integers: Default::default(),
-            collapse_vars: Default::default(),
-            comparisons: Default::default(),
-            computed_props: Default::default(),
-            conditionals: Default::default(),
-            dead_code: Default::default(),
-            defaults: true,
-            directives: Default::default(),
-            drop_console: Default::default(),
-            drop_debugger: Default::default(),
-            ecma: Default::default(),
-            evaluate: Default::default(),
-            expression: Default::default(),
-            global_defs: Default::default(),
-            hoist_funs: Default::default(),
-            hoist_props: Default::default(),
-            hoist_vars: Default::default(),
-            ie8: Default::default(),
-            if_return: Default::default(),
-            inline: Default::default(),
-            join_vars: Default::default(),
-            keep_classnames: Default::default(),
-            keep_fargs: Default::default(),
-            keep_fnames: Default::default(),
-            keep_infinity: Default::default(),
-            loops: Default::default(),
-            negate_iife: Default::default(),
-            passes: Default::default(),
-            properties: Default::default(),
-            pure_getters: Default::default(),
-            pure_funcs: Default::default(),
-            reduce_funcs: Default::default(),
-            reduce_vars: Default::default(),
-            sequences: Default::default(),
-            side_effects: Default::default(),
-            switches: Default::default(),
-            top_retain: Default::default(),
-            toplevel: Default::default(),
-            typeofs: Default::default(),
-            unsafe_passes: Default::default(),
-            unsafe_arrows: Default::default(),
-            unsafe_comps: Default::default(),
-            unsafe_function: Default::default(),
-            unsafe_math: Default::default(),
-            unsafe_symbols: Default::default(),
-            unsafe_methods: Default::default(),
-            unsafe_proto: Default::default(),
-            unsafe_regexp: Default::default(),
-            unsafe_undefined: Default::default(),
-            unused: Default::default(),
-            module: Default::default(),
-        }
-    }
-}
-
-fn ecma_default() -> TerserEcmaVersion {
-    TerserEcmaVersion::Num(5)
-}
+impl_default!(TerserCompressorOptions);
 
 impl TerserCompressorOptions {
     pub fn into_config(self, cm: Lrc<SourceMap>) -> CompressOptions {
@@ -316,10 +258,10 @@ impl TerserCompressorOptions {
             bools_as_ints: self.booleans_as_integers,
             collapse_vars: self.collapse_vars.unwrap_or(self.defaults),
             comparisons: self.comparisons.unwrap_or(self.defaults),
-            computed_props: self.computed_props,
-            conditionals: self.conditionals,
-            dead_code: self.dead_code,
-            directives: self.directives,
+            computed_props: self.computed_props.unwrap_or(self.defaults),
+            conditionals: self.conditionals.unwrap_or(self.defaults),
+            dead_code: self.dead_code.unwrap_or(self.defaults),
+            directives: self.directives.unwrap_or(self.defaults),
             drop_console: self.drop_console,
             drop_debugger: self.drop_debugger.unwrap_or(self.defaults),
             ecma: self.ecma.into(),
@@ -332,23 +274,23 @@ impl TerserCompressorOptions {
                     let parse = |input: String| {
                         let fm = cm.new_source_file(FileName::Anon, input);
 
-                        let lexer = Lexer::new(
+                        parse_file_as_expr(
+                            &fm,
                             Default::default(),
                             Default::default(),
-                            SourceFileInput::from(&*fm),
                             None,
-                        );
-                        let mut parser = Parser::new_from(lexer);
-
-                        parser.parse_expr().map(drop_span).unwrap_or_else(|err| {
+                            &mut vec![],
+                        )
+                        .map(drop_span)
+                        .unwrap_or_else(|err| {
                             panic!(
                                 "failed to parse `global_defs.{}` of minifier options: {:?}",
                                 k, err
                             )
                         })
                     };
-                    let key = parse(if k.starts_with('@') {
-                        k[1..].to_string()
+                    let key = parse(if let Some(k) = k.strip_prefix('@') {
+                        k.to_string()
                     } else {
                         k.to_string()
                     });
@@ -392,10 +334,11 @@ impl TerserCompressorOptions {
                 .unwrap_or(if self.defaults { 3 } else { 0 }),
             join_vars: self.join_vars.unwrap_or(self.defaults),
             keep_classnames: self.keep_classnames,
-            keep_fargs: self.keep_fargs.unwrap_or(self.defaults),
+            keep_fargs: self.keep_fargs,
             keep_fnames: self.keep_fnames,
             keep_infinity: self.keep_infinity,
             loops: self.loops.unwrap_or(self.defaults),
+            module: self.module,
             negate_iife: self.negate_iife.unwrap_or(self.defaults),
             passes: self.passes,
             props: self.properties.unwrap_or(self.defaults),
@@ -406,8 +349,8 @@ impl TerserCompressorOptions {
                     PureGetterOption::Str(v.split(',').map(From::from).collect())
                 }
             },
-            reduce_fns: self.reduce_funcs,
-            reduce_vars: self.reduce_vars,
+            reduce_fns: self.reduce_funcs.unwrap_or(self.defaults),
+            reduce_vars: self.reduce_vars.unwrap_or(self.defaults),
             sequences: self
                 .sequences
                 .map(|v| match v {
@@ -422,7 +365,7 @@ impl TerserCompressorOptions {
                 })
                 .unwrap_or(if self.defaults { 3 } else { 0 }),
             side_effects: self.side_effects.unwrap_or(self.defaults),
-            switches: self.switches,
+            switches: self.switches.unwrap_or(self.defaults),
             top_retain: self.top_retain.map(From::from).unwrap_or_default(),
             top_level: self.toplevel.map(From::from),
             typeofs: self.typeofs.unwrap_or(self.defaults),
@@ -437,6 +380,30 @@ impl TerserCompressorOptions {
             unsafe_regexp: self.unsafe_regexp,
             unsafe_undefined: self.unsafe_undefined,
             unused: self.unused.unwrap_or(self.defaults),
+            const_to_let: self.const_to_let.unwrap_or(self.defaults),
+            pristine_globals: self.pristine_globals.unwrap_or(self.defaults),
+            pure_funcs: self
+                .pure_funcs
+                .into_iter()
+                .map(|input| {
+                    let fm = cm.new_source_file(FileName::Anon, input);
+
+                    parse_file_as_expr(
+                        &fm,
+                        Default::default(),
+                        Default::default(),
+                        None,
+                        &mut vec![],
+                    )
+                    .map(drop_span)
+                    .unwrap_or_else(|err| {
+                        panic!(
+                            "failed to parse `pure_funcs` of minifier options: {:?}",
+                            err
+                        )
+                    })
+                })
+                .collect(),
         }
     }
 }
@@ -465,6 +432,8 @@ impl From<TerserEcmaVersion> for EsVersion {
                 2018 => EsVersion::Es2018,
                 2019 => EsVersion::Es2019,
                 2020 => EsVersion::Es2020,
+                2021 => EsVersion::Es2021,
+                2022 => EsVersion::Es2022,
                 _ => {
                     panic!("`{}` is not a valid ecmascript version", v)
                 }
@@ -481,7 +450,7 @@ impl From<TerserTopRetainOption> for Vec<JsWord> {
     fn from(v: TerserTopRetainOption) -> Self {
         match v {
             TerserTopRetainOption::Str(s) => s
-                .split(",")
+                .split(',')
                 .filter(|s| s.trim() != "")
                 .map(|v| v.into())
                 .collect(),
@@ -498,21 +467,23 @@ fn value_to_expr(v: Value) -> Box<Expr> {
             value,
         }))),
         Value::Number(v) => {
-            if cfg!(feature = "debug") {
-                tracing::debug!("Creating a numeric literal from value");
-            }
+            trace_op!("Creating a numeric literal from value");
 
             Box::new(Expr::Lit(Lit::Num(Number {
                 span: DUMMY_SP,
                 value: v.as_f64().unwrap(),
+                raw: None,
             })))
         }
-        Value::String(v) => Box::new(Expr::Lit(Lit::Str(Str {
-            span: DUMMY_SP,
-            value: v.into(),
-            has_escape: false,
-            kind: Default::default(),
-        }))),
+        Value::String(v) => {
+            let value: JsWord = v.into();
+
+            Box::new(Expr::Lit(Lit::Str(Str {
+                span: DUMMY_SP,
+                raw: None,
+                value,
+            })))
+        }
 
         Value::Array(arr) => {
             let elems = arr
@@ -533,9 +504,8 @@ fn value_to_expr(v: Value) -> Box<Expr> {
                 .map(|(key, value)| KeyValueProp {
                     key: PropName::Str(Str {
                         span: DUMMY_SP,
+                        raw: None,
                         value: key.into(),
-                        has_escape: false,
-                        kind: Default::default(),
                     }),
                     value,
                 })

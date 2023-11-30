@@ -1,8 +1,7 @@
 while(a)// optimize it
 (function() {
-    b('c');
+    b("c");
 }());
-try {
-} catch (d) {
-    b('e');
+try {} catch (d) {
+    b("e");
 }

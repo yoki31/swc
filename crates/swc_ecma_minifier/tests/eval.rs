@@ -1,13 +1,15 @@
-use swc_common::{input::SourceFileInput, sync::Lrc, FileName, SourceMap};
+#![deny(warnings)]
+
+use swc_atoms::Atom;
+use swc_common::{sync::Lrc, FileName, Mark, SourceMap};
 use swc_ecma_ast::*;
 use swc_ecma_codegen::{text_writer::JsWriter, Emitter};
 use swc_ecma_minifier::{
     eval::{EvalResult, Evaluator},
     marks::Marks,
 };
-use swc_ecma_parser::{lexer::Lexer, EsConfig, Parser, Syntax};
-use swc_ecma_transforms::resolver;
-use swc_ecma_utils::ExprExt;
+use swc_ecma_parser::{parse_file_as_expr, parse_file_as_module, EsConfig, Syntax};
+use swc_ecma_transforms_base::resolver;
 use swc_ecma_visit::{noop_visit_mut_type, VisitMut, VisitMutWith};
 use testing::{assert_eq, DebugUsingDisplay};
 
@@ -16,28 +18,25 @@ fn eval(module: &str, expr: &str) -> Option<String> {
         let fm = cm.new_source_file(FileName::Anon, module.to_string());
         let marks = Marks::new();
 
-        let module_ast = {
-            let lexer = Lexer::new(
-                Default::default(),
-                EsVersion::latest(),
-                SourceFileInput::from(&*fm),
-                None,
-            );
-            let mut parser = Parser::new_from(lexer);
-            parser.parse_module().unwrap()
-        };
+        let module_ast = parse_file_as_module(
+            &fm,
+            Default::default(),
+            EsVersion::latest(),
+            None,
+            &mut vec![],
+        )
+        .unwrap();
 
         let expr_ast = {
             let fm = cm.new_source_file(FileName::Anon, expr.to_string());
-
-            let lexer = Lexer::new(
+            parse_file_as_expr(
+                &fm,
                 Default::default(),
                 EsVersion::latest(),
-                SourceFileInput::from(&*fm),
                 None,
-            );
-            let mut parser = Parser::new_from(lexer);
-            parser.parse_expr().unwrap()
+                &mut vec![],
+            )
+            .unwrap()
         };
 
         let mut evaluator = Evaluator::new(module_ast, marks);
@@ -67,6 +66,12 @@ fn simple() {
     assert_eq!(eval("const foo = 4", "foo").unwrap(), "4");
 }
 
+#[test]
+fn eval_lit() {
+    assert_eq!(eval("", "true").unwrap(), "true");
+    assert_eq!(eval("", "false").unwrap(), "false");
+}
+
 struct PartialInliner {
     marks: Marks,
     eval: Option<Evaluator>,
@@ -81,27 +86,25 @@ impl PartialInliner {
             let fm = cm.new_source_file(FileName::Anon, src.to_string());
             let marks = Marks::new();
 
-            let mut module = {
-                let lexer = Lexer::new(
-                    Syntax::Es(EsConfig {
-                        jsx: true,
-                        ..Default::default()
-                    }),
-                    EsVersion::latest(),
-                    SourceFileInput::from(&*fm),
-                    None,
-                );
-                let mut parser = Parser::new_from(lexer);
-                parser.parse_module().unwrap()
-            };
-            module.visit_mut_with(&mut resolver());
+            let mut module = parse_file_as_module(
+                &fm,
+                Syntax::Es(EsConfig {
+                    jsx: true,
+                    ..Default::default()
+                }),
+                EsVersion::latest(),
+                None,
+                &mut vec![],
+            )
+            .unwrap();
+            module.visit_mut_with(&mut resolver(Mark::new(), Mark::new(), false));
 
             let mut inliner = PartialInliner {
                 marks,
                 eval: Default::default(),
             };
 
-            op(cm.clone(), module, &mut inliner);
+            op(cm, module, &mut inliner);
 
             Ok(())
         })
@@ -115,17 +118,18 @@ impl PartialInliner {
 
             let expected_module = {
                 let fm = cm.new_source_file(FileName::Anon, expected.to_string());
-                let lexer = Lexer::new(
+
+                parse_file_as_module(
+                    &fm,
                     Syntax::Es(EsConfig {
                         jsx: true,
                         ..Default::default()
                     }),
                     EsVersion::latest(),
-                    SourceFileInput::from(&*fm),
                     None,
-                );
-                let mut parser = Parser::new_from(lexer);
-                parser.parse_module().unwrap()
+                    &mut vec![],
+                )
+                .unwrap()
             };
             let expected = {
                 let mut buf = vec![];
@@ -151,7 +155,7 @@ impl PartialInliner {
                         cfg: Default::default(),
                         cm: cm.clone(),
                         comments: None,
-                        wr: Box::new(JsWriter::new(cm.clone(), "\n", &mut buf, None)),
+                        wr: Box::new(JsWriter::new(cm, "\n", &mut buf, None)),
                     };
 
                     emitter.emit_module(&module).unwrap();
@@ -171,9 +175,9 @@ impl VisitMut for PartialInliner {
         e.visit_mut_children_with(self);
 
         if let Some(evaluator) = self.eval.as_mut() {
-            match e {
-                Expr::TaggedTpl(tt) => {
-                    if tt.tag.is_ident_ref_to("css".into()) {
+            if let Expr::TaggedTpl(tt) = e {
+                if let Expr::Ident(ref tag) = &*tt.tag {
+                    if &*tag.sym == "css" {
                         let res = evaluator.eval_tpl(&tt.tpl);
 
                         let res = match res {
@@ -186,14 +190,15 @@ impl VisitMut for PartialInliner {
                                 let el = TplElement {
                                     span: s.span,
                                     tail: true,
-                                    cooked: Some(s.clone()),
-                                    raw: s,
+                                    // TODO possible bug for quotes
+                                    raw: Atom::new(&*s.value),
+                                    cooked: Some(Atom::new(&*s.value)),
                                 };
-                                tt.tpl = Tpl {
+                                tt.tpl = Box::new(Tpl {
                                     span: el.span,
                                     exprs: Default::default(),
                                     quasis: vec![el],
-                                };
+                                });
                             }
                             _ => {
                                 unreachable!()
@@ -201,8 +206,6 @@ impl VisitMut for PartialInliner {
                         }
                     }
                 }
-
-                _ => {}
             }
         }
     }
@@ -465,4 +468,45 @@ fn partial_7() {
         )
         ",
     );
+}
+
+#[test]
+fn partial_8() {
+    PartialInliner::expect(
+        "const darken = c => c
+    const color = 'red'
+    const otherColor = 'green'
+    const mediumScreen = '680px'
+    const animationDuration = '200ms'
+    const animationName = 'my-cool-animation'
+    const obj = { display: 'block' }
+    
+    export default ({ display }) => (
+        css`
+          p.${color} {
+            color: ${otherColor};
+            display: ${obj.display};
+          }
+        `
+    )
+    ",
+        "
+        const darken = c => c
+    const color = 'red'
+    const otherColor = 'green'
+    const mediumScreen = '680px'
+    const animationDuration = '200ms'
+    const animationName = 'my-cool-animation'
+    const obj = { display: 'block' }
+    
+    export default ({ display }) => (
+        css`
+          p.red {
+            color: green;
+            display: block;
+          }
+        `
+    )
+        ",
+    )
 }

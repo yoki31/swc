@@ -1,5 +1,8 @@
-use crate::{version::should_enable, BrowserData, Version, Versions};
 use once_cell::sync::Lazy;
+use preset_env_base::{
+    version::{should_enable, Version},
+    BrowserData, Versions,
+};
 use string_enum::StringEnum;
 use swc_common::collections::AHashMap;
 
@@ -89,19 +92,24 @@ pub enum Feature {
     /// `transform-async-to-generator`
     AsyncToGenerator,
 
-    /// `proposal-async-generator-functions`
+    /// `transform-async-generator-functions`
+    #[string_enum(alias("proposal-async-generator-functions"))]
     AsyncGeneratorFunctions,
 
-    /// `proposal-object-rest-spread`
+    /// `transform-object-rest-spread`
+    #[string_enum(alias("proposal-object-rest-spread"))]
     ObjectRestSpread,
 
-    /// `proposal-unicode-property-regex`
+    /// `transform-unicode-property-regex`
+    #[string_enum(alias("proposal-unicode-property-regex"))]
     UnicodePropertyRegex,
 
-    /// `proposal-json-strings`
+    /// `transform-json-strings`
+    #[string_enum(alias("proposal-json-strings"))]
     JsonStrings,
 
-    /// `proposal-optional-catch-binding`
+    /// `transform-optional-catch-binding`
+    #[string_enum(alias("proposal-optional-catch-binding"))]
     OptionalCatchBinding,
 
     /// `transform-named-capturing-groups-regex`
@@ -116,29 +124,47 @@ pub enum Feature {
     /// `transform-reserved-words`
     ReservedWords,
 
-    /// `proposal-export-namespace-from`
+    /// `transform-export-namespace-from`
+    #[string_enum(alias("proposal-export-namespace-from"))]
     ExportNamespaceFrom,
 
-    /// `proposal-nullish-coalescing-operator`
+    /// `transform-nullish-coalescing-operator`
+    #[string_enum(alias("proposal-nullish-coalescing-operator"))]
     NullishCoalescing,
 
-    /// `proposal-logical-assignment-operators`
+    /// `transform-logical-assignment-operators`
+    #[string_enum(alias("proposal-logical-assignment-operators"))]
     LogicalAssignmentOperators,
 
-    /// `proposal-optional-chaining`
+    /// `transform-optional-chaining`
+    #[string_enum(alias("proposal-optional-chaining"))]
     OptionalChaining,
 
-    /// `proposal-class-properties`
+    /// `transform-class-properties`
+    #[string_enum(alias("proposal-class-properties"))]
     ClassProperties,
 
-    /// `proposal-numeric-separator`
+    /// `transform-numeric-separator`
+    #[string_enum(alias("proposal-numeric-separator"))]
     NumericSeparator,
 
-    /// `proposal-private-methods`
+    /// `transform-private-methods`
+    #[string_enum(alias("proposal-private-methods"))]
     PrivateMethods,
+
+    /// `transform-class-static-block`
+    #[string_enum(alias("proposal-class-static-block"))]
+    ClassStaticBlock,
+
+    /// `transform-private-property-in-object`
+    #[string_enum(alias("proposal-private-property-in-object"))]
+    PrivatePropertyInObject,
 
     /// `transform-unicode-escapes`
     UnicodeEscapes,
+
+    /// `transform-unicode-sets-regex`
+    UnicodeSetsRegex,
 
     /// `bugfix/transform-async-arrows-in-class`
     BugfixAsyncArrowsInClass,
@@ -148,19 +174,44 @@ pub enum Feature {
 
     /// `bugfix/transform-tagged-template-caching`
     BugfixTaggedTemplateCaching,
+
+    /// `bugfix/transform-safari-id-destructuring-collision-in-function-expression`
+    BugfixSafariIdDestructuringCollisionInFunctionExpression,
+
+    /// `bugfix/transform-edge-function-name`
+    BugfixTransformEdgeFunctionName, // TODO
+
+    /// `bugfix/transform-safari-block-shadowing`
+    BugfixTransformSafariBlockShadowing, // TODO
+
+    /// `bugfix/transform-safari-for-shadowing`
+    BugfixTransformSafariForShadowing, // TODO
+
+    /// `bugfix/transform-v8-spread-parameters-in-optional-chaining`
+    BugfixTransformV8SpreadParametersInOptionalChaining, // TODO
 }
 
 pub(crate) static FEATURES: Lazy<AHashMap<Feature, BrowserData<Option<Version>>>> =
     Lazy::new(|| {
         let map: AHashMap<Feature, BrowserData<Option<String>>> =
-            serde_json::from_str(include_str!("transform_data.json"))
+            serde_json::from_str(include_str!("../data/@babel/compat-data/data/plugins.json"))
                 .expect("failed to parse json");
 
         map.into_iter()
             .map(|(feature, version)| {
                 (
                     feature,
-                    version.map_value(|version| version.map(|v| v.parse().unwrap())),
+                    version.map_value(|version| {
+                        if matches!(version.as_deref(), Some("tp")) {
+                            return None;
+                        }
+
+                        version.map(|v| {
+                            v.parse().unwrap_or_else(|err| {
+                                panic!("failed to parse `{v}` as a version: {err:?}")
+                            })
+                        })
+                    }),
                 )
             })
             .collect()
@@ -168,9 +219,10 @@ pub(crate) static FEATURES: Lazy<AHashMap<Feature, BrowserData<Option<Version>>>
 
 pub(crate) static BUGFIX_FEATURES: Lazy<AHashMap<Feature, BrowserData<Option<Version>>>> =
     Lazy::new(|| {
-        let map: AHashMap<Feature, BrowserData<Option<String>>> =
-            serde_json::from_str(include_str!("transform_data_bugfixes.json"))
-                .expect("failed to parse json");
+        let map: AHashMap<Feature, BrowserData<Option<String>>> = serde_json::from_str(
+            include_str!("../data/@babel/compat-data/data/plugin-bugfixes.json"),
+        )
+        .expect("failed to parse json");
 
         FEATURES
             .clone()

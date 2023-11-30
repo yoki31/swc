@@ -2,58 +2,56 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                0,
+                1,
             ),
             hi: BytePos(
-                0,
+                1,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    0,
+                    1,
                 ),
                 hi: BytePos(
-                    15,
+                    16,
                 ),
                 ctxt: #0,
             },
-            value: Atom('My class.
-             *
-             *' type=dynamic),
+            value: "My class.\n *\n *",
         },
         tags: [
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        0,
+                        1,
                     ),
                     hi: BytePos(
-                        11,
+                        12,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            0,
+                            1,
                         ),
                         hi: BytePos(
-                            11,
+                            12,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('constructor' type=static),
+                    value: "constructor",
                 },
                 tag: Class(
                     ClassTag {
                         span: Span {
                             lo: BytePos(
-                                0,
+                                1,
                             ),
                             hi: BytePos(
-                                11,
+                                12,
                             ),
                             ctxt: #0,
                         },
@@ -61,14 +59,14 @@
                             Text {
                                 span: Span {
                                     lo: BytePos(
-                                        0,
+                                        1,
                                     ),
                                     hi: BytePos(
-                                        9,
+                                        10,
                                     ),
                                     ctxt: #0,
                                 },
-                                value: Atom('* @export' type=dynamic),
+                                value: "* @export",
                             },
                         ),
                         name: None,
@@ -80,58 +78,56 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                74,
+                75,
             ),
             hi: BytePos(
-                74,
+                75,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    74,
+                    75,
                 ),
                 hi: BytePos(
-                    97,
+                    98,
                 ),
                 ctxt: #0,
             },
-            value: Atom('My public method.
-             *
-             *' type=dynamic),
+            value: "My public method.\n *\n *",
         },
         tags: [
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        74,
+                        75,
                     ),
                     hi: BytePos(
-                        80,
+                        81,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            74,
+                            75,
                         ),
                         hi: BytePos(
-                            80,
+                            81,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('export' type=static),
+                    value: "export",
                 },
                 tag: Unknown(
                     UnknownTag {
                         span: Span {
                             lo: BytePos(
-                                74,
+                                75,
                             ),
                             hi: BytePos(
-                                80,
+                                81,
                             ),
                             ctxt: #0,
                         },
@@ -145,7 +141,7 @@
                                 ),
                                 ctxt: #0,
                             },
-                            value: Atom('' type=static),
+                            value: "",
                         },
                     },
                 ),

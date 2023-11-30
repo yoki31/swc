@@ -1,12 +1,14 @@
+use std::time::Instant;
+
+use anyhow::{Context, Error};
+#[cfg(feature = "rayon")]
+use rayon::iter::ParallelIterator;
+use swc_common::collections::AHashMap;
+
 use super::{load::TransformedModule, Bundler};
 use crate::{
     bundler::chunk::merge::Ctx, load::Load, resolve::Resolve, util::IntoParallelIterator, Bundle,
 };
-use anyhow::{Context, Error};
-#[cfg(feature = "rayon")]
-use rayon::iter::ParallelIterator;
-use std::time::Instant;
-use swc_common::collections::AHashMap;
 
 mod cjs;
 mod computed_key;
@@ -71,7 +73,7 @@ where
             .map(|id| -> Result<_, Error> {
                 self.run(|| {
                     // TODO: is_entry should be false if it's dep of other entry.
-                    let is_entry = plan.entries.contains_key(&id);
+                    let is_entry = plan.entries.contains_key(id);
                     let module = self.get_for_merging(&ctx, *id, is_entry)?;
 
                     Ok((*id, module))
@@ -87,7 +89,7 @@ where
         let entries = all
             .iter()
             .filter_map(|(id, module)| {
-                if plan.entries.contains_key(&id) {
+                if plan.entries.contains_key(id) {
                     return Some((*id, module.clone()));
                 }
                 None
@@ -153,9 +155,10 @@ where
 
 #[cfg(test)]
 mod tests {
+    use swc_common::FileName;
+
     use super::*;
     use crate::bundler::tests::suite;
-    use swc_common::FileName;
 
     #[test]
     fn cjs_chunk() {

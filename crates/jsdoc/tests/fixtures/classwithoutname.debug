@@ -2,57 +2,56 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                98,
+                99,
             ),
             hi: BytePos(
-                98,
+                99,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    98,
+                    99,
                 ),
                 hi: BytePos(
-                    135,
+                    136,
                 ),
                 ctxt: #0,
             },
-            value: Atom('Create an instance of MyClass.
-                 *' type=dynamic),
+            value: "Create an instance of MyClass.\n     *",
         },
         tags: [
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        98,
+                        99,
                     ),
                     hi: BytePos(
-                        108,
+                        109,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            98,
+                            99,
                         ),
                         hi: BytePos(
-                            108,
+                            109,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('constructs' type=dynamic),
+                    value: "constructs",
                 },
                 tag: Constructs(
                     ConstructsTag {
                         span: Span {
                             lo: BytePos(
-                                98,
+                                99,
                             ),
                             hi: BytePos(
-                                108,
+                                109,
                             ),
                             ctxt: #0,
                         },
@@ -66,7 +65,7 @@
                                 ),
                                 ctxt: #0,
                             },
-                            value: Atom('' type=static),
+                            value: "",
                         },
                     },
                 ),

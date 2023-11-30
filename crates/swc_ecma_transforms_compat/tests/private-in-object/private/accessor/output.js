@@ -1,14 +1,14 @@
-var _foo = new WeakMap();
-let Foo = function() {
+var _foo = /*#__PURE__*/ new WeakMap();
+let Foo = /*#__PURE__*/ function() {
     "use strict";
     function Foo() {
-        _classCallCheck(this, Foo);
-        _foo.set(this, {
-            get: foo,
+        _class_call_check(this, Foo);
+        _class_private_field_init(this, _foo, {
+            get: get_foo,
             set: void 0
         });
     }
-    _createClass(Foo, [
+    _create_class(Foo, [
         {
             key: "test",
             value: function test(other) {
@@ -18,5 +18,4 @@ let Foo = function() {
     ]);
     return Foo;
 }();
-function foo() {
-}
+function get_foo() {}

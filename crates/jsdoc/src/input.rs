@@ -1,10 +1,14 @@
-use crate::ast::Text;
-use nom::{Compare, CompareResult, InputIter, InputLength, InputTake, Slice, UnspecializedInput};
 use std::{
     ops::{Deref, Range, RangeFrom, RangeTo},
     str::{CharIndices, Chars},
 };
+
+use nom::{
+    Compare, CompareResult, InputIter, InputLength, InputTake, Needed, Slice, UnspecializedInput,
+};
 use swc_common::{comments::Comment, BytePos, Span};
+
+use crate::ast::Text;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Input<'i> {
@@ -13,7 +17,7 @@ pub struct Input<'i> {
     src: &'i str,
 }
 
-impl<'a, 'b> From<&'a Comment> for Input<'a> {
+impl<'a> From<&'a Comment> for Input<'a> {
     fn from(c: &'a Comment) -> Self {
         Self::new(c.span.lo, c.span.hi, &c.text)
     }
@@ -21,7 +25,7 @@ impl<'a, 'b> From<&'a Comment> for Input<'a> {
 
 impl<'i> Input<'i> {
     pub const fn empty() -> Self {
-        Self::new(BytePos(0), BytePos(0), "")
+        Self::new(BytePos::DUMMY, BytePos::DUMMY, "")
     }
 
     pub const fn new(start: BytePos, end: BytePos, src: &'i str) -> Self {
@@ -107,7 +111,7 @@ impl<'a> InputIter for Input<'a> {
         self.src.position(predicate)
     }
 
-    fn slice_index(&self, count: usize) -> Option<usize> {
+    fn slice_index(&self, count: usize) -> Result<usize, Needed> {
         self.src.slice_index(count)
     }
 }

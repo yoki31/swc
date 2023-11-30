@@ -32,7 +32,6 @@
 //! -----
 //!
 //! Adopted from `synstructure`.
-use crate::{def_site, is_attr_name, syn_ext::PairExt};
 use pmutil::{prelude::*, *};
 use proc_macro2::{Span, TokenStream};
 use quote::ToTokens;
@@ -41,6 +40,8 @@ use syn::{
     token::{Mut, Ref},
     *,
 };
+
+use crate::{def_site, is_attr_name, syn_ext::PairExt};
 
 /// Used to bind whole struct or enum.
 #[derive(Debug, Clone)]
@@ -56,6 +57,7 @@ impl<'a> Binder<'a> {
     pub const fn new(ident: &'a Ident, body: &'a Data, attrs: &'a [Attribute]) -> Self {
         Binder { ident, body, attrs }
     }
+
     pub fn new_from(input: &'a DeriveInput) -> Self {
         Self::new(&input.ident, &input.data, &input.attrs)
     }
@@ -71,7 +73,7 @@ impl<'a> Binder<'a> {
                     .collect()
             }
             Data::Struct(DataStruct { ref fields, .. }) => {
-                vec![VariantBinder::new(None, &self.ident, fields, self.attrs)]
+                vec![VariantBinder::new(None, self.ident, fields, self.attrs)]
             }
             Data::Union(_) => unimplemented!("Binder for union type"),
         }
@@ -111,6 +113,7 @@ impl<'a> VariantBinder<'a> {
     pub const fn data(&self) -> &Fields {
         self.data
     }
+
     pub const fn attrs(&self) -> &[Attribute] {
         self.attrs
     }
@@ -201,11 +204,12 @@ impl<'a> VariantBinder<'a> {
                     .collect();
                 // EnumName::VariantName { fields }
                 let pat = Pat::Struct(PatStruct {
-                    path,
-                    fields,
-                    brace_token,
-                    dot2_token: None,
                     attrs: Default::default(),
+                    qself: None,
+                    path,
+                    brace_token,
+                    fields,
+                    rest: None,
                 });
                 (pat, bindings)
             }
@@ -245,13 +249,11 @@ impl<'a> VariantBinder<'a> {
                     .collect();
                 // EnumName::VariantName ( fields )
                 let pat = Pat::TupleStruct(PatTupleStruct {
-                    path,
-                    pat: PatTuple {
-                        elems: pats,
-                        paren_token,
-                        attrs: Default::default(),
-                    },
                     attrs: Default::default(),
+                    qself: None,
+                    path,
+                    paren_token,
+                    elems: pats,
                 });
                 (pat, bindings)
             }

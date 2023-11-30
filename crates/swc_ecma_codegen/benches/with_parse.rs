@@ -1,13 +1,9 @@
-#![feature(test)]
-#![feature(bench_black_box)]
+extern crate swc_malloc;
 
-extern crate test;
-
-use std::hint::black_box;
+use criterion::{black_box, criterion_group, criterion_main, Bencher, Criterion};
 use swc_common::FileName;
 use swc_ecma_codegen::{self, Emitter};
 use swc_ecma_parser::{Parser, StringInput, Syntax};
-use test::Bencher;
 
 const COLORS_JS: &str = r#"
 'use strict';
@@ -84,8 +80,6 @@ module.exports = {
 const LARGE_PARTIAL_JS: &str = include_str!("large-partial.js");
 
 fn bench_emitter(b: &mut Bencher, s: &str) {
-    b.bytes = s.len() as _;
-
     let _ = ::testing::run_test(true, |cm, handler| {
         b.iter(|| {
             let fm = cm.new_source_file(FileName::Anon, s.into());
@@ -103,9 +97,7 @@ fn bench_emitter(b: &mut Bencher, s: &str) {
             let mut buf = vec![];
             {
                 let mut emitter = Emitter {
-                    cfg: swc_ecma_codegen::Config {
-                        ..Default::default()
-                    },
+                    cfg: Default::default(),
                     comments: None,
                     cm: cm.clone(),
                     wr: Box::new(swc_ecma_codegen::text_writer::JsWriter::new(
@@ -119,19 +111,21 @@ fn bench_emitter(b: &mut Bencher, s: &str) {
                 let _ = emitter.emit_module(&module);
             }
             black_box(buf);
-            let srcmap = cm.build_source_map(&mut src_map_buf);
+            let srcmap = cm.build_source_map(&src_map_buf);
             black_box(srcmap);
         });
         Ok(())
     });
 }
 
-#[bench]
-fn colors(b: &mut Bencher) {
-    bench_emitter(b, COLORS_JS)
+fn bench_cases(c: &mut Criterion) {
+    c.bench_function("es/codegen/with-parser/colors", |b| {
+        bench_emitter(b, COLORS_JS)
+    });
+    c.bench_function("es/codegen/with-parser/large", |b| {
+        bench_emitter(b, LARGE_PARTIAL_JS)
+    });
 }
 
-#[bench]
-fn large_partial(b: &mut Bencher) {
-    bench_emitter(b, LARGE_PARTIAL_JS)
-}
+criterion_group!(benches, bench_cases);
+criterion_main!(benches);

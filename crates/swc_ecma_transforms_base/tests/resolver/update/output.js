@@ -1,3 +1,3 @@
-let a = 1;
-a++;
-expect(a).toBe(2);
+let a__2 = 1;
+a__2++;
+expect(a__2).toBe(2);

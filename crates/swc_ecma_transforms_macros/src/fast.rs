@@ -1,8 +1,9 @@
-use crate::common::Mode;
 use pmutil::q;
 use proc_macro2::TokenStream;
 use swc_macros_common::call_site;
-use syn::{FnArg, Ident, ImplItem, ImplItemMethod, ItemImpl, Pat, Path, Stmt};
+use syn::{FnArg, Ident, ImplItem, ImplItemFn, ItemImpl, Pat, Path, Stmt};
+
+use crate::common::Mode;
 
 pub fn expand(attr: TokenStream, item: ItemImpl) -> ItemImpl {
     let expander = Expander {
@@ -15,7 +16,7 @@ pub fn expand(attr: TokenStream, item: ItemImpl) -> ItemImpl {
         items: items
             .into_iter()
             .map(|item| match item {
-                ImplItem::Method(m) => ImplItem::Method(expander.patch_method(m)),
+                ImplItem::Fn(m) => ImplItem::Fn(expander.patch_method(m)),
                 _ => item,
             })
             .collect(),
@@ -25,7 +26,7 @@ pub fn expand(attr: TokenStream, item: ItemImpl) -> ItemImpl {
 
 fn detect_mode(i: &ItemImpl) -> Mode {
     if i.items.iter().any(|item| match item {
-        ImplItem::Method(m) => m.sig.ident.to_string().starts_with("fold"),
+        ImplItem::Fn(m) => m.sig.ident.to_string().starts_with("fold"),
         _ => false,
     }) {
         return Mode::Fold;
@@ -55,7 +56,7 @@ impl Expander {
 
         for (name, ty) in list {
             let has = items.iter().any(|item| match item {
-                ImplItem::Method(i) => i.sig.ident.to_string().ends_with(name),
+                ImplItem::Fn(i) => i.sig.ident.to_string().ends_with(name),
                 _ => false,
             });
             if has {
@@ -95,7 +96,7 @@ impl Expander {
     }
 
     /// Add fast path to a method
-    fn patch_method(&self, mut m: ImplItemMethod) -> ImplItemMethod {
+    fn patch_method(&self, mut m: ImplItemFn) -> ImplItemFn {
         let ty_arg = m
             .sig
             .inputs

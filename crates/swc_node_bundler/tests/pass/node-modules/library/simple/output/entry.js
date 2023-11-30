@@ -1,14 +1,34 @@
 function __swcpack_require__(mod) {
+    function interop(obj) {
+        if (obj && obj.__esModule) {
+            return obj;
+        } else {
+            var newObj = {};
+            if (obj != null) {
+                for(var key in obj){
+                    if (Object.prototype.hasOwnProperty.call(obj, key)) {
+                        var desc = Object.defineProperty && Object.getOwnPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : {};
+                        if (desc.get || desc.set) {
+                            Object.defineProperty(newObj, key, desc);
+                        } else {
+                            newObj[key] = obj[key];
+                        }
+                    }
+                }
+            }
+            newObj.default = obj;
+            return newObj;
+        }
+    }
     var cache;
     if (cache) {
         return cache;
     }
     var module = {
-        exports: {
-        }
+        exports: {}
     };
     mod(module, module.exports);
-    cache = module.exports;
+    cache = interop(module.exports);
     return cache;
 }
 var load = __swcpack_require__.bind(void 0, function(module, exports) {
@@ -53,12 +73,10 @@ var load = __swcpack_require__.bind(void 0, function(module, exports) {
         this.stream = options.stream || process.stderr;
         if (typeof options == 'number') {
             var total = options;
-            options = {
-            };
+            options = {};
             options.total = total;
         } else {
-            options = options || {
-            };
+            options = options || {};
             if ('string' != typeof fmt) throw new Error('format required');
             if ('number' != typeof options.total) throw new Error('total required');
         }
@@ -74,10 +92,8 @@ var load = __swcpack_require__.bind(void 0, function(module, exports) {
         };
         this.renderThrottle = options.renderThrottle !== 0 ? options.renderThrottle || 16 : 0;
         this.lastRender = -Infinity;
-        this.callback = options.callback || function() {
-        };
-        this.tokens = {
-        };
+        this.callback = options.callback || function() {};
+        this.tokens = {};
         this.lastDraw = '';
     }
     /**
@@ -192,5 +208,5 @@ var load = __swcpack_require__.bind(void 0, function(module, exports) {
 var load1 = __swcpack_require__.bind(void 0, function(module, exports) {
     module.exports = load();
 });
-var { default: progress  } = load1();
+var { default: progress } = load1();
 console.log(progress);

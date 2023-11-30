@@ -1,10 +1,11 @@
-use anyhow::Error;
 use std::{collections::HashMap, io::stdout};
+
+use anyhow::Error;
 use swc_bundler::{BundleKind, Bundler, Config, Hook, Load, ModuleData, ModuleRecord, Resolve};
 use swc_common::{sync::Lrc, FileName, FilePathMapping, Globals, SourceMap, Span};
 use swc_ecma_ast::KeyValueProp;
 use swc_ecma_codegen::{text_writer::JsWriter, Emitter};
-use swc_ecma_parser::{lexer::Lexer, EsConfig, Parser, StringInput, Syntax};
+use swc_ecma_parser::{parse_file_as_module, Syntax};
 
 fn main() {
     let _log = testing::init();
@@ -45,10 +46,10 @@ fn main() {
 
     let wr = stdout();
     let mut emitter = Emitter {
-        cfg: swc_ecma_codegen::Config { minify: false },
+        cfg: swc_ecma_codegen::Config::default(),
         cm: cm.clone(),
         comments: None,
-        wr: Box::new(JsWriter::new(cm.clone(), "\n", wr.lock(), None)),
+        wr: Box::new(JsWriter::new(cm, "\n", wr.lock(), None)),
     };
 
     emitter.emit_module(&bundle.module).unwrap();
@@ -66,17 +67,15 @@ impl Load for PathLoader {
         };
 
         let fm = self.cm.load_file(file)?;
-        let lexer = Lexer::new(
-            Syntax::Es(EsConfig {
-                ..Default::default()
-            }),
-            Default::default(),
-            StringInput::from(&*fm),
-            None,
-        );
 
-        let mut parser = Parser::new_from(lexer);
-        let module = parser.parse_module().expect("This should not happen");
+        let module = parse_file_as_module(
+            &fm,
+            Syntax::Es(Default::default()),
+            Default::default(),
+            None,
+            &mut vec![],
+        )
+        .expect("This should not happen");
 
         Ok(ModuleData {
             fm,
@@ -90,7 +89,7 @@ struct PathResolver;
 impl Resolve for PathResolver {
     fn resolve(&self, base: &FileName, module_specifier: &str) -> Result<FileName, Error> {
         assert!(
-            module_specifier.starts_with("."),
+            module_specifier.starts_with('.'),
             "We are not using node_modules within this example"
         );
 

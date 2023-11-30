@@ -1,11 +1,12 @@
+use is_macro::Is;
+use swc_common::{ast_node, util::take::Take, EqIgnoreSpan, Span, DUMMY_SP};
+
 use crate::{
     class::Decorator,
     pat::Pat,
     stmt::BlockStmt,
     typescript::{TsParamProp, TsTypeAnn, TsTypeParamDecl},
 };
-use is_macro::Is;
-use swc_common::{ast_node, util::take::Take, EqIgnoreSpan, Span, DUMMY_SP};
 
 /// Common parts of function and method.
 #[ast_node]
@@ -14,27 +15,27 @@ use swc_common::{ast_node, util::take::Take, EqIgnoreSpan, Span, DUMMY_SP};
 pub struct Function {
     pub params: Vec<Param>,
 
-    #[serde(default)]
+    #[cfg_attr(feature = "serde-impl", serde(default))]
     pub decorators: Vec<Decorator>,
 
     pub span: Span,
 
-    #[serde(default)]
+    #[cfg_attr(feature = "serde-impl", serde(default))]
     pub body: Option<BlockStmt>,
 
     /// if it's a generator.
-    #[serde(default, rename = "generator")]
+    #[cfg_attr(feature = "serde-impl", serde(default, rename = "generator"))]
     pub is_generator: bool,
 
     /// if it's an async function.
-    #[serde(default, rename = "async")]
+    #[cfg_attr(feature = "serde-impl", serde(default, rename = "async"))]
     pub is_async: bool,
 
-    #[serde(default, rename = "typeParameters")]
-    pub type_params: Option<TsTypeParamDecl>,
+    #[cfg_attr(feature = "serde-impl", serde(default, rename = "typeParameters"))]
+    pub type_params: Option<Box<TsTypeParamDecl>>,
 
-    #[serde(default)]
-    pub return_type: Option<TsTypeAnn>,
+    #[cfg_attr(feature = "serde-impl", serde(default))]
+    pub return_type: Option<Box<TsTypeAnn>>,
 }
 
 impl Take for Function {
@@ -57,9 +58,19 @@ impl Take for Function {
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct Param {
     pub span: Span,
-    #[serde(default)]
+    #[cfg_attr(feature = "serde-impl", serde(default))]
     pub decorators: Vec<Decorator>,
     pub pat: Pat,
+}
+
+impl From<Pat> for Param {
+    fn from(pat: Pat) -> Self {
+        Self {
+            span: DUMMY_SP,
+            decorators: Default::default(),
+            pat,
+        }
+    }
 }
 
 #[ast_node]

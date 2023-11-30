@@ -1,25 +1,33 @@
 #![allow(clippy::vec_box)]
+use is_macro::Is;
+#[cfg(feature = "serde-impl")]
+use serde::{
+    self,
+    de::{self, MapAccess, Visitor},
+    Deserialize, Deserializer,
+};
+use string_enum::StringEnum;
+use swc_atoms::Atom;
+use swc_common::{ast_node, util::take::Take, BytePos, EqIgnoreSpan, Span, Spanned, DUMMY_SP};
+
 use crate::{
     class::Class,
     function::Function,
     ident::{Ident, PrivateName},
     jsx::{JSXElement, JSXEmptyExpr, JSXFragment, JSXMemberExpr, JSXNamespacedName},
-    lit::{Bool, Lit, Number, Str},
+    lit::Lit,
     operators::{AssignOp, BinaryOp, UnaryOp, UpdateOp},
     pat::Pat,
     prop::Prop,
     stmt::BlockStmt,
     typescript::{
-        TsAsExpr, TsConstAssertion, TsNonNullExpr, TsTypeAnn, TsTypeAssertion, TsTypeParamDecl,
-        TsTypeParamInstantiation,
+        TsAsExpr, TsConstAssertion, TsInstantiation, TsNonNullExpr, TsSatisfiesExpr, TsTypeAnn,
+        TsTypeAssertion, TsTypeParamDecl, TsTypeParamInstantiation,
     },
-    Invalid,
+    ComputedPropName, Id, Invalid,
 };
-use is_macro::Is;
-use serde::{self, Deserialize, Serialize};
-use swc_common::{ast_node, util::take::Take, EqIgnoreSpan, Span, Spanned, DUMMY_SP};
 
-#[ast_node]
+#[ast_node(no_clone)]
 #[derive(Eq, Hash, Is, EqIgnoreSpan)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub enum Expr {
@@ -62,6 +70,9 @@ pub enum Expr {
     /// expression and property is an Identifier.
     #[tag("MemberExpression")]
     Member(MemberExpr),
+
+    #[tag("SuperPropExpression")]
+    SuperProp(SuperPropExpr),
 
     /// true ? 'a' : 'b'
     #[tag("ConditionalExpression")]
@@ -142,6 +153,12 @@ pub enum Expr {
     #[tag("TsAsExpression")]
     TsAs(TsAsExpr),
 
+    #[tag("TsInstantiation")]
+    TsInstantiation(TsInstantiation),
+
+    #[tag("TsSatisfiesExpression")]
+    TsSatisfies(TsSatisfiesExpr),
+
     #[tag("PrivateName")]
     PrivateName(PrivateName),
 
@@ -152,17 +169,182 @@ pub enum Expr {
     Invalid(Invalid),
 }
 
+// Memory layout depends on the version of rustc.
+// #[cfg(target_pointer_width = "64")]
+// assert_eq_size!(Expr, [u8; 80]);
+
+impl Expr {
+    pub fn is_ident_ref_to(&self, ident: &str) -> bool {
+        match self {
+            Expr::Ident(i) => i.sym == ident,
+            _ => false,
+        }
+    }
+
+    /// Normalize parenthesized expressions.
+    ///
+    /// This will normalize `(foo)`, `((foo))`, ... to `foo`.
+    ///
+    /// If `self` is not a parenthesized expression, it will be returned as is.
+    pub fn unwrap_parens(&self) -> &Expr {
+        let mut cur = self;
+        while let Expr::Paren(ref expr) = cur {
+            cur = &expr.expr;
+        }
+        cur
+    }
+
+    /// Normalize parenthesized expressions.
+    ///
+    /// This will normalize `(foo)`, `((foo))`, ... to `foo`.
+    ///
+    /// If `self` is not a parenthesized expression, it will be returned as is.
+    pub fn unwrap_parens_mut(&mut self) -> &mut Expr {
+        let mut cur = self;
+        while let Expr::Paren(ref mut expr) = cur {
+            cur = &mut expr.expr;
+        }
+        cur
+    }
+
+    /// Creates an expression from `exprs`. This will return first element if
+    /// the length is 1 and a sequential expression otherwise.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `exprs` is empty.
+    pub fn from_exprs(mut exprs: Vec<Box<Expr>>) -> Box<Expr> {
+        debug_assert!(!exprs.is_empty(), "`exprs` must not be empty");
+
+        if exprs.len() == 1 {
+            exprs.remove(0)
+        } else {
+            Box::new(Expr::Seq(SeqExpr {
+                span: DUMMY_SP,
+                exprs,
+            }))
+        }
+    }
+
+    /// Returns true for `eval` and member expressions.
+    pub fn directness_maters(&self) -> bool {
+        self.is_ident_ref_to("eval") || matches!(self, Expr::Member(..))
+    }
+}
+
+// Implement Clone without inline to avoid multiple copies of the
+// implementation.
+impl Clone for Expr {
+    fn clone(&self) -> Self {
+        use Expr::*;
+        match self {
+            This(e) => This(e.clone()),
+            Array(e) => Array(e.clone()),
+            Object(e) => Object(e.clone()),
+            Fn(e) => Fn(e.clone()),
+            Unary(e) => Unary(e.clone()),
+            Update(e) => Update(e.clone()),
+            Bin(e) => Bin(e.clone()),
+            Assign(e) => Assign(e.clone()),
+            Member(e) => Member(e.clone()),
+            SuperProp(e) => SuperProp(e.clone()),
+            Cond(e) => Cond(e.clone()),
+            Call(e) => Call(e.clone()),
+            New(e) => New(e.clone()),
+            Seq(e) => Seq(e.clone()),
+            Ident(e) => Ident(e.clone()),
+            Lit(e) => Lit(e.clone()),
+            Tpl(e) => Tpl(e.clone()),
+            TaggedTpl(e) => TaggedTpl(e.clone()),
+            Arrow(e) => Arrow(e.clone()),
+            Class(e) => Class(e.clone()),
+            Yield(e) => Yield(e.clone()),
+            MetaProp(e) => MetaProp(e.clone()),
+            Await(e) => Await(e.clone()),
+            Paren(e) => Paren(e.clone()),
+            JSXMember(e) => JSXMember(e.clone()),
+            JSXNamespacedName(e) => JSXNamespacedName(e.clone()),
+            JSXEmpty(e) => JSXEmpty(e.clone()),
+            JSXElement(e) => JSXElement(e.clone()),
+            JSXFragment(e) => JSXFragment(e.clone()),
+            TsTypeAssertion(e) => TsTypeAssertion(e.clone()),
+            TsConstAssertion(e) => TsConstAssertion(e.clone()),
+            TsNonNull(e) => TsNonNull(e.clone()),
+            TsAs(e) => TsAs(e.clone()),
+            TsInstantiation(e) => TsInstantiation(e.clone()),
+            PrivateName(e) => PrivateName(e.clone()),
+            OptChain(e) => OptChain(e.clone()),
+            Invalid(e) => Invalid(e.clone()),
+            TsSatisfies(e) => TsSatisfies(e.clone()),
+        }
+    }
+}
+
 impl Take for Expr {
     fn dummy() -> Self {
         Expr::Invalid(Invalid { span: DUMMY_SP })
     }
 }
 
+bridge_expr_from!(Ident, Id);
+bridge_expr_from!(FnExpr, Function);
+bridge_expr_from!(ClassExpr, Class);
+
+macro_rules! boxed_expr {
+    ($T:ty) => {
+        bridge_from!(Box<Expr>, Expr, $T);
+        bridge_from!(PatOrExpr, Box<Expr>, $T);
+    };
+}
+
+boxed_expr!(ThisExpr);
+boxed_expr!(ArrayLit);
+boxed_expr!(ObjectLit);
+boxed_expr!(FnExpr);
+boxed_expr!(UnaryExpr);
+boxed_expr!(UpdateExpr);
+boxed_expr!(BinExpr);
+boxed_expr!(AssignExpr);
+boxed_expr!(MemberExpr);
+boxed_expr!(SuperPropExpr);
+boxed_expr!(CondExpr);
+boxed_expr!(CallExpr);
+boxed_expr!(NewExpr);
+boxed_expr!(SeqExpr);
+bridge_from!(Box<Expr>, Expr, Ident);
+boxed_expr!(Lit);
+boxed_expr!(Tpl);
+boxed_expr!(TaggedTpl);
+boxed_expr!(ArrowExpr);
+boxed_expr!(ClassExpr);
+boxed_expr!(YieldExpr);
+boxed_expr!(MetaPropExpr);
+boxed_expr!(AwaitExpr);
+boxed_expr!(ParenExpr);
+boxed_expr!(JSXMemberExpr);
+boxed_expr!(JSXNamespacedName);
+boxed_expr!(JSXEmptyExpr);
+boxed_expr!(Box<JSXElement>);
+boxed_expr!(JSXFragment);
+boxed_expr!(TsTypeAssertion);
+boxed_expr!(TsConstAssertion);
+boxed_expr!(TsNonNullExpr);
+boxed_expr!(TsAsExpr);
+boxed_expr!(TsInstantiation);
+boxed_expr!(PrivateName);
+boxed_expr!(OptChainExpr);
+
 #[ast_node("ThisExpression")]
 #[derive(Eq, Hash, Copy, EqIgnoreSpan)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct ThisExpr {
     pub span: Span,
+}
+
+impl Take for ThisExpr {
+    fn dummy() -> Self {
+        ThisExpr { span: DUMMY_SP }
+    }
 }
 
 /// Array literal.
@@ -172,7 +354,7 @@ pub struct ThisExpr {
 pub struct ArrayLit {
     pub span: Span,
 
-    #[serde(default, rename = "elements")]
+    #[cfg_attr(feature = "serde-impl", serde(default, rename = "elements"))]
     pub elems: Vec<Option<ExprOrSpread>>,
 }
 
@@ -192,7 +374,7 @@ impl Take for ArrayLit {
 pub struct ObjectLit {
     pub span: Span,
 
-    #[serde(default, rename = "properties")]
+    #[cfg_attr(feature = "serde-impl", serde(default, rename = "properties"))]
     pub props: Vec<PropOrSpread>,
 }
 
@@ -217,15 +399,26 @@ pub enum PropOrSpread {
     Prop(Box<Prop>),
 }
 
+bridge_from!(PropOrSpread, Box<Prop>, Prop);
+
+impl Take for PropOrSpread {
+    fn dummy() -> Self {
+        PropOrSpread::Spread(SpreadElement {
+            dot3_token: DUMMY_SP,
+            expr: Take::dummy(),
+        })
+    }
+}
+
 #[ast_node("SpreadElement")]
 #[derive(Eq, Hash, EqIgnoreSpan)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct SpreadElement {
-    #[serde(rename = "spread")]
+    #[cfg_attr(feature = "serde-impl", serde(rename = "spread"))]
     #[span(lo)]
     pub dot3_token: Span,
 
-    #[serde(rename = "arguments")]
+    #[cfg_attr(feature = "serde-impl", serde(rename = "arguments"))]
     #[span(hi)]
     pub expr: Box<Expr>,
 }
@@ -245,10 +438,10 @@ impl Take for SpreadElement {
 pub struct UnaryExpr {
     pub span: Span,
 
-    #[serde(rename = "operator")]
+    #[cfg_attr(feature = "serde-impl", serde(rename = "operator"))]
     pub op: UnaryOp,
 
-    #[serde(rename = "argument")]
+    #[cfg_attr(feature = "serde-impl", serde(rename = "argument"))]
     pub arg: Box<Expr>,
 }
 
@@ -268,12 +461,12 @@ impl Take for UnaryExpr {
 pub struct UpdateExpr {
     pub span: Span,
 
-    #[serde(rename = "operator")]
+    #[cfg_attr(feature = "serde-impl", serde(rename = "operator"))]
     pub op: UpdateOp,
 
     pub prefix: bool,
 
-    #[serde(rename = "argument")]
+    #[cfg_attr(feature = "serde-impl", serde(rename = "argument"))]
     pub arg: Box<Expr>,
 }
 
@@ -294,7 +487,7 @@ impl Take for UpdateExpr {
 pub struct BinExpr {
     pub span: Span,
 
-    #[serde(rename = "operator")]
+    #[cfg_attr(feature = "serde-impl", serde(rename = "operator"))]
     pub op: BinaryOp,
 
     pub left: Box<Expr>,
@@ -318,12 +511,12 @@ impl Take for BinExpr {
 #[derive(Eq, Hash, EqIgnoreSpan)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct FnExpr {
-    #[serde(default, rename = "identifier")]
+    #[cfg_attr(feature = "serde-impl", serde(default, rename = "identifier"))]
     pub ident: Option<Ident>,
 
-    #[serde(flatten)]
+    #[cfg_attr(feature = "serde-impl", serde(flatten))]
     #[span]
-    pub function: Function,
+    pub function: Box<Function>,
 }
 
 impl Take for FnExpr {
@@ -335,17 +528,29 @@ impl Take for FnExpr {
     }
 }
 
+impl From<Box<Function>> for FnExpr {
+    fn from(function: Box<Function>) -> Self {
+        Self {
+            ident: None,
+            function,
+        }
+    }
+}
+
+bridge_from!(FnExpr, Box<Function>, Function);
+bridge_expr_from!(FnExpr, Box<Function>);
+
 /// Class expression.
 #[ast_node("ClassExpression")]
 #[derive(Eq, Hash, EqIgnoreSpan)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct ClassExpr {
-    #[serde(default, rename = "identifier")]
+    #[cfg_attr(feature = "serde-impl", serde(default, rename = "identifier"))]
     pub ident: Option<Ident>,
 
-    #[serde(flatten)]
+    #[cfg_attr(feature = "serde-impl", serde(flatten))]
     #[span]
-    pub class: Class,
+    pub class: Box<Class>,
 }
 
 impl Take for ClassExpr {
@@ -356,13 +561,41 @@ impl Take for ClassExpr {
         }
     }
 }
-#[ast_node("AssignmentExpression")]
+
+impl From<Box<Class>> for ClassExpr {
+    fn from(class: Box<Class>) -> Self {
+        Self { ident: None, class }
+    }
+}
+
+bridge_from!(ClassExpr, Box<Class>, Class);
+bridge_expr_from!(ClassExpr, Box<Class>);
+
+#[derive(Spanned, Clone, Debug, PartialEq)]
+#[cfg_attr(
+    any(feature = "rkyv-impl"),
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
+#[cfg_attr(
+    any(feature = "rkyv-impl"),
+    archive(bound(
+        serialize = "__S: rkyv::ser::Serializer + rkyv::ser::ScratchSpace + \
+                     rkyv::ser::SharedSerializeRegistry",
+        deserialize = "__D: rkyv::de::SharedDeserializeRegistry"
+    ))
+)]
+#[cfg_attr(feature = "rkyv-impl", archive(check_bytes))]
+#[cfg_attr(feature = "rkyv-impl", archive_attr(repr(C)))]
 #[derive(Eq, Hash, EqIgnoreSpan)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
+#[cfg_attr(feature = "serde-impl", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde-impl", serde(tag = "type"))]
+#[cfg_attr(feature = "serde-impl", serde(rename_all = "camelCase"))]
+#[cfg_attr(feature = "serde-impl", serde(rename = "AssignmentExpression"))]
 pub struct AssignExpr {
     pub span: Span,
 
-    #[serde(rename = "operator")]
+    #[cfg_attr(feature = "serde-impl", serde(rename = "operator"))]
     pub op: AssignOp,
 
     pub left: PatOrExpr,
@@ -381,19 +614,149 @@ impl Take for AssignExpr {
     }
 }
 
+impl AssignExpr {
+    pub fn is_simple_assign(&self) -> bool {
+        self.op == op!("=") && self.left.as_ident().is_some()
+    }
+}
+
+// Custom deserializer to convert `PatOrExpr::Pat(Box<Pat::Ident>)`
+// to `PatOrExpr::Expr(Box<Expr::Ident>)` when `op` is not `=`.
+// Same logic as parser:
+// https://github.com/swc-project/swc/blob/b87e3b0d4f46e6aea1ee7745f0bb3d129ef12b9c/crates/swc_ecma_parser/src/parser/pat.rs#L602-L610
+#[cfg(feature = "serde-impl")]
+impl<'de> Deserialize<'de> for AssignExpr {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct AssignExprVisitor;
+
+        impl<'de> Visitor<'de> for AssignExprVisitor {
+            type Value = AssignExpr;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("struct AssignExpr")
+            }
+
+            fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
+            where
+                M: MapAccess<'de>,
+            {
+                let mut span_field: Option<Span> = None;
+                let mut op_field: Option<AssignOp> = None;
+                let mut left_field: Option<PatOrExpr> = None;
+                let mut right_field: Option<Box<Expr>> = None;
+
+                while let Some(key) = map.next_key()? {
+                    match key {
+                        "span" => {
+                            if span_field.is_some() {
+                                return Err(de::Error::duplicate_field("span"));
+                            }
+                            span_field = Some(map.next_value()?);
+                        }
+                        "operator" => {
+                            if op_field.is_some() {
+                                return Err(de::Error::duplicate_field("operator"));
+                            }
+                            op_field = Some(map.next_value()?);
+                        }
+                        "left" => {
+                            if left_field.is_some() {
+                                return Err(de::Error::duplicate_field("left"));
+                            }
+                            left_field = Some(map.next_value()?);
+                        }
+                        "right" => {
+                            if right_field.is_some() {
+                                return Err(de::Error::duplicate_field("right"));
+                            }
+                            right_field = Some(map.next_value()?);
+                        }
+                        _ => {
+                            let _: de::IgnoredAny = map.next_value()?;
+                        }
+                    }
+                }
+
+                let span = span_field.ok_or_else(|| de::Error::missing_field("span"))?;
+                let op = op_field.ok_or_else(|| de::Error::missing_field("operator"))?;
+                let mut left = left_field.ok_or_else(|| de::Error::missing_field("left"))?;
+                let right = right_field.ok_or_else(|| de::Error::missing_field("right"))?;
+
+                if op != AssignOp::Assign {
+                    if let PatOrExpr::Pat(ref pat) = left {
+                        if let Pat::Ident(ident) = &**pat {
+                            left = PatOrExpr::Expr(Box::new(Expr::Ident(ident.id.clone())));
+                        }
+                    }
+                }
+
+                Ok(AssignExpr {
+                    span,
+                    op,
+                    left,
+                    right,
+                })
+            }
+        }
+
+        deserializer.deserialize_map(AssignExprVisitor)
+    }
+}
+
 #[ast_node("MemberExpression")]
 #[derive(Eq, Hash, EqIgnoreSpan)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct MemberExpr {
     pub span: Span,
 
-    #[serde(rename = "object")]
-    pub obj: ExprOrSuper,
+    #[cfg_attr(feature = "serde-impl", serde(rename = "object"))]
+    pub obj: Box<Expr>,
 
-    #[serde(rename = "property")]
-    pub prop: Box<Expr>,
+    #[cfg_attr(feature = "serde-impl", serde(rename = "property"))]
+    pub prop: MemberProp,
+}
 
-    pub computed: bool,
+#[ast_node]
+#[derive(Eq, Hash, Is, EqIgnoreSpan)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
+pub enum MemberProp {
+    #[tag("Identifier")]
+    Ident(Ident),
+    #[tag("PrivateName")]
+    PrivateName(PrivateName),
+    #[tag("Computed")]
+    Computed(ComputedPropName),
+}
+
+impl MemberProp {
+    pub fn is_ident_with(&self, sym: &str) -> bool {
+        matches!(self, MemberProp::Ident(i) if i.sym == sym)
+    }
+}
+
+#[ast_node("SuperPropExpression")]
+#[derive(Eq, Hash, EqIgnoreSpan)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
+pub struct SuperPropExpr {
+    pub span: Span,
+
+    pub obj: Super,
+
+    #[cfg_attr(feature = "serde-impl", serde(rename = "property"))]
+    pub prop: SuperProp,
+}
+
+#[ast_node]
+#[derive(Eq, Hash, Is, EqIgnoreSpan)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
+pub enum SuperProp {
+    #[tag("Identifier")]
+    Ident(Ident),
+    #[tag("Computed")]
+    Computed(ComputedPropName),
 }
 
 impl Take for MemberExpr {
@@ -402,8 +765,19 @@ impl Take for MemberExpr {
             span: DUMMY_SP,
             obj: Take::dummy(),
             prop: Take::dummy(),
-            computed: false,
         }
+    }
+}
+
+impl Take for MemberProp {
+    fn dummy() -> Self {
+        MemberProp::Ident(Ident::dummy())
+    }
+}
+
+impl Take for SuperProp {
+    fn dummy() -> Self {
+        SuperProp::Ident(Ident::dummy())
     }
 }
 
@@ -415,10 +789,10 @@ pub struct CondExpr {
 
     pub test: Box<Expr>,
 
-    #[serde(rename = "consequent")]
+    #[cfg_attr(feature = "serde-impl", serde(rename = "consequent"))]
     pub cons: Box<Expr>,
 
-    #[serde(rename = "alternate")]
+    #[cfg_attr(feature = "serde-impl", serde(rename = "alternate"))]
     pub alt: Box<Expr>,
 }
 
@@ -439,13 +813,13 @@ impl Take for CondExpr {
 pub struct CallExpr {
     pub span: Span,
 
-    pub callee: ExprOrSuper,
+    pub callee: Callee,
 
-    #[serde(default, rename = "arguments")]
+    #[cfg_attr(feature = "serde-impl", serde(default, rename = "arguments"))]
     pub args: Vec<ExprOrSpread>,
 
-    #[serde(default, rename = "typeArguments")]
-    pub type_args: Option<TsTypeParamInstantiation>,
+    #[cfg_attr(feature = "serde-impl", serde(default, rename = "typeArguments"))]
+    pub type_args: Option<Box<TsTypeParamInstantiation>>,
     // pub type_params: Option<TsTypeParamInstantiation>,
 }
 
@@ -468,11 +842,11 @@ pub struct NewExpr {
 
     pub callee: Box<Expr>,
 
-    #[serde(default, rename = "arguments")]
+    #[cfg_attr(feature = "serde-impl", serde(default, rename = "arguments"))]
     pub args: Option<Vec<ExprOrSpread>>,
 
-    #[serde(default, rename = "typeArguments")]
-    pub type_args: Option<TsTypeParamInstantiation>,
+    #[cfg_attr(feature = "serde-impl", serde(default, rename = "typeArguments"))]
+    pub type_args: Option<Box<TsTypeParamInstantiation>>,
     // pub type_params: Option<TsTypeParamInstantiation>,
 }
 
@@ -493,7 +867,7 @@ impl Take for NewExpr {
 pub struct SeqExpr {
     pub span: Span,
 
-    #[serde(rename = "expressions")]
+    #[cfg_attr(feature = "serde-impl", serde(rename = "expressions"))]
     pub exprs: Vec<Box<Expr>>,
 }
 
@@ -514,19 +888,20 @@ pub struct ArrowExpr {
 
     pub params: Vec<Pat>,
 
-    pub body: BlockStmtOrExpr,
+    /// This is boxed to reduce the type size of [Expr].
+    pub body: Box<BlockStmtOrExpr>,
 
-    #[serde(default, rename = "async")]
+    #[cfg_attr(feature = "serde-impl", serde(default, rename = "async"))]
     pub is_async: bool,
 
-    #[serde(default, rename = "generator")]
+    #[cfg_attr(feature = "serde-impl", serde(default, rename = "generator"))]
     pub is_generator: bool,
 
-    #[serde(default, rename = "typeParameters")]
-    pub type_params: Option<TsTypeParamDecl>,
+    #[cfg_attr(feature = "serde-impl", serde(default, rename = "typeParameters"))]
+    pub type_params: Option<Box<TsTypeParamDecl>>,
 
-    #[serde(default)]
-    pub return_type: Option<TsTypeAnn>,
+    #[cfg_attr(feature = "serde-impl", serde(default))]
+    pub return_type: Option<Box<TsTypeAnn>>,
 }
 
 impl Take for ArrowExpr {
@@ -549,10 +924,10 @@ impl Take for ArrowExpr {
 pub struct YieldExpr {
     pub span: Span,
 
-    #[serde(default, rename = "argument")]
+    #[cfg_attr(feature = "serde-impl", serde(default, rename = "argument"))]
     pub arg: Option<Box<Expr>>,
 
-    #[serde(default)]
+    #[cfg_attr(feature = "serde-impl", serde(default))]
     pub delegate: bool,
 }
 
@@ -567,15 +942,26 @@ impl Take for YieldExpr {
 }
 
 #[ast_node("MetaProperty")]
-#[derive(Eq, Hash, EqIgnoreSpan)]
+#[derive(Eq, Hash, EqIgnoreSpan, Copy)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct MetaPropExpr {
-    #[span(lo)]
-    pub meta: Ident,
+    pub span: Span,
+    pub kind: MetaPropKind,
+}
 
-    #[serde(rename = "property")]
-    #[span(hi)]
-    pub prop: Ident,
+#[derive(StringEnum, Clone, Copy, Eq, PartialEq, PartialOrd, Ord, Hash, EqIgnoreSpan)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
+#[cfg_attr(
+    any(feature = "rkyv-impl"),
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
+#[cfg_attr(feature = "rkyv-impl", archive(check_bytes))]
+#[cfg_attr(feature = "rkyv-impl", archive_attr(repr(u32)))]
+pub enum MetaPropKind {
+    /// `new.target`
+    NewTarget,
+    /// `import.meta`
+    ImportMeta,
 }
 
 #[ast_node("AwaitExpression")]
@@ -584,7 +970,7 @@ pub struct MetaPropExpr {
 pub struct AwaitExpr {
     pub span: Span,
 
-    #[serde(rename = "argument")]
+    #[cfg_attr(feature = "serde-impl", serde(rename = "argument"))]
     pub arg: Box<Expr>,
 }
 
@@ -594,7 +980,7 @@ pub struct AwaitExpr {
 pub struct Tpl {
     pub span: Span,
 
-    #[serde(rename = "expressions")]
+    #[cfg_attr(feature = "serde-impl", serde(rename = "expressions"))]
     pub exprs: Vec<Box<Expr>>,
 
     pub quasis: Vec<TplElement>,
@@ -618,11 +1004,12 @@ pub struct TaggedTpl {
 
     pub tag: Box<Expr>,
 
-    #[serde(default, rename = "typeParameters")]
-    pub type_params: Option<TsTypeParamInstantiation>,
+    #[cfg_attr(feature = "serde-impl", serde(default, rename = "typeParameters"))]
+    pub type_params: Option<Box<TsTypeParamInstantiation>>,
 
-    #[serde(rename = "template")]
-    pub tpl: Tpl,
+    /// This is boxed to reduce the type size of [Expr].
+    #[cfg_attr(feature = "serde-impl", serde(rename = "template"))]
+    pub tpl: Box<Tpl>,
 }
 
 impl Take for TaggedTpl {
@@ -638,12 +1025,18 @@ impl Take for TaggedTpl {
 
 #[ast_node("TemplateElement")]
 #[derive(Eq, Hash, EqIgnoreSpan)]
-#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct TplElement {
     pub span: Span,
     pub tail: bool,
-    pub cooked: Option<Str>,
-    pub raw: Str,
+
+    /// This value is never used by `swc_ecma_codegen`, and this fact is
+    /// considered as a public API.
+    ///
+    /// If you are going to use codegen right after creating a [TplElement], you
+    /// don't have to worry about this value.
+    pub cooked: Option<Atom>,
+
+    pub raw: Atom,
 }
 
 impl Take for TplElement {
@@ -651,9 +1044,26 @@ impl Take for TplElement {
         TplElement {
             span: DUMMY_SP,
             tail: Default::default(),
-            cooked: Take::dummy(),
-            raw: Take::dummy(),
+            cooked: None,
+            raw: Default::default(),
         }
+    }
+}
+
+#[cfg(feature = "arbitrary")]
+#[cfg_attr(docsrs, doc(cfg(feature = "arbitrary")))]
+impl<'a> arbitrary::Arbitrary<'a> for TplElement {
+    fn arbitrary(u: &mut arbitrary::Unstructured<'_>) -> arbitrary::Result<Self> {
+        let span = u.arbitrary()?;
+        let cooked = Some(u.arbitrary::<String>()?.into());
+        let raw = u.arbitrary::<String>()?.into();
+
+        Ok(Self {
+            span,
+            tail: false,
+            cooked,
+            raw,
+        })
     }
 }
 
@@ -663,7 +1073,7 @@ impl Take for TplElement {
 pub struct ParenExpr {
     pub span: Span,
 
-    #[serde(rename = "expression")]
+    #[cfg_attr(feature = "serde-impl", serde(rename = "expression"))]
     pub expr: Box<Expr>,
 }
 impl Take for ParenExpr {
@@ -676,21 +1086,23 @@ impl Take for ParenExpr {
 }
 
 #[ast_node]
-#[allow(variant_size_differences)]
 #[derive(Eq, Hash, Is, EqIgnoreSpan)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
-pub enum ExprOrSuper {
+pub enum Callee {
     #[tag("Super")]
     #[is(name = "super_")]
     Super(Super),
+
+    #[tag("Import")]
+    Import(Import),
 
     #[tag("*")]
     Expr(Box<Expr>),
 }
 
-impl Take for ExprOrSuper {
+impl Take for Callee {
     fn dummy() -> Self {
-        ExprOrSuper::Super(Take::dummy())
+        Callee::Super(Take::dummy())
     }
 }
 
@@ -707,17 +1119,48 @@ impl Take for Super {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Eq, Hash, EqIgnoreSpan)]
+#[ast_node("Import")]
+#[derive(Eq, Hash, Copy, EqIgnoreSpan)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
+pub struct Import {
+    pub span: Span,
+}
+
+impl Take for Import {
+    fn dummy() -> Self {
+        Import { span: DUMMY_SP }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, EqIgnoreSpan)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
+#[cfg_attr(
+    any(feature = "rkyv-impl"),
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
+#[cfg_attr(
+    any(feature = "rkyv-impl"),
+    archive(bound(
+        serialize = "__S: rkyv::ser::Serializer + rkyv::ser::ScratchSpace + \
+                     rkyv::ser::SharedSerializeRegistry",
+        deserialize = "__D: rkyv::de::SharedDeserializeRegistry"
+    ))
+)]
+#[cfg_attr(feature = "rkyv-impl", archive(check_bytes))]
+#[cfg_attr(feature = "rkyv-impl", archive_attr(repr(C)))]
+#[cfg_attr(feature = "serde-impl", derive(serde::Serialize, serde::Deserialize))]
 pub struct ExprOrSpread {
-    #[serde(default)]
+    #[cfg_attr(feature = "serde-impl", serde(default))]
+    #[cfg_attr(feature = "__rkyv", omit_bounds)]
     pub spread: Option<Span>,
 
-    #[serde(rename = "expression")]
+    #[cfg_attr(feature = "serde-impl", serde(rename = "expression"))]
+    #[cfg_attr(feature = "__rkyv", omit_bounds)]
     pub expr: Box<Expr>,
 }
 
 impl Spanned for ExprOrSpread {
+    #[inline]
     fn span(&self) -> Span {
         let expr = self.expr.span();
         match self.spread {
@@ -725,7 +1168,28 @@ impl Spanned for ExprOrSpread {
             None => expr,
         }
     }
+
+    #[inline]
+    fn span_lo(&self) -> BytePos {
+        match self.spread {
+            Some(s) => s.lo,
+            None => self.expr.span_lo(),
+        }
+    }
+
+    #[inline]
+    fn span_hi(&self) -> BytePos {
+        self.expr.span_hi()
+    }
 }
+
+impl From<Box<Expr>> for ExprOrSpread {
+    fn from(expr: Box<Expr>) -> Self {
+        Self { expr, spread: None }
+    }
+}
+
+bridge_from!(ExprOrSpread, Box<Expr>, Expr);
 
 #[ast_node]
 #[derive(Eq, Hash, Is, EqIgnoreSpan)]
@@ -736,6 +1200,15 @@ pub enum BlockStmtOrExpr {
     BlockStmt(BlockStmt),
     #[tag("*")]
     Expr(Box<Expr>),
+}
+
+impl<T> From<T> for BlockStmtOrExpr
+where
+    T: Into<Expr>,
+{
+    fn from(e: T) -> Self {
+        Self::Expr(Box::new(e.into()))
+    }
 }
 
 impl Take for BlockStmtOrExpr {
@@ -757,6 +1230,7 @@ pub enum PatOrExpr {
     #[tag("BinaryExpression")]
     #[tag("AssignmentExpression")]
     #[tag("MemberExpression")]
+    #[tag("SuperPropExpression")]
     #[tag("ConditionalExpression")]
     #[tag("CallExpression")]
     #[tag("NewExpression")]
@@ -789,6 +1263,10 @@ pub enum PatOrExpr {
     #[tag("*")]
     Pat(Box<Pat>),
 }
+
+bridge_from!(PatOrExpr, Box<Pat>, Pat);
+bridge_from!(PatOrExpr, Pat, Ident);
+bridge_from!(PatOrExpr, Pat, Id);
 
 impl PatOrExpr {
     /// Returns the [Pat] if this is a pattern, otherwise returns [None].
@@ -886,7 +1364,7 @@ impl PatOrExpr {
         match self {
             PatOrExpr::Pat(pat) => match *pat {
                 Pat::Expr(expr) => PatOrExpr::Expr(expr),
-                _ => return PatOrExpr::Pat(pat),
+                _ => PatOrExpr::Pat(pat),
             },
             _ => self,
         }
@@ -915,50 +1393,101 @@ impl Take for PatOrExpr {
     }
 }
 
-impl From<bool> for Expr {
-    fn from(value: bool) -> Self {
-        Expr::Lit(Lit::Bool(Bool {
-            span: DUMMY_SP,
-            value,
-        }))
-    }
-}
-
-impl From<f64> for Expr {
-    fn from(value: f64) -> Self {
-        Expr::Lit(Lit::Num(Number {
-            span: DUMMY_SP,
-            value,
-        }))
-    }
-}
-
-impl From<Bool> for Expr {
-    fn from(v: Bool) -> Self {
-        Expr::Lit(Lit::Bool(v))
-    }
-}
-
-impl From<Number> for Expr {
-    fn from(v: Number) -> Self {
-        Expr::Lit(Lit::Num(v))
-    }
-}
-
-impl From<Str> for Expr {
-    fn from(v: Str) -> Self {
-        Expr::Lit(Lit::Str(v))
-    }
-}
-
 #[ast_node("OptionalChainingExpression")]
 #[derive(Eq, Hash, EqIgnoreSpan)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct OptChainExpr {
     pub span: Span,
-    pub question_dot_token: Span,
-    pub expr: Box<Expr>,
+    pub optional: bool,
+    /// This is boxed to reduce the type size of [Expr].
+    pub base: Box<OptChainBase>,
 }
+
+#[ast_node]
+#[derive(Eq, Hash, Is, EqIgnoreSpan)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
+pub enum OptChainBase {
+    #[tag("MemberExpression")]
+    Member(MemberExpr),
+    #[tag("CallExpression")]
+    Call(OptCall),
+}
+
+#[ast_node("CallExpression")]
+#[derive(Eq, Hash, EqIgnoreSpan)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
+pub struct OptCall {
+    pub span: Span,
+
+    pub callee: Box<Expr>,
+
+    #[cfg_attr(feature = "serde-impl", serde(default, rename = "arguments"))]
+    pub args: Vec<ExprOrSpread>,
+
+    #[cfg_attr(feature = "serde-impl", serde(default, rename = "typeArguments"))]
+    pub type_args: Option<Box<TsTypeParamInstantiation>>,
+    // pub type_params: Option<TsTypeParamInstantiation>,
+}
+
+impl Take for OptChainExpr {
+    fn dummy() -> Self {
+        Self {
+            span: DUMMY_SP,
+            optional: false,
+            base: Box::new(OptChainBase::Member(Take::dummy())),
+        }
+    }
+}
+
+impl From<OptChainBase> for Expr {
+    fn from(opt: OptChainBase) -> Self {
+        match opt {
+            OptChainBase::Call(OptCall {
+                span,
+                callee,
+                args,
+                type_args,
+            }) => Self::Call(CallExpr {
+                callee: Callee::Expr(callee),
+                args,
+                span,
+                type_args,
+            }),
+            OptChainBase::Member(member) => Self::Member(member),
+        }
+    }
+}
+
+impl Take for OptCall {
+    fn dummy() -> Self {
+        Self {
+            span: DUMMY_SP,
+            callee: Take::dummy(),
+            args: Vec::new(),
+            type_args: None,
+        }
+    }
+}
+
+impl From<OptCall> for CallExpr {
+    fn from(
+        OptCall {
+            span,
+            callee,
+            args,
+            type_args,
+        }: OptCall,
+    ) -> Self {
+        Self {
+            span,
+            callee: Callee::Expr(callee),
+            args,
+            type_args,
+        }
+    }
+}
+
+bridge_expr_from!(CallExpr, OptCall);
 
 test_de!(
     jsx_element,

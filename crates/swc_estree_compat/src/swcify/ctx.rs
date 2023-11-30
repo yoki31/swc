@@ -1,4 +1,5 @@
 use std::sync::Arc;
+
 use swc_common::{BytePos, FileName, SourceFile, SourceMap, Span, SyntaxContext, DUMMY_SP};
 use swc_estree_ast::{BaseNode, LineCol, Loc};
 use swc_node_comments::SwcComments;
@@ -42,12 +43,12 @@ impl Context {
         let start = node
             .start
             .map(|offset| self.fm.start_pos + BytePos(offset as _))
-            .unwrap_or(BytePos(0));
+            .unwrap_or(BytePos::DUMMY);
 
         let end = node
             .end
             .map(|offset| self.fm.start_pos + BytePos(offset as _))
-            .unwrap_or(BytePos(0));
+            .unwrap_or(BytePos::DUMMY);
 
         Span::new(start, end, SyntaxContext::empty())
     }

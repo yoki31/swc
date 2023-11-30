@@ -1,10 +1,11 @@
-use super::{Emitter, Result};
-use crate::{list::ListFormat, text_writer::WriteJs};
-use swc_common::Spanned;
+use swc_common::{SourceMapper, Spanned};
 use swc_ecma_ast::*;
 use swc_ecma_codegen_macros::emitter;
 
-impl<'a, W> Emitter<'a, W>
+use super::{Emitter, Result};
+use crate::text_writer::WriteJs;
+
+impl<'a, W, S: SourceMapper + SourceMapperExt> Emitter<'a, W, S>
 where
     W: WriteJs,
 {
@@ -33,6 +34,19 @@ where
 
         space!();
         keyword!("as");
+        space!();
+
+        emit!(n.type_ann);
+    }
+
+    #[emitter]
+    fn emit_ts_satisfies_expr(&mut self, n: &TsSatisfiesExpr) -> Result {
+        self.emit_leading_comments_of_span(n.span(), false)?;
+
+        emit!(n.expr);
+
+        space!();
+        keyword!("satisfies");
         space!();
 
         emit!(n.type_ann);
@@ -86,6 +100,10 @@ where
         self.emit_leading_comments_of_span(n.span(), false)?;
 
         keyword!("new");
+        if let Some(type_params) = &n.type_params {
+            space!();
+            emit!(type_params);
+        }
 
         punct!("(");
         self.emit_list(n.span, Some(&n.params), ListFormat::Parameters)?;
@@ -108,8 +126,8 @@ where
         }
 
         keyword!("new");
-        space!();
         if let Some(type_params) = &n.type_params {
+            space!();
             emit!(type_params);
         }
 
@@ -277,11 +295,17 @@ where
         formatting_space!();
 
         emit!(n.module_ref);
+        formatting_semi!();
     }
 
     #[emitter]
     fn emit_ts_index_signature(&mut self, n: &TsIndexSignature) -> Result {
         self.emit_leading_comments_of_span(n.span(), false)?;
+
+        if n.readonly {
+            keyword!("readonly");
+            formatting_space!();
+        }
 
         punct!("[");
         self.emit_list(n.span, Some(&n.params), ListFormat::Parameters)?;
@@ -408,7 +432,6 @@ where
         self.emit_leading_comments_of_span(node.span(), false)?;
 
         punct!("`");
-        let i = 0;
 
         for i in 0..(node.quasis.len() + node.types.len()) {
             if i % 2 == 0 {
@@ -461,7 +484,7 @@ where
         punct!("[");
         emit!(n.type_param.name);
 
-        if let Some(constraints) = &n.type_param.constraint {
+        if n.type_param.constraint.is_some() {
             space!();
             keyword!("in");
             space!();
@@ -486,7 +509,7 @@ where
                 }
                 TruePlusMinus::Plus => {
                     punct!("+");
-                    punct!("/");
+                    punct!("?");
                 }
                 TruePlusMinus::Minus => {
                     punct!("-");
@@ -555,12 +578,21 @@ where
             space!();
         }
 
-        keyword!("module");
-        space!();
-        emit!(n.id);
-        formatting_space!();
+        if n.global {
+            keyword!("global");
+        } else {
+            keyword!("module");
+            space!();
+            emit!(n.id);
+        }
 
-        if let Some(body) = &n.body {
+        if let Some(mut body) = n.body.as_ref() {
+            while let TsNamespaceBody::TsNamespaceDecl(decl) = body {
+                punct!(".");
+                emit!(decl.id);
+                body = &*decl.body;
+            }
+            formatting_space!();
             emit!(body);
         }
     }
@@ -601,7 +633,17 @@ where
     fn emit_ts_ns_decl(&mut self, n: &TsNamespaceDecl) -> Result {
         self.emit_leading_comments_of_span(n.span(), false)?;
 
-        unimplemented!("emit_ts_ns_decl")
+        if n.declare {
+            keyword!("declare");
+            space!();
+        }
+
+        keyword!("namespace");
+        space!();
+        emit!(n.id);
+        formatting_space!();
+
+        emit!(n.body);
     }
 
     #[emitter]
@@ -635,7 +677,11 @@ where
     fn emit_ts_param_prop(&mut self, n: &TsParamProp) -> Result {
         self.emit_leading_comments_of_span(n.span(), false)?;
 
-        self.emit_accesibility(n.accessibility)?;
+        self.emit_accessibility(n.accessibility)?;
+
+        for dec in &n.decorators {
+            emit!(dec);
+        }
 
         if n.is_override {
             keyword!("override");
@@ -806,11 +852,7 @@ where
             emit!(n);
         }
 
-        if let Some(type_args) = &n.type_args {
-            punct!("<");
-            emit!(type_args);
-            punct!(">");
-        }
+        emit!(n.type_args);
     }
 
     #[emitter]
@@ -948,6 +990,21 @@ where
     fn emit_ts_type_param(&mut self, n: &TsTypeParam) -> Result {
         self.emit_leading_comments_of_span(n.span(), false)?;
 
+        if n.is_const {
+            keyword!("const");
+            space!();
+        }
+
+        if n.is_in {
+            keyword!("in");
+            space!();
+        }
+
+        if n.is_out {
+            keyword!("out");
+            space!();
+        }
+
         emit!(n.name);
 
         if let Some(constraints) = &n.constraint {
@@ -1012,6 +1069,7 @@ where
         keyword!("typeof");
         space!();
         emit!(n.expr_name);
+        emit!(n.type_args);
     }
 
     #[emitter]
@@ -1049,6 +1107,15 @@ where
 
         self.emit_list(n.span, Some(&n.types), ListFormat::UnionTypeConstituents)?;
     }
+
+    #[emitter]
+    fn emit_ts_instantiation(&mut self, n: &TsInstantiation) -> Result {
+        self.emit_leading_comments_of_span(n.span(), false)?;
+
+        emit!(n.expr);
+
+        emit!(n.type_args);
+    }
 }
 
 #[cfg(test)]
@@ -1061,5 +1128,15 @@ mod tests {
             "var memory: WebAssembly.Memory;",
             "var memory:WebAssembly.Memory",
         );
+    }
+
+    #[test]
+    fn type_arg() {
+        assert_min_typescript("do_stuff<T>()", "do_stuff<T>()");
+    }
+
+    #[test]
+    fn no_type_arg() {
+        assert_min_typescript("do_stuff()", "do_stuff()");
     }
 }

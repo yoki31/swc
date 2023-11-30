@@ -1,8 +1,10 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
 use swc::{
-    config::{IsModule, Options},
-    Compiler,
+    config::{Config, IsModule, Options},
+    try_with_handler, Compiler, HandlerOpts,
 };
+use swc_common::{errors::ColorConfig, sync::Lrc, FilePathMapping, SourceMap, GLOBALS};
 use testing::{NormalizedOutput, Tester};
 
 fn file(f: impl AsRef<Path>) -> NormalizedOutput {
@@ -16,7 +18,6 @@ fn file(f: impl AsRef<Path>) -> NormalizedOutput {
                 &handler,
                 &Options {
                     swcrc: true,
-                    is_module: IsModule::Bool(true),
                     ..Default::default()
                 },
             );
@@ -35,10 +36,49 @@ fn swcrc_simple() {
     println!("{}", f);
 }
 
-#[test]
-fn issue_1532() {
-    let f = file("tests/swcrc_errors/issue-1532/index.js");
-    println!("{}", f);
+#[testing::fixture("tests/errors/**/input.js")]
+#[testing::fixture("tests/errors/**/input.ts")]
+fn fixture(input: PathBuf) {
+    let _log = testing::init();
+    let output_path = input.parent().unwrap().join("output.swc-stderr");
 
-    assert!(f.contains("unknown variant `esnext`"))
+    let cm = Lrc::new(SourceMap::new(FilePathMapping::empty()));
+    let err = GLOBALS.set(&Default::default(), || {
+        try_with_handler(
+            cm.clone(),
+            HandlerOpts {
+                skip_filename: true,
+                color: ColorConfig::Never,
+            },
+            |handler| {
+                let c = Compiler::new(cm.clone());
+
+                let fm = cm.load_file(&input).expect("failed to load file");
+
+                match c.process_js_file(
+                    fm,
+                    handler,
+                    &Options {
+                        config: Config {
+                            is_module: Some(IsModule::Unknown),
+                            ..Default::default()
+                        },
+                        swcrc: true,
+
+                        ..Default::default()
+                    },
+                ) {
+                    Ok(..) => {}
+                    Err(err) => return Err(err),
+                }
+
+                Ok(())
+            },
+        )
+        .expect_err("should fail")
+    });
+
+    let output = NormalizedOutput::from(format!("{}", err));
+
+    output.compare_to_file(output_path).unwrap();
 }

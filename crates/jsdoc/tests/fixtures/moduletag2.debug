@@ -2,56 +2,56 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                0,
+                1,
             ),
             hi: BytePos(
-                6,
+                7,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    0,
+                    1,
                 ),
                 hi: BytePos(
-                    0,
+                    1,
                 ),
                 ctxt: #0,
             },
-            value: Atom('' type=static),
+            value: "",
         },
         tags: [
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        0,
+                        1,
                     ),
                     hi: BytePos(
-                        6,
+                        7,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            0,
+                            1,
                         ),
                         hi: BytePos(
-                            6,
+                            7,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('module' type=static),
+                    value: "module",
                 },
                 tag: Module(
                     ModuleTag {
                         span: Span {
                             lo: BytePos(
-                                0,
+                                1,
                             ),
                             hi: BytePos(
-                                6,
+                                7,
                             ),
                             ctxt: #0,
                         },
@@ -65,19 +65,19 @@
                                 ),
                                 ctxt: #0,
                             },
-                            value: Atom('' type=static),
+                            value: "",
                         },
                         ty: Text {
                             span: Span {
                                 lo: BytePos(
-                                    0,
+                                    1,
                                 ),
                                 hi: BytePos(
-                                    5,
+                                    6,
                                 ),
                                 ctxt: #0,
                             },
-                            value: Atom('color' type=inline),
+                            value: "color",
                         },
                     },
                 ),
@@ -87,48 +87,48 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                51,
+                52,
             ),
             hi: BytePos(
-                51,
+                52,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    51,
+                    52,
                 ),
                 hi: BytePos(
-                    77,
+                    78,
                 ),
                 ctxt: #0,
             },
-            value: Atom('Blend two colors together.' type=dynamic),
+            value: "Blend two colors together.",
         },
         tags: [],
     },
     JsDoc {
         span: Span {
             lo: BytePos(
-                128,
+                129,
             ),
             hi: BytePos(
-                128,
+                129,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    128,
+                    129,
                 ),
                 hi: BytePos(
-                    162,
+                    163,
                 ),
                 ctxt: #0,
             },
-            value: Atom('Darken a color by the given shade.' type=dynamic),
+            value: "Darken a color by the given shade.",
         },
         tags: [],
     },

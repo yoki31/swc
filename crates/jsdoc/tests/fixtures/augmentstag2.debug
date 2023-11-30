@@ -2,56 +2,56 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                68,
+                69,
             ),
             hi: BytePos(
-                68,
+                69,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    68,
+                    69,
                 ),
                 hi: BytePos(
-                    68,
+                    69,
                 ),
                 ctxt: #0,
             },
-            value: Atom('' type=static),
+            value: "",
         },
         tags: [
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        68,
+                        69,
                     ),
                     hi: BytePos(
-                        79,
+                        80,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            68,
+                            69,
                         ),
                         hi: BytePos(
-                            79,
+                            80,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('constructor' type=static),
+                    value: "constructor",
                 },
                 tag: Class(
                     ClassTag {
                         span: Span {
                             lo: BytePos(
-                                68,
+                                69,
                             ),
                             hi: BytePos(
-                                79,
+                                80,
                             ),
                             ctxt: #0,
                         },
@@ -59,14 +59,14 @@
                             Text {
                                 span: Span {
                                     lo: BytePos(
-                                        68,
+                                        69,
                                     ),
                                     hi: BytePos(
-                                        96,
+                                        97,
                                     ),
                                     ctxt: #0,
                                 },
-                                value: Atom('* @extends UndocumentedThing' type=dynamic),
+                                value: "* @extends UndocumentedThing",
                             },
                         ),
                         name: None,

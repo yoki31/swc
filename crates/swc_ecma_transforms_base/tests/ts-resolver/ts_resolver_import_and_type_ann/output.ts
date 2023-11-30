@@ -1,3 +1,3 @@
-import { Nullable } from 'nullable';
-const a: Nullable<string> = 'hello';
-console.log(a);
+import { Nullable__2 } from "nullable";
+const a__2: Nullable__2<string> = "hello";
+console.log(a__2);

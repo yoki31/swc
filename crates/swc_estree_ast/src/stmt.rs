@@ -20,6 +20,7 @@ use crate::{
         TSInterfaceDeclaration, TSModuleDeclaration, TSNamespaceExportDeclaration,
         TSTypeAliasDeclaration,
     },
+    UsingDeclaration,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -103,6 +104,8 @@ pub enum Statement {
     TypeAlias(TypeAlias),
     #[tag("EnumDeclaration")]
     EnumDecl(EnumDeclaration),
+    #[tag("UsingDeclaration")]
+    UsingDecl(UsingDeclaration),
     #[tag("TSDeclareFunction")]
     TSDeclFunc(TSDeclareFunction),
     #[tag("TSInterfaceDeclaration")]
@@ -207,7 +210,7 @@ pub struct ContinueStatement {
     pub label: Option<Identifier>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type")]
 pub struct DebuggerStatement {
     #[serde(flatten)]
@@ -223,7 +226,7 @@ pub struct DoWhileStatement {
     pub body: Box<Statement>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type")]
 pub struct EmptyStatement {
     #[serde(flatten)]

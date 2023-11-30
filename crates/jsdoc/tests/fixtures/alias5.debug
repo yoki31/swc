@@ -2,58 +2,56 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                0,
+                1,
             ),
             hi: BytePos(
-                0,
+                1,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    0,
+                    1,
                 ),
                 hi: BytePos(
-                    24,
+                    25,
                 ),
                 ctxt: #0,
             },
-            value: Atom('Toaster singleton.
-             *
-             *' type=dynamic),
+            value: "Toaster singleton.\n *\n *",
         },
         tags: [
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        0,
+                        1,
                     ),
                     hi: BytePos(
-                        5,
+                        6,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            0,
+                            1,
                         ),
                         hi: BytePos(
-                            5,
+                            6,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('class' type=static),
+                    value: "class",
                 },
                 tag: Class(
                     ClassTag {
                         span: Span {
                             lo: BytePos(
-                                0,
+                                1,
                             ),
                             hi: BytePos(
-                                5,
+                                6,
                             ),
                             ctxt: #0,
                         },
@@ -67,68 +65,66 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                128,
+                129,
             ),
             hi: BytePos(
-                193,
+                194,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    128,
+                    129,
                 ),
                 hi: BytePos(
-                    156,
+                    157,
                 ),
                 ctxt: #0,
             },
-            value: Atom('Toast an item.
-                 *
-                 *' type=dynamic),
+            value: "Toast an item.\n     *\n     *",
         },
         tags: [
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        128,
+                        129,
                     ),
                     hi: BytePos(
-                        133,
+                        134,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            128,
+                            129,
                         ),
                         hi: BytePos(
-                            133,
+                            134,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('alias' type=inline),
+                    value: "alias",
                 },
                 tag: Alias(
                     AliasTag {
                         span: Span {
                             lo: BytePos(
-                                128,
+                                129,
                             ),
                             hi: BytePos(
-                                133,
+                                134,
                             ),
                             ctxt: #0,
                         },
                         name_path: NamePath {
                             span: Span {
                                 lo: BytePos(
-                                    128,
+                                    129,
                                 ),
                                 hi: BytePos(
-                                    193,
+                                    194,
                                 ),
                                 ctxt: #0,
                             },
@@ -136,14 +132,14 @@
                                 Text {
                                     span: Span {
                                         lo: BytePos(
-                                            128,
+                                            129,
                                         ),
                                         hi: BytePos(
-                                            135,
+                                            136,
                                         ),
                                         ctxt: #0,
                                     },
-                                    value: Atom('Toaster' type=inline),
+                                    value: "Toaster",
                                 },
                             ],
                         },
@@ -155,68 +151,66 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                305,
+                306,
             ),
             hi: BytePos(
-                305,
+                306,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    305,
+                    306,
                 ),
                 hi: BytePos(
-                    337,
+                    338,
                 ),
                 ctxt: #0,
             },
-            value: Atom('Clean the toaster.
-                 *
-                 *' type=dynamic),
+            value: "Clean the toaster.\n     *\n     *",
         },
         tags: [
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        305,
+                        306,
                     ),
                     hi: BytePos(
-                        310,
+                        311,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            305,
+                            306,
                         ),
                         hi: BytePos(
-                            310,
+                            311,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('alias' type=inline),
+                    value: "alias",
                 },
                 tag: Alias(
                     AliasTag {
                         span: Span {
                             lo: BytePos(
-                                305,
+                                306,
                             ),
                             hi: BytePos(
-                                310,
+                                311,
                             ),
                             ctxt: #0,
                         },
                         name_path: NamePath {
                             span: Span {
                                 lo: BytePos(
-                                    305,
+                                    306,
                                 ),
                                 hi: BytePos(
-                                    352,
+                                    353,
                                 ),
                                 ctxt: #0,
                             },
@@ -224,14 +218,14 @@
                                 Text {
                                     span: Span {
                                         lo: BytePos(
-                                            305,
+                                            306,
                                         ),
                                         hi: BytePos(
-                                            310,
+                                            311,
                                         ),
                                         ctxt: #0,
                                     },
-                                    value: Atom('clean' type=inline),
+                                    value: "clean",
                                 },
                             ],
                         },
@@ -241,43 +235,43 @@
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        305,
+                        306,
                     ),
                     hi: BytePos(
-                        313,
+                        314,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            305,
+                            306,
                         ),
                         hi: BytePos(
-                            313,
+                            314,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('memberof' type=dynamic),
+                    value: "memberof",
                 },
                 tag: MemberOf(
                     MemberOfTag {
                         span: Span {
                             lo: BytePos(
-                                305,
+                                306,
                             ),
                             hi: BytePos(
-                                313,
+                                314,
                             ),
                             ctxt: #0,
                         },
                         parent_name_path: NamePath {
                             span: Span {
                                 lo: BytePos(
-                                    305,
+                                    306,
                                 ),
                                 hi: BytePos(
-                                    327,
+                                    328,
                                 ),
                                 ctxt: #0,
                             },
@@ -285,14 +279,14 @@
                                 Text {
                                     span: Span {
                                         lo: BytePos(
-                                            305,
+                                            306,
                                         ),
                                         hi: BytePos(
-                                            312,
+                                            313,
                                         ),
                                         ctxt: #0,
                                     },
-                                    value: Atom('Toaster' type=inline),
+                                    value: "Toaster",
                                 },
                             ],
                         },
@@ -302,33 +296,33 @@
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        305,
+                        306,
                     ),
                     hi: BytePos(
-                        313,
+                        314,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            305,
+                            306,
                         ),
                         hi: BytePos(
-                            313,
+                            314,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('instance' type=dynamic),
+                    value: "instance",
                 },
                 tag: Instance(
                     InstanceTag {
                         span: Span {
                             lo: BytePos(
-                                305,
+                                306,
                             ),
                             hi: BytePos(
-                                313,
+                                314,
                             ),
                             ctxt: #0,
                         },
@@ -340,68 +334,66 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                479,
+                480,
             ),
             hi: BytePos(
-                552,
+                553,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    479,
+                    480,
                 ),
                 hi: BytePos(
-                    526,
+                    527,
                 ),
                 ctxt: #0,
             },
-            value: Atom('Get the Toaster instance.
-                     *
-                     *' type=dynamic),
+            value: "Get the Toaster instance.\n         *\n         *",
         },
         tags: [
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        479,
+                        480,
                     ),
                     hi: BytePos(
-                        484,
+                        485,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            479,
+                            480,
                         ),
                         hi: BytePos(
-                            484,
+                            485,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('alias' type=inline),
+                    value: "alias",
                 },
                 tag: Alias(
                     AliasTag {
                         span: Span {
                             lo: BytePos(
-                                479,
+                                480,
                             ),
                             hi: BytePos(
-                                484,
+                                485,
                             ),
                             ctxt: #0,
                         },
                         name_path: NamePath {
                             span: Span {
                                 lo: BytePos(
-                                    479,
+                                    480,
                                 ),
                                 hi: BytePos(
-                                    552,
+                                    553,
                                 ),
                                 ctxt: #0,
                             },
@@ -409,14 +401,14 @@
                                 Text {
                                     span: Span {
                                         lo: BytePos(
-                                            479,
+                                            480,
                                         ),
                                         hi: BytePos(
-                                            486,
+                                            487,
                                         ),
                                         ctxt: #0,
                                     },
-                                    value: Atom('Toaster' type=inline),
+                                    value: "Toaster",
                                 },
                             ],
                         },

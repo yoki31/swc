@@ -1,30 +1,223 @@
 //! Ported from [babel/babylon][]
 //!
 //! [babel/babylon]:https://github.com/babel/babel/blob/2d378d076eb0c5fe63234a8b509886005c01d7ee/packages/babylon/src/tokenizer/types.js
-pub(crate) use self::{AssignOpToken::*, BinOpToken::*, Keyword::*, Token::*};
-use crate::error::Error;
-use enum_kind::Kind;
-use num_bigint::BigInt as BigIntValue;
 use std::{
     borrow::Cow,
     fmt::{self, Debug, Display, Formatter},
 };
-use swc_atoms::{js_word, JsWord};
-use swc_common::{Span, Spanned};
-pub(crate) use swc_ecma_ast::AssignOp as AssignOpToken;
-use swc_ecma_ast::BinaryOp;
 
-#[derive(Kind, Clone, PartialEq)]
-#[kind(functions(starts_expr = "bool", before_expr = "bool"))]
+use num_bigint::BigInt as BigIntValue;
+use swc_atoms::{atom, Atom, AtomStore, JsWord};
+use swc_common::{Span, Spanned};
+use swc_ecma_ast::{AssignOp, BinaryOp};
+
+pub(crate) use self::{Keyword::*, Token::*};
+use crate::{error::Error, lexer::LexResult};
+
+macro_rules! define_known_ident {
+    (
+        $(
+            $name:ident => $value:tt,
+        )*
+    ) => {
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        #[non_exhaustive]
+        pub enum KnownIdent {
+            $(
+                $name
+            ),*
+        }
+
+        #[allow(unused)]
+        macro_rules! known_ident_token {
+            $(
+                ($value) => {
+                    crate::token::TokenKind::Word(crate::token::WordKind::Ident(
+                        crate::token::IdentKind::Known(crate::token::KnownIdent::$name),
+                    ))
+                };
+            )*
+        }
+
+        #[allow(unused)]
+        macro_rules! known_ident {
+            $(
+                ($value) => {
+                    crate::token::KnownIdent::$name
+                };
+            )*
+        }
+        #[allow(unused)]
+        macro_rules! ident_like {
+            $(
+                ($value) => {
+                    crate::token::IdentLike::Known(
+                        crate::token::KnownIdent::$name
+                    )
+                };
+            )*
+        }
+
+        static STR_TO_KNOWN_IDENT: phf::Map<&'static str, KnownIdent> = phf::phf_map! {
+            $(
+                $value => KnownIdent::$name,
+            )*
+        };
+
+
+
+
+        impl From<KnownIdent> for Atom {
+
+            fn from(s: KnownIdent) -> Self {
+                match s {
+                    $(
+                        KnownIdent::$name => atom!($value),
+                    )*
+                }
+            }
+        }
+        impl From<KnownIdent> for &'static str {
+
+            fn from(s: KnownIdent) -> Self {
+                match s {
+                    $(
+                        KnownIdent::$name => $value,
+                    )*
+                }
+            }
+        }
+    };
+}
+
+define_known_ident!(
+    Abstract => "abstract",
+    As => "as",
+    Async => "async",
+    From => "from",
+    Of => "of",
+    Type => "type",
+    Global => "global",
+    Static => "static",
+    Using => "using",
+    Readonly => "readonly",
+    Unique => "unique",
+    Keyof => "keyof",
+    Declare => "declare",
+    Enum => "enum",
+    Is => "is",
+    Infer => "infer",
+    Symbol => "symbol",
+    Undefined => "undefined",
+    Interface => "interface",
+    Implements => "implements",
+    Asserts => "asserts",
+    Require => "require",
+    Get => "get",
+    Set => "set",
+    Any => "any",
+    Intrinsic => "intrinsic",
+    Unknown => "unknown",
+    String => "string",
+    Object => "object",
+    Number => "number",
+    Bigint => "bigint",
+    Boolean => "boolean",
+    Never => "never",
+    Assert => "assert",
+    Namespace => "namespace",
+    Accessor => "accessor",
+    Meta => "meta",
+    Target => "target",
+    Satisfies => "satisfies",
+    Package => "package",
+    Protected => "protected",
+    Private => "private",
+    Public => "public",
+);
+
+impl std::str::FromStr for KnownIdent {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        STR_TO_KNOWN_IDENT.get(s).cloned().ok_or(())
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub enum WordKind {
+    Keyword(Keyword),
+
+    Null,
+    True,
+    False,
+
+    Ident(IdentKind),
+}
+
+impl From<Keyword> for WordKind {
+    #[inline(always)]
+    fn from(kwd: Keyword) -> Self {
+        Self::Keyword(kwd)
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub enum IdentKind {
+    Known(KnownIdent),
+    Other,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub enum TokenKind {
+    Word(WordKind),
+    Arrow,
+    Hash,
+    At,
+    Dot,
+    DotDotDot,
+    Bang,
+    LParen,
+    RParen,
+    LBracket,
+    RBracket,
+    LBrace,
+    RBrace,
+    Semi,
+    Comma,
+    BackQuote,
+    Template,
+    Colon,
+    BinOp(BinOpToken),
+    AssignOp(AssignOp),
+    DollarLBrace,
+    QuestionMark,
+    PlusPlus,
+    MinusMinus,
+    Tilde,
+    Str,
+    /// We abuse `token.raw` for flags
+    Regex,
+    Num,
+    BigInt,
+
+    JSXName,
+    JSXText,
+    JSXTagStart,
+    JSXTagEnd,
+
+    Shebang,
+    Error,
+}
+
+#[derive(Clone, PartialEq)]
 pub enum Token {
     /// Identifier, "null", "true", "false".
     ///
     /// Contains `null` and ``
-    #[kind(delegate)]
     Word(Word),
 
     /// '=>'
-    #[kind(before_expr)]
     Arrow,
 
     /// '#'
@@ -36,112 +229,179 @@ pub enum Token {
     Dot,
 
     /// '...'
-    #[kind(before_expr)]
     DotDotDot,
     /// '!'
-    #[kind(before_expr, starts_expr)]
     Bang,
 
     /// '('
-    #[kind(before_expr, starts_expr)]
     LParen,
     /// ')'
     RParen,
     /// `[`
-    #[kind(before_expr, starts_expr)]
     LBracket,
     /// ']'
     RBracket,
     /// '{'
-    #[kind(before_expr, starts_expr)]
     LBrace,
     /// '}'
     RBrace,
 
     /// ';'
-    #[kind(before_expr)]
     Semi,
     /// ','
-    #[kind(before_expr)]
     Comma,
 
     /// '`'
-    #[kind(starts_expr)]
     BackQuote,
     Template {
-        raw: JsWord,
-        cooked: Option<JsWord>,
-        has_escape: bool,
+        raw: Atom,
+        cooked: LexResult<Atom>,
     },
     /// ':'
-    #[kind(before_expr)]
     Colon,
-    /// '::'
-    #[kind(before_expr)]
-    ColonColon,
     ///
-    #[kind(delegate)]
     BinOp(BinOpToken),
     ///
-    #[kind(before_expr)]
-    AssignOp(AssignOpToken),
+    AssignOp(AssignOp),
 
     /// '${'
-    #[kind(before_expr, starts_expr)]
     DollarLBrace,
 
     /// '?'
-    #[kind(before_expr)]
     QuestionMark,
 
     /// `++`
-    #[kind(before_expr, starts_expr)]
     PlusPlus,
     /// `--`
-    #[kind(before_expr, starts_expr)]
     MinusMinus,
 
     /// `~`
-    #[kind(before_expr, starts_expr)]
     Tilde,
 
     /// String literal. Span of this token contains quote.
-    #[kind(starts_expr)]
     Str {
         value: JsWord,
-        /// This field exists because 'use\x20strict' is **not** an use strict
-        /// directive.
-        has_escape: bool,
+        raw: Atom,
     },
 
     /// Regexp literal.
-    #[kind(starts_expr)]
-    Regex(JsWord, JsWord),
+    Regex(Atom, Atom),
 
     /// TODO: Make Num as enum and separate decimal, binary, ..etc
-    #[kind(starts_expr)]
-    Num(f64),
+    Num {
+        value: f64,
+        raw: Atom,
+    },
 
-    #[kind(starts_expr)]
-    BigInt(BigIntValue),
+    BigInt {
+        value: Box<BigIntValue>,
+        raw: Atom,
+    },
 
     JSXName {
         name: JsWord,
     },
-    #[kind(before_expr)]
     JSXText {
-        raw: JsWord,
+        raw: Atom,
     },
-    #[kind(starts_expr)]
     JSXTagStart,
     JSXTagEnd,
 
-    Shebang(JsWord),
+    Shebang(Atom),
     Error(Error),
 }
 
-#[derive(Kind, Debug, Clone, Copy, Eq, PartialEq, Hash)]
-#[kind(functions(starts_expr = "bool"))]
+impl Token {
+    pub(crate) fn kind(&self) -> TokenKind {
+        match self {
+            Self::Arrow => TokenKind::Arrow,
+            Self::Hash => TokenKind::Hash,
+            Self::At => TokenKind::At,
+            Self::Dot => TokenKind::Dot,
+            Self::DotDotDot => TokenKind::DotDotDot,
+            Self::Bang => TokenKind::Bang,
+            Self::LParen => TokenKind::LParen,
+            Self::RParen => TokenKind::RParen,
+            Self::LBracket => TokenKind::LBracket,
+            Self::RBracket => TokenKind::RBracket,
+            Self::LBrace => TokenKind::LBrace,
+            Self::RBrace => TokenKind::RBrace,
+            Self::Semi => TokenKind::Semi,
+            Self::Comma => TokenKind::Comma,
+            Self::BackQuote => TokenKind::BackQuote,
+            Self::Template { .. } => TokenKind::Template,
+            Self::Colon => TokenKind::Colon,
+            Self::BinOp(op) => TokenKind::BinOp(*op),
+            Self::AssignOp(op) => TokenKind::AssignOp(*op),
+            Self::DollarLBrace => TokenKind::DollarLBrace,
+            Self::QuestionMark => TokenKind::QuestionMark,
+            Self::PlusPlus => TokenKind::PlusPlus,
+            Self::MinusMinus => TokenKind::MinusMinus,
+            Self::Tilde => TokenKind::Tilde,
+            Self::Str { .. } => TokenKind::Str,
+            Self::Regex(..) => TokenKind::Regex,
+            Self::Num { .. } => TokenKind::Num,
+            Self::BigInt { .. } => TokenKind::BigInt,
+            Self::JSXName { .. } => TokenKind::JSXName,
+            Self::JSXText { .. } => TokenKind::JSXText,
+            Self::JSXTagStart => TokenKind::JSXTagStart,
+            Self::JSXTagEnd => TokenKind::JSXTagEnd,
+            Self::Shebang(..) => TokenKind::Shebang,
+            Self::Error(..) => TokenKind::Error,
+            Self::Word(w) => TokenKind::Word(w.kind()),
+        }
+    }
+}
+
+impl TokenKind {
+    pub(crate) const fn before_expr(self) -> bool {
+        match self {
+            Self::Word(w) => w.before_expr(),
+            Self::BinOp(w) => w.before_expr(),
+            Self::Arrow
+            | Self::DotDotDot
+            | Self::Bang
+            | Self::LParen
+            | Self::LBrace
+            | Self::LBracket
+            | Self::Semi
+            | Self::Comma
+            | Self::Colon
+            | Self::AssignOp(..)
+            | Self::DollarLBrace
+            | Self::QuestionMark
+            | Self::PlusPlus
+            | Self::MinusMinus
+            | Self::Tilde
+            | Self::JSXText { .. } => true,
+            _ => false,
+        }
+    }
+
+    pub(crate) const fn starts_expr(self) -> bool {
+        match self {
+            Self::Word(w) => w.starts_expr(),
+            Self::BinOp(w) => w.starts_expr(),
+            Self::Bang
+            | Self::LParen
+            | Self::LBrace
+            | Self::LBracket
+            | Self::BackQuote
+            | Self::DollarLBrace
+            | Self::PlusPlus
+            | Self::MinusMinus
+            | Self::Tilde
+            | Self::Str
+            | Self::Regex
+            | Self::Num
+            | Self::BigInt
+            | Self::JSXTagStart => true,
+            _ => false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub enum BinOpToken {
     /// `==`
     EqEq,
@@ -167,10 +427,8 @@ pub enum BinOpToken {
     ZeroFillRShift,
 
     /// `+`
-    #[kind(starts_expr)]
     Add,
     /// `-`
-    #[kind(starts_expr)]
     Sub,
     /// `*`
     Mul,
@@ -205,7 +463,11 @@ pub enum BinOpToken {
 }
 
 impl BinOpToken {
-    pub const fn before_expr(self) -> bool {
+    pub(crate) const fn starts_expr(self) -> bool {
+        matches!(self, Self::Add | Self::Sub)
+    }
+
+    pub(crate) const fn before_expr(self) -> bool {
         true
     }
 }
@@ -219,74 +481,127 @@ pub struct TokenAndSpan {
 }
 
 impl Spanned for TokenAndSpan {
-    #[inline(always)]
+    #[inline]
     fn span(&self) -> Span {
         self.span
     }
 }
 
-#[derive(Kind, Clone, PartialEq, Eq, Hash)]
-#[kind(functions(starts_expr = "bool", before_expr = "bool"))]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub enum Word {
-    #[kind(delegate)]
     Keyword(Keyword),
 
-    #[kind(starts_expr)]
     Null,
-    #[kind(starts_expr)]
     True,
-    #[kind(starts_expr)]
     False,
 
-    #[kind(starts_expr)]
-    Ident(JsWord),
+    Ident(IdentLike),
 }
 
-impl From<JsWord> for Word {
-    fn from(i: JsWord) -> Self {
-        match i {
-            js_word!("null") => Word::Null,
-            js_word!("true") => Word::True,
-            js_word!("false") => Word::False,
-            js_word!("await") => Await.into(),
-            js_word!("break") => Break.into(),
-            js_word!("case") => Case.into(),
-            js_word!("catch") => Catch.into(),
-            js_word!("continue") => Continue.into(),
-            js_word!("debugger") => Debugger.into(),
-            js_word!("default") => Default_.into(),
-            js_word!("do") => Do.into(),
-            js_word!("export") => Export.into(),
-            js_word!("else") => Else.into(),
-            js_word!("finally") => Finally.into(),
-            js_word!("for") => For.into(),
-            js_word!("function") => Function.into(),
-            js_word!("if") => If.into(),
-            js_word!("return") => Return.into(),
-            js_word!("switch") => Switch.into(),
-            js_word!("throw") => Throw.into(),
-            js_word!("try") => Try.into(),
-            js_word!("var") => Var.into(),
-            js_word!("let") => Let.into(),
-            js_word!("const") => Const.into(),
-            js_word!("while") => While.into(),
-            js_word!("with") => With.into(),
-            js_word!("new") => New.into(),
-            js_word!("this") => This.into(),
-            js_word!("super") => Super.into(),
-            js_word!("class") => Class.into(),
-            js_word!("extends") => Extends.into(),
-            js_word!("import") => Import.into(),
-            js_word!("yield") => Yield.into(),
-            js_word!("in") => In.into(),
-            js_word!("instanceof") => InstanceOf.into(),
-            js_word!("typeof") => TypeOf.into(),
-            js_word!("void") => Void.into(),
-            js_word!("delete") => Delete.into(),
-            _ => Word::Ident(i),
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub enum IdentLike {
+    Known(KnownIdent),
+    Other(JsWord),
+}
+
+impl From<&'_ str> for IdentLike {
+    fn from(s: &str) -> Self {
+        s.parse::<KnownIdent>()
+            .map(Self::Known)
+            .unwrap_or_else(|_| Self::Other(s.into()))
+    }
+}
+
+impl IdentLike {
+    pub(crate) fn from_str(atoms: &mut AtomStore, s: &str) -> IdentLike {
+        s.parse::<KnownIdent>()
+            .map(Self::Known)
+            .unwrap_or_else(|_| Self::Other(atoms.atom(s)))
+    }
+}
+
+impl Word {
+    pub fn from_str(atoms: &mut AtomStore, s: &str) -> Self {
+        match s {
+            "null" => Word::Null,
+            "true" => Word::True,
+            "false" => Word::False,
+            "await" => Await.into(),
+            "break" => Break.into(),
+            "case" => Case.into(),
+            "catch" => Catch.into(),
+            "continue" => Continue.into(),
+            "debugger" => Debugger.into(),
+            "default" => Default_.into(),
+            "do" => Do.into(),
+            "export" => Export.into(),
+            "else" => Else.into(),
+            "finally" => Finally.into(),
+            "for" => For.into(),
+            "function" => Function.into(),
+            "if" => If.into(),
+            "return" => Return.into(),
+            "switch" => Switch.into(),
+            "throw" => Throw.into(),
+            "try" => Try.into(),
+            "var" => Var.into(),
+            "let" => Let.into(),
+            "const" => Const.into(),
+            "while" => While.into(),
+            "with" => With.into(),
+            "new" => New.into(),
+            "this" => This.into(),
+            "super" => Super.into(),
+            "class" => Class.into(),
+            "extends" => Extends.into(),
+            "import" => Import.into(),
+            "yield" => Yield.into(),
+            "in" => In.into(),
+            "instanceof" => InstanceOf.into(),
+            "typeof" => TypeOf.into(),
+            "void" => Void.into(),
+            "delete" => Delete.into(),
+            _ => Word::Ident(IdentLike::from_str(atoms, s)),
+        }
+    }
+
+    pub(crate) fn kind(&self) -> WordKind {
+        match self {
+            Word::Keyword(k) => WordKind::Keyword(*k),
+            Word::Null => WordKind::Null,
+            Word::True => WordKind::True,
+            Word::False => WordKind::False,
+            Word::Ident(IdentLike::Known(i)) => WordKind::Ident(IdentKind::Known(*i)),
+            Word::Ident(IdentLike::Other(..)) => WordKind::Ident(IdentKind::Other),
         }
     }
 }
+
+impl WordKind {
+    pub(crate) const fn before_expr(self) -> bool {
+        match self {
+            Self::Keyword(k) => k.before_expr(),
+            _ => false,
+        }
+    }
+
+    pub(crate) const fn starts_expr(self) -> bool {
+        match self {
+            Self::Keyword(k) => k.starts_expr(),
+            _ => true,
+        }
+    }
+}
+
+impl AsRef<str> for IdentLike {
+    fn as_ref(&self) -> &str {
+        match self {
+            IdentLike::Known(k) => (*k).into(),
+            IdentLike::Other(s) => s.as_ref(),
+        }
+    }
+}
+
 impl From<Keyword> for Word {
     fn from(kwd: Keyword) -> Self {
         Word::Keyword(kwd)
@@ -297,64 +612,74 @@ impl From<Word> for JsWord {
     fn from(w: Word) -> Self {
         match w {
             Word::Keyword(k) => match k {
-                Await => js_word!("await"),
-                Break => js_word!("break"),
-                Case => js_word!("case"),
-                Catch => js_word!("catch"),
-                Continue => js_word!("continue"),
-                Debugger => js_word!("debugger"),
-                Default_ => js_word!("default"),
-                Do => js_word!("do"),
-                Else => js_word!("else"),
+                Await => "await",
+                Break => "break",
+                Case => "case",
+                Catch => "catch",
+                Continue => "continue",
+                Debugger => "debugger",
+                Default_ => "default",
+                Do => "do",
+                Else => "else",
 
-                Finally => js_word!("finally"),
-                For => js_word!("for"),
+                Finally => "finally",
+                For => "for",
 
-                Function => js_word!("function"),
+                Function => "function",
 
-                If => js_word!("if"),
+                If => "if",
 
-                Return => js_word!("return"),
+                Return => "return",
 
-                Switch => js_word!("switch"),
+                Switch => "switch",
 
-                Throw => js_word!("throw"),
+                Throw => "throw",
 
-                Try => js_word!("try"),
-                Var => js_word!("var"),
-                Let => js_word!("let"),
-                Const => js_word!("const"),
-                While => js_word!("while"),
-                With => js_word!("with"),
+                Try => "try",
+                Var => "var",
+                Let => "let",
+                Const => "const",
+                While => "while",
+                With => "with",
 
-                New => js_word!("new"),
-                This => js_word!("this"),
-                Super => js_word!("super"),
+                New => "new",
+                This => "this",
+                Super => "super",
 
-                Class => js_word!("class"),
+                Class => "class",
 
-                Extends => js_word!("extends"),
+                Extends => "extends",
 
-                Export => js_word!("export"),
-                Import => js_word!("import"),
+                Export => "export",
+                Import => "import",
 
-                Yield => js_word!("yield"),
+                Yield => "yield",
 
-                In => js_word!("in"),
-                InstanceOf => js_word!("instanceof"),
+                In => "in",
+                InstanceOf => "instanceof",
 
-                TypeOf => js_word!("typeof"),
+                TypeOf => "typeof",
 
-                Void => js_word!("void"),
+                Void => "void",
 
-                Delete => js_word!("delete"),
-            },
+                Delete => "delete",
+            }
+            .into(),
 
-            Word::Null => js_word!("null"),
-            Word::True => js_word!("true"),
-            Word::False => js_word!("false"),
+            Word::Null => "null".into(),
+            Word::True => "true".into(),
+            Word::False => "false".into(),
 
-            Word::Ident(w) => w,
+            Word::Ident(w) => w.into(),
+        }
+    }
+}
+
+impl From<IdentLike> for Atom {
+    fn from(i: IdentLike) -> Self {
+        match i {
+            IdentLike::Known(i) => i.into(),
+            IdentLike::Other(i) => i,
         }
     }
 }
@@ -371,41 +696,116 @@ impl Debug for Word {
     }
 }
 
+impl Display for IdentLike {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match *self {
+            IdentLike::Known(ref s) => Display::fmt(s, f),
+            IdentLike::Other(ref s) => Display::fmt(s, f),
+        }
+    }
+}
+
+impl Display for KnownIdent {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let s: &'static str = (*self).into();
+
+        Display::fmt(s, f)
+    }
+}
+
+macro_rules! declare_keyword {
+    ($(
+        $name:ident => $value:tt,
+    )*) => {
+        impl Keyword {
+            pub(crate)  fn into_js_word(self) -> JsWord {
+                match self {
+                    $(Keyword::$name => atom!($value),)*
+                }
+            }
+        }
+    };
+}
+
+declare_keyword!(
+    Await => "await",
+    Break => "break",
+    Case => "case",
+    Catch => "catch",
+    Continue => "continue",
+    Debugger => "debugger",
+    Default_ => "default",
+    Do => "do",
+    Else => "else",
+
+    Finally => "finally",
+    For => "for",
+
+    Function => "function",
+
+    If => "if",
+
+    Return => "return",
+
+    Switch => "switch",
+
+    Throw => "throw",
+
+    Try => "try",
+    Var => "var",
+    Let => "let",
+    Const => "const",
+    While => "while",
+    With => "with",
+
+    New => "new",
+    This => "this",
+    Super => "super",
+
+    Class => "class",
+
+    Extends => "extends",
+
+    Export => "export",
+    Import => "import",
+
+    Yield => "yield",
+
+    In => "in",
+    InstanceOf => "instanceof",
+
+    TypeOf => "typeof",
+
+    Void => "void",
+
+    Delete => "delete",
+);
+
 /// Keywords
-#[derive(Kind, Clone, Copy, PartialEq, Eq, Hash)]
-#[kind(function(before_expr = "bool", starts_expr = "bool"))]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Keyword {
     /// Spec says this might be identifier.
-    #[kind(before_expr, starts_expr)]
     Await,
-
     Break,
-    #[kind(before_expr)]
     Case,
     Catch,
     Continue,
     Debugger,
-    #[kind(before_expr)]
     Default_,
-    #[kind(before_expr)]
     Do,
-    #[kind(before_expr)]
     Else,
 
     Finally,
     For,
 
-    #[kind(starts_expr)]
     Function,
 
     If,
 
-    #[kind(before_expr)]
     Return,
 
     Switch,
 
-    #[kind(before_expr, starts_expr)]
     Throw,
 
     Try,
@@ -415,97 +815,65 @@ pub enum Keyword {
     While,
     With,
 
-    #[kind(before_expr, starts_expr)]
     New,
-    #[kind(starts_expr)]
     This,
-    #[kind(starts_expr)]
     Super,
 
-    #[kind(starts_expr)]
     Class,
 
-    #[kind(before_expr)]
     Extends,
 
     Export,
-    #[kind(starts_expr)]
     Import,
 
     /// Spec says this might be identifier.
-    #[kind(before_expr, starts_expr)]
     Yield,
 
-    #[kind(before_expr)]
     In,
-    #[kind(before_expr)]
     InstanceOf,
-
-    #[kind(before_expr, starts_expr)]
     TypeOf,
-
-    #[kind(before_expr, starts_expr)]
     Void,
-
-    #[kind(before_expr, starts_expr)]
     Delete,
 }
 
 impl Keyword {
-    fn into_js_word(self) -> JsWord {
-        match self {
-            Await => js_word!("await"),
-            Break => js_word!("break"),
-            Case => js_word!("case"),
-            Catch => js_word!("catch"),
-            Continue => js_word!("continue"),
-            Debugger => js_word!("debugger"),
-            Default_ => js_word!("default"),
-            Do => js_word!("do"),
-            Else => js_word!("else"),
+    pub(crate) const fn before_expr(self) -> bool {
+        matches!(
+            self,
+            Self::Await
+                | Self::Case
+                | Self::Default_
+                | Self::Do
+                | Self::Else
+                | Self::Return
+                | Self::Throw
+                | Self::New
+                | Self::Extends
+                | Self::Yield
+                | Self::In
+                | Self::InstanceOf
+                | Self::TypeOf
+                | Self::Void
+                | Self::Delete
+        )
+    }
 
-            Finally => js_word!("finally"),
-            For => js_word!("for"),
-
-            Function => js_word!("function"),
-
-            If => js_word!("if"),
-
-            Return => js_word!("return"),
-
-            Switch => js_word!("switch"),
-
-            Throw => js_word!("throw"),
-
-            Try => js_word!("try"),
-            Var => js_word!("var"),
-            Let => js_word!("let"),
-            Const => js_word!("const"),
-            While => js_word!("while"),
-            With => js_word!("with"),
-
-            New => js_word!("new"),
-            This => js_word!("this"),
-            Super => js_word!("super"),
-
-            Class => js_word!("class"),
-
-            Extends => js_word!("extends"),
-
-            Export => js_word!("export"),
-            Import => js_word!("import"),
-
-            Yield => js_word!("yield"),
-
-            In => js_word!("in"),
-            InstanceOf => js_word!("instanceof"),
-
-            TypeOf => js_word!("typeof"),
-
-            Void => js_word!("void"),
-
-            Delete => js_word!("delete"),
-        }
+    pub(crate) const fn starts_expr(self) -> bool {
+        matches!(
+            self,
+            Self::Await
+                | Self::Function
+                | Self::Throw
+                | Self::New
+                | Self::This
+                | Self::Super
+                | Self::Class
+                | Self::Import
+                | Self::Yield
+                | Self::TypeOf
+                | Self::Void
+                | Self::Delete
+        )
     }
 }
 
@@ -548,17 +916,18 @@ impl From<BinOpToken> for BinaryOp {
     }
 }
 
-impl Token {
+impl TokenKind {
     /// Returns true if `self` can follow keyword let.
     ///
     /// e.g. `let a = xx;`, `let {a:{}} = 1`
-    pub(crate) fn follows_keyword_let(&self, _strict: bool) -> bool {
-        match *self {
-            // This is required to recognize `let let` in strict mode.
-            tok!("let") => true,
-
-            tok!('{') | tok!('[') | Word(Word::Ident(..)) | tok!("yield") | tok!("await") => true,
-
+    pub(crate) fn follows_keyword_let(self, _strict: bool) -> bool {
+        match self {
+            Self::Word(WordKind::Keyword(Keyword::Let))
+            | TokenKind::LBrace
+            | TokenKind::LBracket
+            | Self::Word(WordKind::Ident(..))
+            | TokenKind::Word(WordKind::Keyword(Keyword::Yield))
+            | TokenKind::Word(WordKind::Keyword(Keyword::Await)) => true,
             _ => false,
         }
     }
@@ -566,12 +935,13 @@ impl Token {
 
 impl Word {
     pub(crate) fn cow(&self) -> Cow<JsWord> {
-        match *self {
+        match self {
             Word::Keyword(k) => Cow::Owned(k.into_js_word()),
-            Word::Ident(ref w) => Cow::Borrowed(&w),
-            Word::False => Cow::Owned(js_word!("false")),
-            Word::True => Cow::Owned(js_word!("true")),
-            Word::Null => Cow::Owned(js_word!("null")),
+            Word::Ident(IdentLike::Known(w)) => Cow::Owned((*w).into()),
+            Word::Ident(IdentLike::Other(w)) => Cow::Borrowed(w),
+            Word::False => Cow::Owned(atom!("false")),
+            Word::True => Cow::Owned(atom!("true")),
+            Word::Null => Cow::Owned(atom!("null")),
         }
     }
 }
@@ -600,7 +970,6 @@ impl Debug for Token {
             BackQuote => write!(f, "`")?,
             Template { raw, .. } => write!(f, "template token ({})", raw)?,
             Colon => write!(f, ":")?,
-            ColonColon => write!(f, "::")?,
             BinOp(op) => write!(f, "{}", BinaryOp::from(*op).as_str())?,
             AssignOp(op) => write!(f, "{}", op.as_str())?,
             DollarLBrace => write!(f, "${{")?,
@@ -608,10 +977,10 @@ impl Debug for Token {
             PlusPlus => write!(f, "++")?,
             MinusMinus => write!(f, "--")?,
             Tilde => write!(f, "~")?,
-            Str { value, .. } => write!(f, "string literal ({})", value)?,
+            Str { value, raw } => write!(f, "string literal ({}, {})", value, raw)?,
             Regex(exp, flags) => write!(f, "regexp literal ({}, {})", exp, flags)?,
-            Num(..) => write!(f, "numeric literal")?,
-            BigInt(..) => write!(f, "bigint literal")?,
+            Num { value, raw, .. } => write!(f, "numeric literal ({}, {})", value, raw)?,
+            BigInt { value, raw } => write!(f, "bigint literal ({}, {})", value, raw)?,
             JSXName { name } => write!(f, "jsx name ({})", name)?,
             JSXText { raw } => write!(f, "jsx text ({})", raw)?,
             JSXTagStart => write!(f, "< (jsx tag start)")?,

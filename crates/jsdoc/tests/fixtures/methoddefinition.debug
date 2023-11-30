@@ -2,48 +2,48 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                17,
+                18,
             ),
             hi: BytePos(
-                17,
+                18,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    17,
+                    18,
                 ),
                 hi: BytePos(
-                    29,
+                    30,
                 ),
                 ctxt: #0,
             },
-            value: Atom('Document me.' type=dynamic),
+            value: "Document me.",
         },
         tags: [],
     },
     JsDoc {
         span: Span {
             lo: BytePos(
-                60,
+                61,
             ),
             hi: BytePos(
-                60,
+                61,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    60,
+                    61,
                 ),
                 hi: BytePos(
-                    79,
+                    80,
                 ),
                 ctxt: #0,
             },
-            value: Atom('Static document me.' type=dynamic),
+            value: "Static document me.",
         },
         tags: [],
     },

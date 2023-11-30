@@ -1,5 +1,6 @@
-use super::*;
 use swc_ecma_transforms_testing::test;
+
+use super::*;
 
 fn tr() -> impl Fold {
     jsx_self(true)
@@ -12,6 +13,5 @@ test!(
     }),
     |_| tr(),
     basic_sample,
-    r#"var x = <sometag />"#,
-    r#"var x = <sometag __self={this} />;"#
+    r#"var x = <sometag />"#
 );

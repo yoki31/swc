@@ -1,40 +1,34 @@
-use super::compat::DATA as CORE_JS_COMPAT_DATA;
-use crate::{version::should_enable, Version, Versions};
 use indexmap::IndexSet;
 use once_cell::sync::Lazy;
+use preset_env_base::{
+    version::{should_enable, Version},
+    Versions,
+};
 use swc_atoms::js_word;
-use swc_common::{collections::AHashMap, DUMMY_SP};
+use swc_common::{
+    collections::{AHashMap, ARandomState},
+    DUMMY_SP,
+};
 use swc_ecma_ast::*;
-use swc_ecma_visit::{Fold, FoldWith};
+use swc_ecma_visit::VisitMut;
+
+use super::{compat::DATA as CORE_JS_COMPAT_DATA, data::MODULES_BY_VERSION};
 
 static ENTRIES: Lazy<AHashMap<String, Vec<&'static str>>> = Lazy::new(|| {
-    serde_json::from_str::<AHashMap<String, Vec<String>>>(include_str!("entries.json"))
-        .expect("failed to parse entries.json from core js 3")
-        .into_iter()
-        .map(|(k, v)| {
-            (
-                k,
-                v.into_iter()
-                    .map(|s: String| &*Box::leak(s.into_boxed_str()))
-                    .collect::<Vec<_>>(),
-            )
-        })
-        .collect()
-});
-
-static MODULES_BY_VERSION: Lazy<AHashMap<Version, Vec<&'static str>>> = Lazy::new(|| {
-    serde_json::from_str::<AHashMap<_, _>>(include_str!("modules-by-versions.json"))
-        .expect("failed to parse modules-by-versions.json")
-        .into_iter()
-        .map(|(k, v): (Version, Vec<String>)| {
-            (
-                k,
-                v.into_iter()
-                    .map(|s: String| &*Box::leak(s.into_boxed_str()))
-                    .collect::<Vec<_>>(),
-            )
-        })
-        .collect()
+    serde_json::from_str::<AHashMap<String, Vec<String>>>(include_str!(
+        "../../data/core-js-compat/entries.json"
+    ))
+    .expect("failed to parse entries.json from core js 3")
+    .into_iter()
+    .map(|(k, v)| {
+        (
+            k,
+            v.into_iter()
+                .map(|s: String| &*Box::leak(s.into_boxed_str()))
+                .collect::<Vec<_>>(),
+        )
+    })
+    .collect()
 });
 
 #[derive(Debug)]
@@ -42,7 +36,7 @@ pub struct Entry {
     is_any_target: bool,
     target: Versions,
     corejs_version: Version,
-    pub imports: IndexSet<&'static str, ahash::RandomState>,
+    pub imports: IndexSet<&'static str, ARandomState>,
     remove_regenerator: bool,
 }
 
@@ -70,34 +64,27 @@ impl Entry {
             ..
         } = self;
 
-        if *remove_regenerator && src == "regenerator-runtime/runtime" {
+        if *remove_regenerator && src == "regenerator-runtime/runtime.js" {
             return true;
         }
 
         if let Some(features) = ENTRIES.get(src) {
-            self.imports.extend(features.iter().filter_map(|f| {
-                let feature = CORE_JS_COMPAT_DATA.get(&**f);
+            self.imports.extend(features.iter().filter(|f| {
+                let feature = CORE_JS_COMPAT_DATA.get(&***f);
 
                 if !*is_any_target {
                     if let Some(feature) = feature {
                         if !should_enable(*target, *feature, true) {
-                            return None;
+                            return false;
                         }
                     }
                 }
 
-                //                println!("{} -> {}", src, f);
-
-                for (_, features) in MODULES_BY_VERSION
-                    .iter()
-                    .filter(|(version, _features)| *corejs_version < **version)
-                {
-                    if features.contains(&*f) {
-                        return None;
-                    }
+                if let Some(version) = MODULES_BY_VERSION.get(**f) {
+                    return version <= corejs_version;
                 }
 
-                Some(f)
+                true
             }));
 
             true
@@ -107,23 +94,13 @@ impl Entry {
     }
 }
 
-impl Fold for Entry {
-    fn fold_import_decl(&mut self, i: ImportDecl) -> ImportDecl {
-        let i: ImportDecl = i.fold_children_with(self);
-
+impl VisitMut for Entry {
+    fn visit_mut_import_decl(&mut self, i: &mut ImportDecl) {
         let remove = i.specifiers.is_empty() && self.add(&i.src.value);
 
         if remove {
-            ImportDecl {
-                src: Str {
-                    span: DUMMY_SP,
-                    value: js_word!(""),
-                    ..i.src
-                },
-                ..i
-            }
-        } else {
-            i
+            i.src.span = DUMMY_SP;
+            i.src.value = js_word!("");
         }
     }
 }

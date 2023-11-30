@@ -15,29 +15,38 @@
 //! and definition contexts*. J. Funct. Program. 22, 2 (March 2012), 181-216.
 //! DOI=10.1017/S0956796812000093 <https://doi.org/10.1017/S0956796812000093>
 
-use super::GLOBALS;
-use crate::collections::AHashMap;
-use serde::{Deserialize, Serialize};
+#[allow(unused)]
 use std::{
     collections::{HashMap, HashSet},
     fmt,
 };
 
+use serde::{Deserialize, Serialize};
+
+use super::GLOBALS;
+use crate::collections::AHashMap;
+
 /// A SyntaxContext represents a chain of macro expansions (represented by
 /// marks).
 #[derive(Clone, Copy, PartialEq, Eq, Default, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
-#[cfg_attr(feature = "abi_stable", repr(transparent))]
-#[cfg_attr(feature = "abi_stable", derive(abi_stable::StableAbi))]
-pub struct SyntaxContext(u32);
+#[cfg_attr(
+    any(feature = "rkyv-impl"),
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
+#[cfg_attr(feature = "rkyv-impl", archive(check_bytes))]
+#[cfg_attr(feature = "rkyv-impl", archive_attr(repr(C)))]
+pub struct SyntaxContext(#[cfg_attr(feature = "__rkyv", omit_bounds)] u32);
 
 #[cfg(feature = "arbitrary")]
+#[cfg_attr(docsrs, doc(cfg(feature = "arbitrary")))]
 impl<'a> arbitrary::Arbitrary<'a> for SyntaxContext {
     fn arbitrary(_: &mut arbitrary::Unstructured<'_>) -> arbitrary::Result<Self> {
         Ok(SyntaxContext::empty())
     }
 }
 
+#[allow(unused)]
 #[derive(Copy, Clone, Debug)]
 struct SyntaxContextData {
     outer_mark: Mark,
@@ -50,36 +59,76 @@ struct SyntaxContextData {
 
 /// A mark is a unique id associated with a macro expansion.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
-#[cfg_attr(feature = "abi_stable", repr(transparent))]
-#[cfg_attr(feature = "abi_stable", derive(abi_stable::StableAbi))]
 pub struct Mark(u32);
 
+#[allow(unused)]
 #[derive(Clone, Debug)]
-struct MarkData {
-    parent: Mark,
-    is_builtin: bool,
+pub(crate) struct MarkData {
+    pub(crate) parent: Mark,
+    pub(crate) is_builtin: bool,
+}
+
+#[cfg_attr(
+    any(feature = "rkyv-impl"),
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
+#[cfg_attr(feature = "rkyv-impl", archive(check_bytes))]
+#[cfg_attr(feature = "rkyv-impl", archive_attr(repr(C)))]
+pub struct MutableMarkContext(pub u32, pub u32, pub u32);
+
+// List of proxy calls injected by the host in the plugin's runtime context.
+// When related calls being executed inside of the plugin, it'll call these
+// proxies instead which'll call actual host fn.
+extern "C" {
+    // Instead of trying to copy-serialize `Mark`, this fn directly consume
+    // inner raw value as well as fn and let each context constructs struct
+    // on their side.
+    fn __mark_fresh_proxy(mark: u32) -> u32;
+    fn __mark_parent_proxy(self_mark: u32) -> u32;
+    fn __mark_is_builtin_proxy(self_mark: u32) -> u32;
+    fn __mark_set_builtin_proxy(self_mark: u32, is_builtin: u32);
+    fn __syntax_context_apply_mark_proxy(self_syntax_context: u32, mark: u32) -> u32;
+    fn __syntax_context_outer_proxy(self_mark: u32) -> u32;
+
+    // These are proxy fn uses serializable context to pass forward mutated param
+    // with return value back to the guest.
+    fn __mark_is_descendant_of_proxy(self_mark: u32, ancestor: u32, allocated_ptr: i32);
+    fn __mark_least_ancestor(a: u32, b: u32, allocated_ptr: i32);
+    fn __syntax_context_remove_mark_proxy(self_mark: u32, allocated_ptr: i32);
 }
 
 impl Mark {
-    pub fn fresh(parent: Mark) -> Self {
-        #[cfg(feature = "plugin-mode")]
-        if crate::plugin::RT.is_set() {
-            return crate::plugin::RT.with(|rt| rt.fresh_mark(parent));
-        }
+    /// Shortcut for `Mark::fresh(Mark::root())`
+    #[track_caller]
+    #[allow(clippy::new_without_default)]
+    pub fn new() -> Self {
+        Mark::fresh(Mark::root())
+    }
 
-        HygieneData::with(|data| {
-            data.marks.push(MarkData {
+    #[track_caller]
+    pub fn fresh(parent: Mark) -> Self {
+        // Note: msvc tries to link against proxied fn for normal build,
+        // have to limit build target to wasm only to avoid it.
+        #[cfg(all(feature = "__plugin_mode", target_arch = "wasm32"))]
+        return Mark(unsafe { __mark_fresh_proxy(parent.as_u32()) });
+
+        // https://github.com/swc-project/swc/pull/3492#discussion_r802224857
+        // We loosen conditions here for the cases like running plugin's test without
+        // targeting wasm32-*.
+        #[cfg(not(all(feature = "__plugin_mode", target_arch = "wasm32")))]
+        return with_marks(|marks| {
+            marks.push(MarkData {
                 parent,
                 is_builtin: false,
             });
-            Mark(data.marks.len() as u32 - 1)
-        })
+            Mark(marks.len() as u32 - 1)
+        });
     }
 
     /// The mark of the theoretical expansion that generates freshly parsed,
     /// unexpanded AST.
     #[inline]
-    pub fn root() -> Self {
+    pub const fn root() -> Self {
         Mark(0)
     }
 
@@ -95,53 +144,114 @@ impl Mark {
 
     #[inline]
     pub fn parent(self) -> Mark {
-        #[cfg(feature = "plugin-mode")]
-        if crate::plugin::RT.is_set() {
-            return crate::plugin::RT.with(|rt| rt.parent_mark(self));
-        }
+        #[cfg(all(feature = "__plugin_mode", target_arch = "wasm32"))]
+        return Mark(unsafe { __mark_parent_proxy(self.0) });
 
-        HygieneData::with(|data| data.marks[self.0 as usize].parent)
+        #[cfg(not(all(feature = "__plugin_mode", target_arch = "wasm32")))]
+        return with_marks(|marks| marks[self.0 as usize].parent);
     }
 
     #[inline]
     pub fn is_builtin(self) -> bool {
-        assert_ne!(self, Mark::root());
+        #[cfg(all(feature = "__plugin_mode", target_arch = "wasm32"))]
+        return unsafe { __mark_is_builtin_proxy(self.0) != 0 };
 
-        #[cfg(feature = "plugin-mode")]
-        if crate::plugin::RT.is_set() {
-            return crate::plugin::RT.with(|rt| rt.is_mark_builtin(self));
+        #[cfg(not(all(feature = "__plugin_mode", target_arch = "wasm32")))]
+        {
+            assert_ne!(self, Mark::root());
+
+            with_marks(|marks| marks[self.0 as usize].is_builtin)
         }
-
-        HygieneData::with(|data| data.marks[self.0 as usize].is_builtin)
     }
 
     #[inline]
     pub fn set_is_builtin(self, is_builtin: bool) {
-        assert_ne!(self, Mark::root());
-
-        #[cfg(feature = "plugin-mode")]
-        if crate::plugin::RT.is_set() {
-            return crate::plugin::RT.with(|rt| rt.set_mark_is_builtin(self, is_builtin));
+        #[cfg(all(feature = "__plugin_mode", target_arch = "wasm32"))]
+        unsafe {
+            __mark_set_builtin_proxy(self.0, is_builtin as u32)
         }
+        #[cfg(not(all(feature = "__plugin_mode", target_arch = "wasm32")))]
+        {
+            assert_ne!(self, Mark::root());
 
-        HygieneData::with(|data| data.marks[self.0 as usize].is_builtin = is_builtin)
+            with_marks(|marks| marks[self.0 as usize].is_builtin = is_builtin)
+        }
     }
 
+    #[allow(unused_assignments)]
+    #[cfg(all(feature = "__plugin_mode", target_arch = "wasm32"))]
     pub fn is_descendant_of(mut self, ancestor: Mark) -> bool {
-        #[cfg(feature = "plugin-mode")]
-        if crate::plugin::RT.is_set() {
-            return crate::plugin::RT.with(|rt| rt.is_mark_descendant_of(self, ancestor));
+        // This code path executed inside of the guest memory context.
+        // In here, preallocate memory for the context.
+
+        use crate::plugin::serialized::VersionedSerializable;
+        let serialized = crate::plugin::serialized::PluginSerializedBytes::try_serialize(
+            &VersionedSerializable::new(MutableMarkContext(0, 0, 0)),
+        )
+        .expect("Should be serializable");
+        let (ptr, len) = serialized.as_ptr();
+
+        // Calling host proxy fn. Inside of host proxy, host will
+        // write the result into allocated context in the guest memory space.
+        unsafe {
+            __mark_is_descendant_of_proxy(self.0, ancestor.0, ptr as _);
         }
 
-        HygieneData::with(|data| {
+        // Deserialize result, assign / return values as needed.
+        let context: MutableMarkContext =
+            crate::plugin::serialized::PluginSerializedBytes::from_raw_ptr(
+                ptr,
+                len.try_into().expect("Should able to convert ptr length"),
+            )
+            .deserialize()
+            .expect("Should able to deserialize")
+            .into_inner();
+
+        self = Mark::from_u32(context.0);
+
+        return context.2 != 0;
+    }
+
+    #[cfg(not(all(feature = "__plugin_mode", target_arch = "wasm32")))]
+    pub fn is_descendant_of(mut self, ancestor: Mark) -> bool {
+        with_marks(|marks| {
             while self != ancestor {
                 if self == Mark::root() {
                     return false;
                 }
-                self = data.marks[self.0 as usize].parent;
+                self = marks[self.0 as usize].parent;
             }
             true
         })
+    }
+
+    #[allow(unused_mut, unused_assignments)]
+    #[cfg(all(feature = "__plugin_mode", target_arch = "wasm32"))]
+    pub fn least_ancestor(mut a: Mark, mut b: Mark) -> Mark {
+        use crate::plugin::serialized::VersionedSerializable;
+
+        let serialized = crate::plugin::serialized::PluginSerializedBytes::try_serialize(
+            &VersionedSerializable::new(MutableMarkContext(0, 0, 0)),
+        )
+        .expect("Should be serializable");
+        let (ptr, len) = serialized.as_ptr();
+
+        unsafe {
+            __mark_least_ancestor(a.0, b.0, ptr as _);
+        }
+
+        let context: MutableMarkContext =
+            crate::plugin::serialized::PluginSerializedBytes::from_raw_ptr(
+                ptr,
+                len.try_into().expect("Should able to convert ptr length"),
+            )
+            .deserialize()
+            .expect("Should able to deserialize")
+            .into_inner();
+        a = Mark::from_u32(context.0);
+        b = Mark::from_u32(context.1);
+
+        return Mark(context.2);
     }
 
     /// Computes a mark such that both input marks are descendants of (or equal
@@ -153,23 +263,19 @@ impl Mark {
     /// assert!(b.is_descendant_of(la))
     /// ```
     #[allow(unused_mut)]
+    #[cfg(not(all(feature = "__plugin_mode", target_arch = "wasm32")))]
     pub fn least_ancestor(mut a: Mark, mut b: Mark) -> Mark {
-        #[cfg(feature = "plugin-mode")]
-        if crate::plugin::RT.is_set() {
-            return crate::plugin::RT.with(|rt| rt.least_ancestor_of_marks(a, b));
-        }
-
-        HygieneData::with(|data| {
+        with_marks(|marks| {
             // Compute the path from a to the root
             let mut a_path = HashSet::<Mark>::default();
             while a != Mark::root() {
                 a_path.insert(a);
-                a = data.marks[a.0 as usize].parent;
+                a = marks[a.0 as usize].parent;
             }
 
             // While the path from b to the root hasn't intersected, move up the tree
             while !a_path.contains(&b) {
-                b = data.marks[b.0 as usize].parent;
+                b = marks[b.0 as usize].parent;
             }
 
             b
@@ -177,9 +283,9 @@ impl Mark {
     }
 }
 
+#[allow(unused)]
 #[derive(Debug)]
 pub(crate) struct HygieneData {
-    marks: Vec<MarkData>,
     syntax_contexts: Vec<SyntaxContextData>,
     markings: AHashMap<(SyntaxContext, Mark), SyntaxContext>,
 }
@@ -193,12 +299,6 @@ impl Default for HygieneData {
 impl HygieneData {
     pub(crate) fn new() -> Self {
         HygieneData {
-            marks: vec![MarkData {
-                parent: Mark::root(),
-                // If the root is opaque, then loops searching for an opaque mark
-                // will automatically stop after reaching it.
-                is_builtin: true,
-            }],
             syntax_contexts: vec![SyntaxContextData {
                 outer_mark: Mark::root(),
                 prev_ctxt: SyntaxContext(0),
@@ -212,12 +312,24 @@ impl HygieneData {
     fn with<T, F: FnOnce(&mut HygieneData) -> T>(f: F) -> T {
         GLOBALS.with(|globals| {
             #[cfg(feature = "parking_lot")]
-            return f(&mut *globals.hygiene_data.lock());
+            return f(&mut globals.hygiene_data.lock());
 
             #[cfg(not(feature = "parking_lot"))]
             return f(&mut *globals.hygiene_data.lock().unwrap());
         })
     }
+}
+
+#[track_caller]
+#[allow(unused)]
+pub(crate) fn with_marks<T, F: FnOnce(&mut Vec<MarkData>) -> T>(f: F) -> T {
+    GLOBALS.with(|globals| {
+        #[cfg(feature = "parking_lot")]
+        return f(&mut globals.marks.lock());
+
+        #[cfg(not(feature = "parking_lot"))]
+        return f(&mut *globals.marks.lock().unwrap());
+    })
 }
 
 // pub fn clear_markings() {
@@ -229,28 +341,58 @@ impl SyntaxContext {
         SyntaxContext(0)
     }
 
-    // pub(crate) fn as_u32(self) -> u32 {
-    //     self.0
-    // }
-    //
-    // pub(crate) fn from_u32(raw: u32) -> SyntaxContext {
-    //     SyntaxContext(raw)
-    // }
+    /// Returns `true` if `self` is marked with `mark`.
+    ///
+    /// Panics if `mark` is not a valid mark.
+    pub fn has_mark(self, mark: Mark) -> bool {
+        debug_assert_ne!(
+            mark,
+            Mark::root(),
+            "Cannot check if a span contains a `ROOT` mark"
+        );
+
+        let mut ctxt = self;
+
+        loop {
+            if ctxt == SyntaxContext::empty() {
+                return false;
+            }
+
+            let m = ctxt.remove_mark();
+            if m == mark {
+                return true;
+            }
+            if m == Mark::root() {
+                return false;
+            }
+        }
+    }
+
+    #[inline]
+    pub fn as_u32(self) -> u32 {
+        self.0
+    }
+
+    #[inline]
+    pub fn from_u32(raw: u32) -> SyntaxContext {
+        SyntaxContext(raw)
+    }
 
     /// Extend a syntax context with a given mark and default transparency for
     /// that mark.
     pub fn apply_mark(self, mark: Mark) -> SyntaxContext {
-        assert_ne!(mark, Mark::root());
-        return self.apply_mark_internal(mark);
+        #[cfg(all(feature = "__plugin_mode", target_arch = "wasm32"))]
+        return unsafe { SyntaxContext(__syntax_context_apply_mark_proxy(self.0, mark.0)) };
+
+        #[cfg(not(all(feature = "__plugin_mode", target_arch = "wasm32")))]
+        {
+            assert_ne!(mark, Mark::root());
+            self.apply_mark_internal(mark)
+        }
     }
 
+    #[allow(unused)]
     fn apply_mark_internal(self, mark: Mark) -> SyntaxContext {
-        #[cfg(feature = "plugin-mode")]
-        if crate::plugin::RT.is_set() {
-            return crate::plugin::RT
-                .with(|rt| rt.apply_mark_to_syntax_context_internal(self, mark));
-        }
-
         HygieneData::with(|data| {
             let syntax_contexts = &mut data.syntax_contexts;
             let mut opaque = syntax_contexts[self.0 as usize].opaque;
@@ -284,6 +426,33 @@ impl SyntaxContext {
         })
     }
 
+    #[cfg(all(feature = "__plugin_mode", target_arch = "wasm32"))]
+    pub fn remove_mark(&mut self) -> Mark {
+        use crate::plugin::serialized::VersionedSerializable;
+
+        let context = VersionedSerializable::new(MutableMarkContext(0, 0, 0));
+        let serialized = crate::plugin::serialized::PluginSerializedBytes::try_serialize(&context)
+            .expect("Should be serializable");
+        let (ptr, len) = serialized.as_ptr();
+
+        unsafe {
+            __syntax_context_remove_mark_proxy(self.0, ptr as _);
+        }
+
+        let context: MutableMarkContext =
+            crate::plugin::serialized::PluginSerializedBytes::from_raw_ptr(
+                ptr,
+                len.try_into().expect("Should able to convert ptr length"),
+            )
+            .deserialize()
+            .expect("Should able to deserialize")
+            .into_inner();
+
+        *self = SyntaxContext(context.0);
+
+        return Mark::from_u32(context.2);
+    }
+
     /// Pulls a single mark off of the syntax context. This effectively moves
     /// the context up one macro definition level. That is, if we have a
     /// nested macro definition as follows:
@@ -300,12 +469,8 @@ impl SyntaxContext {
     /// an invocation of g (call it g1), calling remove_mark will result in
     /// the SyntaxContext for the invocation of f that created g1.
     /// Returns the mark that was removed.
+    #[cfg(not(all(feature = "__plugin_mode", target_arch = "wasm32")))]
     pub fn remove_mark(&mut self) -> Mark {
-        #[cfg(feature = "plugin-mode")]
-        if crate::plugin::RT.is_set() {
-            return crate::plugin::RT.with(|rt| rt.remove_mark_of_syntax_context(self));
-        }
-
         HygieneData::with(|data| {
             let outer_mark = data.syntax_contexts[self.0 as usize].outer_mark;
             *self = data.syntax_contexts[self.0 as usize].prev_ctxt;
@@ -423,11 +588,10 @@ impl SyntaxContext {
 
     #[inline]
     pub fn outer(self) -> Mark {
-        #[cfg(feature = "plugin-mode")]
-        if crate::plugin::RT.is_set() {
-            return crate::plugin::RT.with(|rt| rt.outer_mark_of_syntax_context(self));
-        }
+        #[cfg(all(feature = "__plugin_mode", target_arch = "wasm32"))]
+        return unsafe { Mark(__syntax_context_outer_proxy(self.0)) };
 
+        #[cfg(not(all(feature = "__plugin_mode", target_arch = "wasm32")))]
         HygieneData::with(|data| data.syntax_contexts[self.0 as usize].outer_mark)
     }
 }
@@ -439,7 +603,8 @@ impl fmt::Debug for SyntaxContext {
 }
 
 impl Default for Mark {
+    #[track_caller]
     fn default() -> Self {
-        Mark::root()
+        Mark::new()
     }
 }

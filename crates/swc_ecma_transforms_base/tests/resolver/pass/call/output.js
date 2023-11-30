@@ -1,5 +1,5 @@
-let a = 1;
-function b() {
-    return a + 1;
+let a__2 = 1;
+function b__2() {
+    return a__2 + 1;
 }
-expect(b()).toBe(2);
+expect(b__2()).toBe(2);

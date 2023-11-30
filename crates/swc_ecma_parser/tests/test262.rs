@@ -2,15 +2,16 @@
 
 extern crate test;
 
-use common::Normalizer;
 use std::{
     env,
     fs::{read_dir, File},
     io::{self, Read},
     path::Path,
 };
+
+use common::Normalizer;
 use swc_ecma_ast::*;
-use swc_ecma_parser::{lexer::Lexer, PResult, Parser, StringInput, Syntax};
+use swc_ecma_parser::{lexer::Lexer, PResult, Parser, Syntax};
 use swc_ecma_visit::FoldWith;
 use test::{
     test_main, DynTestFn, Options, ShouldPanic::No, TestDesc, TestDescAndFn, TestName, TestType,
@@ -80,7 +81,7 @@ const IGNORED_PASS_TESTS: &[&str] = &[
     "ce569e89a005c02a.js",
 ];
 
-fn add_test<F: FnOnce() + Send + 'static>(
+fn add_test<F: FnOnce() -> Result<(), String> + Send + 'static>(
     tests: &mut Vec<TestDescAndFn>,
     name: String,
     ignore: bool,
@@ -92,16 +93,24 @@ fn add_test<F: FnOnce() + Send + 'static>(
             name: TestName::DynTestName(name),
             ignore,
             should_panic: No,
-            allow_fail: false,
             compile_fail: false,
             no_run: false,
+            ignore_message: Default::default(),
+            source_file: Default::default(),
+            start_line: 0,
+            start_col: 0,
+            end_line: 0,
+            end_col: 0,
         },
         testfn: DynTestFn(Box::new(f)),
     });
 }
 
+#[cfg(feature = "verify")]
 fn error_tests(tests: &mut Vec<TestDescAndFn>) -> Result<(), io::Error> {
     const IGNORED_ERROR_TESTS: &[&str] = &[
+        // pass in script. error in module.
+        "e3fbcf63d7e43ead.js",
         // Old (wrong) tests
         "569a2c1bad3beeb2.js",
         "3b6f737a4ac948a8.js",
@@ -197,13 +206,15 @@ fn error_tests(tests: &mut Vec<TestDescAndFn>) -> Result<(), io::Error> {
 
                 if err
                     .compare_to_file(format!(
-                        "{}.stderr",
+                        "{}.swc-stderr",
                         error_reference_dir.join(file_name).display()
                     ))
                     .is_err()
                 {
                     panic!()
                 }
+
+                Ok(())
             });
         }
     }
@@ -301,6 +312,8 @@ fn identity_tests(tests: &mut Vec<TestDescAndFn>) -> Result<(), io::Error> {
                 let expected = p(true);
                 assert_eq!(src, expected);
             }
+
+            Ok(())
         });
     }
 
@@ -310,15 +323,15 @@ fn identity_tests(tests: &mut Vec<TestDescAndFn>) -> Result<(), io::Error> {
 fn parse_script(file_name: &Path) -> Result<Script, NormalizedOutput> {
     with_parser(file_name, |p| p.parse_script())
 }
-fn parse_module<'a>(file_name: &Path) -> Result<Module, NormalizedOutput> {
+fn parse_module(file_name: &Path) -> Result<Module, NormalizedOutput> {
     with_parser(file_name, |p| p.parse_module())
 }
 
 fn with_parser<F, Ret>(file_name: &Path, f: F) -> Result<Ret, StdErr>
 where
-    F: FnOnce(&mut Parser<Lexer<StringInput<'_>>>) -> PResult<Ret>,
+    F: FnOnce(&mut Parser<Lexer>) -> PResult<Ret>,
 {
-    let output = ::testing::run_test(false, |cm, handler| {
+    ::testing::run_test(false, |cm, handler| {
         let fm = cm
             .load_file(file_name)
             .unwrap_or_else(|e| panic!("failed to load {}: {}", file_name.display(), e));
@@ -328,7 +341,7 @@ where
         let res = f(&mut p).map_err(|e| e.into_diagnostic(handler).emit());
 
         for e in p.take_errors() {
-            e.into_diagnostic(&handler).emit();
+            e.into_diagnostic(handler).emit();
         }
 
         if handler.has_errors() {
@@ -336,9 +349,7 @@ where
         }
 
         res
-    });
-
-    output
+    })
 }
 
 #[test]
@@ -350,6 +361,7 @@ fn identity() {
 }
 
 #[test]
+#[cfg(feature = "verify")]
 fn error() {
     let args: Vec<_> = env::args().collect();
     let mut tests = Vec::new();

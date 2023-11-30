@@ -2,96 +2,96 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                0,
+                1,
             ),
             hi: BytePos(
-                0,
+                1,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    0,
+                    1,
                 ),
                 hi: BytePos(
-                    37,
+                    38,
                 ),
                 ctxt: #0,
             },
-            value: Atom('Tokens that can appear in the stream.' type=dynamic),
+            value: "Tokens that can appear in the stream.",
         },
         tags: [],
     },
     JsDoc {
         span: Span {
             lo: BytePos(
-                61,
+                62,
             ),
             hi: BytePos(
-                61,
+                62,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    61,
+                    62,
                 ),
                 hi: BytePos(
-                    78,
+                    79,
                 ),
                 ctxt: #0,
             },
-            value: Atom('Open parenthesis.' type=dynamic),
+            value: "Open parenthesis.",
         },
         tags: [],
     },
     JsDoc {
         span: Span {
             lo: BytePos(
-                96,
+                97,
             ),
             hi: BytePos(
-                96,
+                97,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    96,
+                    97,
                 ),
                 hi: BytePos(
-                    135,
+                    136,
                 ),
                 ctxt: #0,
             },
-            value: Atom('Executed before the token is processed.' type=dynamic),
+            value: "Executed before the token is processed.",
         },
         tags: [],
     },
     JsDoc {
         span: Span {
             lo: BytePos(
-                175,
+                176,
             ),
             hi: BytePos(
-                175,
+                176,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    175,
+                    176,
                 ),
                 hi: BytePos(
-                    213,
+                    214,
                 ),
                 ctxt: #0,
             },
-            value: Atom('Executed after the token is processed.' type=dynamic),
+            value: "Executed after the token is processed.",
         },
         tags: [],
     },

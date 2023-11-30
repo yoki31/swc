@@ -1,13 +1,16 @@
 #![cfg_attr(test, deny(warnings))]
 
-use dashmap::DashMap;
 use std::sync::Arc;
+
+use dashmap::DashMap;
+use swc_atoms::atom;
 use swc_common::{
+    collections::ARandomState,
     comments::{Comment, CommentKind, Comments},
     BytePos, DUMMY_SP,
 };
 
-type CommentMap = Arc<DashMap<BytePos, Vec<Comment>, ahash::RandomState>>;
+type CommentMap = Arc<DashMap<BytePos, Vec<Comment>, ARandomState>>;
 
 /// Multi-threaded implementation of [Comments]
 #[derive(Clone, Default)]
@@ -34,10 +37,14 @@ impl Comments for SwcComments {
     }
 
     fn move_leading(&self, from: BytePos, to: BytePos) {
-        let cmt = self.leading.remove(&from);
+        let cmt = self.take_leading(from);
 
-        if let Some(cmt) = cmt {
-            self.leading.entry(to).or_default().extend(cmt.1);
+        if let Some(mut cmt) = cmt {
+            if from < to && self.has_leading(to) {
+                cmt.extend(self.take_leading(to).unwrap());
+            }
+
+            self.add_leading_comments(to, cmt);
         }
     }
 
@@ -66,10 +73,14 @@ impl Comments for SwcComments {
     }
 
     fn move_trailing(&self, from: BytePos, to: BytePos) {
-        let cmt = self.trailing.remove(&from);
+        let cmt = self.take_trailing(from);
 
-        if let Some(cmt) = cmt {
-            self.trailing.entry(to).or_default().extend(cmt.1);
+        if let Some(mut cmt) = cmt {
+            if from < to && self.has_trailing(to) {
+                cmt.extend(self.take_trailing(to).unwrap());
+            }
+
+            self.add_trailing_comments(to, cmt);
         }
     }
 
@@ -86,7 +97,7 @@ impl Comments for SwcComments {
         let pure_comment = Comment {
             kind: CommentKind::Block,
             span: DUMMY_SP,
-            text: "#__PURE__".into(),
+            text: atom!("#__PURE__"),
         };
 
         if !leading.iter().any(|c| c.text == pure_comment.text) {
@@ -114,11 +125,36 @@ impl Comments for SwcComments {
         F: FnOnce(&[Comment]) -> Ret,
     {
         let ret = if let Some(cmts) = &self.trailing.get(&pos) {
-            f(&cmts)
+            f(cmts)
         } else {
             f(&[])
         };
 
         ret
+    }
+
+    fn has_flag(&self, lo: BytePos, flag: &str) -> bool {
+        self.with_leading(lo, |comments| {
+            for c in comments {
+                if c.kind == CommentKind::Block {
+                    for line in c.text.lines() {
+                        // jsdoc
+                        let line = line.trim_start_matches(['*', ' ']);
+                        let line = line.trim();
+
+                        //
+                        if line.len() == (flag.len() + 5)
+                            && (line.starts_with("#__") || line.starts_with("@__"))
+                            && line.ends_with("__")
+                            && flag == &line[3..line.len() - 2]
+                        {
+                            return true;
+                        }
+                    }
+                }
+            }
+
+            false
+        })
     }
 }

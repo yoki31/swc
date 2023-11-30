@@ -1,17 +1,19 @@
 #![allow(dead_code)]
 
-use crate::token::Token;
 use std::{borrow::Cow, fmt::Debug};
+
 use swc_atoms::JsWord;
 use swc_common::{
     errors::{DiagnosticBuilder, Handler},
     Span, Spanned,
 };
 
+use crate::token::Token;
+
 /// Note: this struct is 8 bytes.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Error {
-    pub(crate) error: Box<(Span, SyntaxError)>,
+    error: Box<(Span, SyntaxError)>,
 }
 
 impl Spanned for Error {
@@ -21,6 +23,13 @@ impl Spanned for Error {
 }
 
 impl Error {
+    #[cold]
+    pub(crate) fn new(span: Span, error: SyntaxError) -> Self {
+        Self {
+            error: Box::new((span, error)),
+        }
+    }
+
     pub fn kind(&self) -> &SyntaxError {
         &self.error.1
     }
@@ -36,16 +45,28 @@ pub enum SyntaxError {
     Eof,
     DeclNotAllowed,
 
+    UsingDeclNotAllowed,
+    UsingDeclNotAllowedForForInLoop,
+    UsingDeclNotEnabled,
+    InvalidNameInUsingDecl,
+    InitRequiredForUsingDecl,
+
     PrivateNameInInterface,
 
     InvalidSuperCall,
     InvalidSuper,
+    InvalidSuperPrivateName,
+
+    InvalidNewTarget,
+
+    InvalidImport,
 
     ArrowNotAllowed,
     ExportNotAllowed,
     GetterSetterCannotBeReadonly,
+    GetterParam,
+    SetterParam,
 
-    TopLevelAwait,
     TopLevelAwaitInScript,
 
     LegacyDecimal,
@@ -70,21 +91,22 @@ pub enum SyntaxError {
         c: char,
     },
     InvalidStrEscape,
-    InvalidUnicodeCodePoint,
     InvalidUnicodeEscape,
-    InvalidCodePoint,
-    ExpectedHexChars {
-        /// Number of expected characters.
-        count: u8,
+    BadCharacterEscapeSequence {
+        expected: &'static str,
     },
     NumLitTerminatedWithExp,
     LegacyCommentInModule,
 
-    /// "implements", "interface", "let", "package",\
-    ///  "private", "protected",  "public", "static", or "yield"
-    InvalidIdentInStrict,
+    /// "implements", "interface", "let", "package", "private", "protected",
+    /// "public", "static", or "yield"
+    InvalidIdentInStrict(JsWord),
+
+    InvalidIdentInAsync,
     /// 'eval' and 'arguments' are invalid identifier in strict mode.
     EvalAndArgumentsInStrict,
+    ArgumentsInClassField,
+    IllegalLanguageModeDirective,
     UnaryInExp {
         left: String,
         left_span: Span,
@@ -98,6 +120,9 @@ pub enum SyntaxError {
         got: String,
         expected: &'static str,
     },
+    UnexpectedTokenWithSuggestions {
+        candidate_list: Vec<&'static str>,
+    },
     ReservedWordInImport,
     AssignProperty,
     Expected(&'static Token, String),
@@ -109,7 +134,6 @@ pub enum SyntaxError {
     ReservedWordInObjShorthandOrPat,
 
     NullishCoalescingWithLogicalOp,
-    NullishCoalescingNotEnabled,
 
     MultipleDefault {
         /// Span of the previous default case
@@ -124,7 +148,7 @@ pub enum SyntaxError {
     InvalidExpr,
     NotSimpleAssign,
     ExpectedIdent,
-    ExpctedSemi,
+    ExpectedSemi,
     DuplicateLabel(JsWord),
     AsyncGenerator,
     NonTopLevelImportExport,
@@ -135,8 +159,10 @@ pub enum SyntaxError {
     ReturnNotAllowed,
     TooManyVarInForInHead,
     VarInitializerInForInHead,
-    LabelledGenerator,
+    LabelledGeneratorOrAsync,
+    LabelledFunctionInStrict,
     YieldParamInGen,
+    AwaitParamInAsync,
 
     AwaitForStmt,
 
@@ -159,21 +185,33 @@ pub enum SyntaxError {
 
     AsyncConstructor,
     PropertyNamedConstructor,
-    DeclarePrivateIdentifier,
-    ClassProperty,
+    PrivateConstructor,
+    PrivateNameModifier(JsWord),
+    ConstructorAccessor,
     ReadOnlyMethod,
     GeneratorConstructor,
+    DuplicateConstructor,
     TsBindingPatCannotBeOptional,
+    SuperCallOptional,
+    OptChainCannotFollowConstructorCall,
+    TaggedTplInOptChain,
 
     TrailingCommaInsideImport,
-    DynamicImport,
 
     ExportDefaultWithOutFrom,
-    ExportNamespaceFrom,
+    ExportExpectFrom(JsWord),
 
     DotsWithoutIdentifier,
 
     NumericSeparatorIsAllowedOnlyBetweenTwoDigits,
+
+    ImportBindingIsString(JsWord),
+    ExportBindingIsString,
+
+    ConstDeclarationsRequireInitialization,
+
+    DuplicatedRegExpFlags(char),
+    UnknownRegExpFlags,
 
     TS1003,
     TS1005,
@@ -196,6 +234,7 @@ pub enum SyntaxError {
     TS1100,
     TS1102,
     TS1105,
+    TS1106,
     TS1107,
     TS1109,
     TS1110,
@@ -213,11 +252,17 @@ pub enum SyntaxError {
     TS1175,
     TS1183,
     TS1184,
+    TS1185,
     TS1093,
-    TS1094,
     TS1196,
     TS1242,
     TS1243(JsWord, JsWord),
+    TS1244,
+    TS1245,
+    TS1267,
+    TS1273(JsWord),
+    TS1274(JsWord),
+    TS1277(JsWord),
     TS2206,
     TS2207,
     TS2369,
@@ -229,9 +274,21 @@ pub enum SyntaxError {
     TS2452,
     TS2483,
     TS2491,
+    TS2499,
     TS2703,
     TS4112,
+    TS8038,
     TSTypeAnnotationAfterAssign,
+    TsNonNullAssertionNotAllowed(JsWord),
+
+    WithLabel {
+        inner: Box<Error>,
+        span: Span,
+        note: &'static str,
+    },
+
+    ReservedTypeAssertion,
+    ReservedArrowTypeParam,
 }
 
 impl SyntaxError {
@@ -240,11 +297,8 @@ impl SyntaxError {
     pub fn msg(&self) -> Cow<'static, str> {
         match self {
             SyntaxError::PrivateNameInInterface => {
-                "private names are now allowed in interface".into()
+                "private names are not allowed in interface".into()
             }
-            SyntaxError::TopLevelAwait => "top level await requires target to es2017 or higher \
-                                           and topLevelAwait:true for ecmascript"
-                .into(),
             SyntaxError::TopLevelAwaitInScript => {
                 "top level await is only allowed in module".into()
             }
@@ -277,26 +331,35 @@ impl SyntaxError {
             SyntaxError::IdentAfterNum => "Identifier cannot follow number".into(),
             SyntaxError::UnexpectedChar { c } => format!("Unexpected character {:?}", c).into(),
             SyntaxError::InvalidStrEscape => "Invalid string escape".into(),
-            SyntaxError::InvalidUnicodeCodePoint => "Undefined Unicode code-point".into(),
             SyntaxError::InvalidUnicodeEscape => "Invalid unicode escape".into(),
-            SyntaxError::InvalidCodePoint => "Invalid unicode code point".into(),
-            SyntaxError::ExpectedHexChars { count } => {
-                format!("Expected {} hex characters", count).into()
+            SyntaxError::BadCharacterEscapeSequence { expected } => {
+                format!("Bad character escape sequence, expected {}", expected).into()
             }
             SyntaxError::LegacyCommentInModule => {
                 "Legacy comments cannot be used in module code".into()
             }
             SyntaxError::NumLitTerminatedWithExp => "Expected +, - or decimal digit after e".into(),
 
-            SyntaxError::InvalidIdentInStrict => {
-                "'implements', 'interface', 'let', 'package', 'private', 'protected',  'public', \
-                 'static', or 'yield' cannot be used as an identifier in strict mode"
-                    .into()
+            SyntaxError::InvalidIdentInStrict(identifier_name) => format!(
+                "`{}` cannot be used as an identifier in strict mode",
+                identifier_name
+            )
+            .into(),
+            SyntaxError::InvalidIdentInAsync => {
+                "`await` cannot be used as an identifier in an async context".into()
             }
             SyntaxError::EvalAndArgumentsInStrict => "'eval' and 'arguments' cannot be used as a \
                                                       binding identifier in strict mode"
                 .into(),
-            SyntaxError::UnaryInExp { .. } => "** cannot be applied to unary expression".into(),
+            SyntaxError::ArgumentsInClassField => {
+                "'arguments' is only allowed in functions and class methods".into()
+            }
+            SyntaxError::IllegalLanguageModeDirective => {
+                "Illegal 'use strict' directive in function with non-simple parameter list.".into()
+            }
+            SyntaxError::UnaryInExp { .. } => {
+                "'**' cannot be applied to unary/await expression.".into()
+            }
             SyntaxError::Hash => "Unexpected token '#'".into(),
             SyntaxError::LineBreakInThrow => "LineBreak cannot follow 'throw'".into(),
             SyntaxError::LineBreakBeforeArrow => {
@@ -338,7 +401,7 @@ impl SyntaxError {
             // TODO
             SyntaxError::NotSimpleAssign => "Cannot assign to this".into(),
             SyntaxError::ExpectedIdent => "Expected ident".into(),
-            SyntaxError::ExpctedSemi => "Expected ';' or line break".into(),
+            SyntaxError::ExpectedSemi => "Expected ';' or line break".into(),
             SyntaxError::DuplicateLabel(ref label) => {
                 format!("Label {} is already declared", label).into()
             }
@@ -360,9 +423,17 @@ impl SyntaxError {
             SyntaxError::VarInitializerInForInHead => {
                 "Unexpected initializer in for in/of loop".into()
             }
-            SyntaxError::LabelledGenerator => "Generator cannot be labelled".into(),
+            SyntaxError::LabelledGeneratorOrAsync => {
+                "Generator or async function cannot be labelled".into()
+            }
+            SyntaxError::LabelledFunctionInStrict => {
+                "Function cannot be labelled in strict mode".into()
+            }
             SyntaxError::YieldParamInGen => {
                 "'yield' cannot be used as a parameter within generator".into()
+            }
+            SyntaxError::AwaitParamInAsync => {
+                "`await` expressions cannot be used in a parameter initializer.".into()
             }
             SyntaxError::AwaitForStmt => {
                 "for await syntax is valid only for for-of statement".into()
@@ -393,8 +464,15 @@ impl SyntaxError {
             SyntaxError::TsRequiredAfterOptional => {
                 "A required element cannot follow an optional element.".into()
             }
+            SyntaxError::SuperCallOptional => "Super call cannot be optional".into(),
+            SyntaxError::OptChainCannotFollowConstructorCall => {
+                "Constructor in/after an optional chaining is not allowed.".into()
+            }
+            SyntaxError::TaggedTplInOptChain => {
+                "Tagged template literal is not allowed in optional chain.".into()
+            }
             SyntaxError::TsInvalidParamPropPat => {
-                "Typescript parameter property must be identifer or assignment pattern".into()
+                "Typescript parameter property must be an identifier or assignment pattern".into()
             }
             SyntaxError::SpaceBetweenHashAndIdent => {
                 "Unexpected space between # and identifier".into()
@@ -403,12 +481,17 @@ impl SyntaxError {
             SyntaxError::PropertyNamedConstructor => {
                 "Classes may not have a non-static field named 'constructor'".into()
             }
-            SyntaxError::DeclarePrivateIdentifier => {
-                "'declare' modifier cannot be used with a private identifier".into()
+            SyntaxError::PrivateConstructor => {
+                "Classes can't have a private field named '#constructor'.".into()
             }
-            SyntaxError::ClassProperty => {
-                "Class property requires `jsc.parser.classProperty` to be true".into()
-            }
+            SyntaxError::DuplicateConstructor => "A class can only have one constructor".into(),
+            SyntaxError::PrivateNameModifier(modifier) => format!(
+                "'{}' modifier cannot be used with a private identifier",
+                modifier
+            )
+            .into(),
+            SyntaxError::ConstructorAccessor => "Class constructor can't be an accessor.".into(),
+
             SyntaxError::ReadOnlyMethod => "A method cannot be readonly".into(),
             SyntaxError::TsBindingPatCannotBeOptional => "A binding pattern parameter cannot be \
                                                           optional in an implementation signature."
@@ -417,15 +500,14 @@ impl SyntaxError {
             SyntaxError::TrailingCommaInsideImport => {
                 "Trailing comma is disallowed inside import(...) arguments".into()
             }
-            SyntaxError::DynamicImport => {
-                "import(...) expressions requires `jsc.parser.dynamicImport` to be true".into()
-            }
+
             SyntaxError::ExportDefaultWithOutFrom => {
                 "export default statements required from '...';".into()
             }
-            SyntaxError::ExportNamespaceFrom => "export * as Foo from 'foo'; requires \
-                                                 `jsc.parser.exportNamespaceFrom` to be true"
-                .into(),
+
+            SyntaxError::ExportExpectFrom(s) => {
+                format!("`{}` cannot be used without `from` clause", s).into()
+            }
 
             SyntaxError::DotsWithoutIdentifier => {
                 "`...` must be followed by an identifier in declaration contexts".into()
@@ -439,9 +521,6 @@ impl SyntaxError {
                 "Nullish coalescing operator(??) requires parens when mixing with logical operators"
                     .into()
             }
-            SyntaxError::NullishCoalescingNotEnabled => {
-                "Nullish coalescing operator(??) requires jsc.parser.nullishCoalescing".into()
-            }
 
             SyntaxError::TS1056 => {
                 "jsc.target should be es5 or upper to use getter / setter".into()
@@ -454,17 +533,59 @@ impl SyntaxError {
             SyntaxError::TS2703 => {
                 "The operand of a delete operator must be a property reference.".into()
             }
-            SyntaxError::DeclNotAllowed => "Declaration is now allowed".into(),
+            SyntaxError::DeclNotAllowed => "Declaration is not allowed".into(),
+            SyntaxError::UsingDeclNotAllowed => "Using declaration is not allowed".into(),
+            SyntaxError::UsingDeclNotAllowedForForInLoop => {
+                "Using declaration is not allowed in for-in loop".into()
+            }
+            SyntaxError::UsingDeclNotEnabled => {
+                "Using declaration is not enabled. Set jsc.parser.usingDecl to true".into()
+            }
+            SyntaxError::InvalidNameInUsingDecl => {
+                "Using declaration only allows identifiers".into()
+            }
+            SyntaxError::InitRequiredForUsingDecl => {
+                "Using declaration requires initializer".into()
+            }
             SyntaxError::InvalidSuperCall => "Invalid `super()`".into(),
             SyntaxError::InvalidSuper => "Invalid access to super".into(),
+            SyntaxError::InvalidSuperPrivateName => {
+                "Index super with private name is not allowed".into()
+            }
+            SyntaxError::InvalidNewTarget => "'new.target' is only allowed in the body of a \
+                                              function declaration, function expression, or class."
+                .into(),
+            SyntaxError::InvalidImport => "Import is not allowed here".into(),
             SyntaxError::ArrowNotAllowed => "An arrow function is not allowed here".into(),
             SyntaxError::ExportNotAllowed => "`export` is not allowed here".into(),
             SyntaxError::GetterSetterCannotBeReadonly => {
                 "A getter or a setter cannot be readonly".into()
             }
+            SyntaxError::GetterParam => "A `get` accessor cannot have parameters".into(),
+            SyntaxError::SetterParam => "A `set` accessor must have exactly one parameter".into(),
             SyntaxError::RestPatInSetter => "Rest pattern is not allowed in setter".into(),
 
             SyntaxError::GeneratorConstructor => "A constructor cannot be generator".into(),
+
+            SyntaxError::ImportBindingIsString(s) => format!(
+                "A string literal cannot be used as an imported binding.\n- Did you mean `import \
+                 {{ \"{}\" as foo }}`?",
+                s
+            )
+            .into(),
+
+            SyntaxError::ExportBindingIsString => {
+                "A string literal cannot be used as an exported binding without `from`.".into()
+            }
+
+            SyntaxError::ConstDeclarationsRequireInitialization => {
+                "'const' declarations must be initialized".into()
+            }
+
+            SyntaxError::DuplicatedRegExpFlags(flag) => {
+                format!("Duplicated regular expression flag '{}'.", flag).into()
+            }
+            SyntaxError::UnknownRegExpFlags => "Unknown regular expression flags.".into(),
 
             SyntaxError::TS1003 => "Expected an identifier".into(),
             SyntaxError::TS1005 => "Expected a semicolon".into(),
@@ -504,6 +625,9 @@ impl SyntaxError {
             SyntaxError::TS1105 => "A 'break' statement can only be used within an enclosing \
                                     iteration or switch statement"
                 .into(),
+            SyntaxError::TS1106 => {
+                "The left-hand side of a `for...of` statement may not be `async`".into()
+            }
             SyntaxError::TS1107 => "Jump target cannot cross function boundary".into(),
             SyntaxError::TS1109 => "Expression expected".into(),
             SyntaxError::TS1114 => "Duplicate label".into(),
@@ -527,19 +651,36 @@ impl SyntaxError {
                 "An implementation cannot be declared in ambient contexts".into()
             }
             SyntaxError::TS1184 => "Modifiers cannot appear here".into(),
+            SyntaxError::TS1185 => "Merge conflict marker encountered.".into(),
             SyntaxError::TS1093 => {
                 "Type annotation cannot appear on a constructor declaration".into()
-            }
-            SyntaxError::TS1094 => {
-                "A `set` accessor must have a corresponding `get` accessor".into()
             }
             SyntaxError::TS1196 => "Catch clause variable cannot have a type annotation".into(),
             SyntaxError::TS1242 => {
                 "`abstract` modifier can only appear on a class or method declaration".into()
             }
+            SyntaxError::TS1244 => {
+                "Abstract methods can only appear within an abstract class.".into()
+            }
             SyntaxError::TS1243(left, right) => format!(
                 "'{}' modifier cannot be used with '{}' modifier.",
                 left, right
+            )
+            .into(),
+            SyntaxError::TS1245 => "Abstract method cannot have an implementation.".into(),
+            SyntaxError::TS1267 => "Abstract property cannot have an initializer.".into(),
+            SyntaxError::TS1273(word) => {
+                format!("'{}' modifier cannot appear on a type parameter", word).into()
+            }
+            SyntaxError::TS1274(word) => format!(
+                "'{}' modifier can only appear on a type parameter of a class, interface or type \
+                 alias",
+                word
+            )
+            .into(),
+            SyntaxError::TS1277(word) => format!(
+                "'{}' modifier can only appear on a type parameter of a function, method or class",
+                word
             )
             .into(),
             SyntaxError::TS2206 => "The 'type' modifier cannot be used on a named import when \
@@ -554,7 +695,9 @@ impl SyntaxError {
             SyntaxError::TS2371 => "A parameter initializer is only allowed in a function or \
                                     constructor implementation"
                 .into(),
-            SyntaxError::TS2406 => "Invalid left-hand side in 'for...in' statement".into(),
+            SyntaxError::TS2406 => "The left-hand side of an assignment expression must be a \
+                                    variable or a property access."
+                .into(),
             SyntaxError::TS2410 => "The 'with' statement is not supported. All symbols in a \
                                     'with' block will have type 'any'."
                 .into(),
@@ -567,13 +710,44 @@ impl SyntaxError {
             SyntaxError::TS2491 => "The left-hand side of a 'for...in' statement cannot be a \
                                     destructuring pattern"
                 .into(),
+            SyntaxError::TS2499 => "An interface can only extend an identifier/qualified-name \
+                                    with optional type arguments."
+                .into(),
             SyntaxError::TS4112 => "This member cannot have an 'override' modifier because its \
                                     containing class does not extend another class."
+                .into(),
+            SyntaxError::TS8038 => "Decorators may not appear after `export` or `export default` \
+                                    if they also appear before `export`."
                 .into(),
             SyntaxError::TSTypeAnnotationAfterAssign => {
                 "Type annotations must come before default assignments".into()
             }
+            SyntaxError::TsNonNullAssertionNotAllowed(word) => format!(
+                "Typescript non-null assertion operator is not allowed with '{}'",
+                word
+            )
+            .into(),
             SyntaxError::SetterParamRequired => "Setter should have exactly one parameter".into(),
+            SyntaxError::UnexpectedTokenWithSuggestions {
+                candidate_list: token_list,
+            } => {
+                let did_you_mean = if token_list.len() <= 2 {
+                    token_list.join(" or ")
+                } else {
+                    token_list[0..token_list.len() - 1].join(" , ")
+                        + &*format!("or {}", token_list[token_list.len() - 1])
+                };
+                format!("Unexpected token. Did you mean {}?", did_you_mean).into()
+            }
+            SyntaxError::WithLabel { inner, .. } => inner.error.1.msg(),
+            SyntaxError::ReservedTypeAssertion => "This syntax is reserved in files with the .mts \
+                                                   or .cts extension. Use an `as` expression \
+                                                   instead."
+                .into(),
+            SyntaxError::ReservedArrowTypeParam => "This syntax is reserved in files with the \
+                                                    .mts or .cts extension. Add a trailing comma, \
+                                                    as in `<T,>() => ...`."
+                .into(),
         }
     }
 }
@@ -582,23 +756,28 @@ impl Error {
     #[cold]
     #[inline(never)]
     pub fn into_diagnostic(self, handler: &Handler) -> DiagnosticBuilder {
+        if let SyntaxError::WithLabel { inner, note, span } = self.error.1 {
+            let mut db = inner.into_diagnostic(handler);
+            db.span_label(span, note);
+            return db;
+        }
+
         let span = self.span();
 
         let kind = self.into_kind();
         let msg = kind.msg();
 
-        let mut db = handler.struct_err(&msg);
-        db.set_span(span);
+        let mut db = handler.struct_span_err(span, &msg);
 
         match kind {
             SyntaxError::ExpectedSemiForExprStmt { expr } => {
-                db.span_note(
+                db.span_label(
                     expr,
                     "This is the expression part of an expression statement",
                 );
             }
             SyntaxError::MultipleDefault { previous } => {
-                db.span_note(previous, "previous default case is declared at here");
+                db.span_label(previous, "previous default case is declared at here");
             }
             _ => {}
         }

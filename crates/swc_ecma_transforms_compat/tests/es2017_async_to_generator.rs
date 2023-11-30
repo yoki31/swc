@@ -1,12 +1,14 @@
-use crate::es2015::regenerator;
 use std::{fs::read_to_string, path::PathBuf};
-use swc_common::{chain, Mark, Spanned};
+
+use swc_common::{chain, comments::SingleThreadedComments, Mark, Spanned};
 use swc_ecma_ast::*;
 use swc_ecma_parser::Syntax;
-use swc_ecma_transforms_base::{fixer::fixer, resolver::resolver};
+use swc_ecma_transforms_base::{fixer::fixer, resolver};
 use swc_ecma_transforms_compat::{
     es2015,
-    es2015::{arrow, destructuring, function_name, parameters},
+    es2015::{
+        arrow, block_scoping, destructuring, function_name, generator::generator, parameters,
+    },
     es2017::async_to_generator,
     es2022::class_properties,
 };
@@ -37,14 +39,27 @@ fn syntax() -> Syntax {
 }
 
 fn tr() -> impl Fold {
+    let unresolved_mark = Mark::new();
+    let top_level_mark = Mark::new();
+
     chain!(
+        resolver(unresolved_mark, top_level_mark, false),
         ParenRemover,
-        arrow(),
-        parameters(),
+        arrow(unresolved_mark),
+        parameters(Default::default(), unresolved_mark),
         destructuring(destructuring::Config { loose: false }),
         function_name(),
-        async_to_generator(),
+        async_to_generator::<SingleThreadedComments>(Default::default(), None, unresolved_mark),
         fixer(None)
+    )
+}
+
+fn with_resolver() -> impl Fold {
+    let unresolved = Mark::new();
+    let top_level = Mark::new();
+    chain!(
+        resolver(unresolved, top_level, false),
+        async_to_generator::<SingleThreadedComments>(Default::default(), None, unresolved)
     )
 }
 
@@ -55,17 +70,6 @@ test!(
     r#"
 async function foo(bar) {
   bar && await bar();
-}
-"#,
-    r#"
-function foo(bar) {
-  return _foo.apply(this, arguments);
-}
-function _foo() {
-    _foo = _asyncToGenerator(function*(bar) {
-        bar && (yield bar());
-    });
-    return _foo.apply(this, arguments);
 }
 "#
 );
@@ -85,23 +89,6 @@ let TestClass = {
     });
   }
 };
-"#,
-    r#"
-let TestClass = {
-     name: 'John Doe',
-     testMethodFailure () {
-        var _this = this;
-        return new Promise(function(resolve) {
-          var _ref = _asyncToGenerator(function*(resolve) {
-            console.log(_this);
-            setTimeout(resolve, 1000);
-          });
-          return function() {
-            return _ref.apply(this, arguments);
-          };
-        }());
-      }
-};
 "#
 );
 
@@ -117,21 +104,6 @@ function mandatory(paramName) {
 async function foo({ a, b = mandatory("b") }) {
   return Promise.resolve(b);
 }
-"#,
-    r#"
-function mandatory(paramName) {
-    throw new Error(`Missing parameter: ${paramName}`);
-}
-function foo(param) {
-  return _foo.apply(this, arguments);
-}
-function _foo() {
-    _foo = _asyncToGenerator(function*(param) {
-        let a = param.a, _b = param.b, b = _b === void 0 ? mandatory('b') : _b;
-        return Promise.resolve(b);
-    });
-    return _foo.apply(this, arguments);
-}
 "#
 );
 
@@ -144,34 +116,6 @@ test!(
 (async () => { await 'ok' })();
 (async function notIIFE() { await 'ok' });
 (async () => { await 'not iife' });
-"#,
-    r#"
-_asyncToGenerator(function*() {
-    yield 'ok';
-})();
-
-_asyncToGenerator(function*() {
-    yield 'ok';
-})();
-
-(function() {
-    var _notIIFE = _asyncToGenerator(function*() {
-        yield 'ok';
-    });
-    function notIIFE() {
-        return _notIIFE.apply(this, arguments);
-    }
-    return notIIFE;
-})();
-
-(function() {
-    var _ref = _asyncToGenerator(function*() {
-        yield 'not iife';
-    });
-    return function() {
-        return _ref.apply(this, arguments);
-    };
-})();
 "#
 );
 
@@ -184,16 +128,6 @@ class Foo {
   async foo() {
     var wat = await bar();
   }
-}
-"#,
-    r#"
-class Foo {
-  foo() {
-    return _asyncToGenerator(function* () {
-      var wat = yield bar();
-    })();
-  }
-
 }
 "#
 );
@@ -219,48 +153,6 @@ async function s(x, ...args) {
   await t();
   return this.h(t);
 }
-"#,
-    r#"
-    function s(x) {
-    return _s.apply(this, arguments);
-}
-function _s() {
-    _s = _asyncToGenerator(function*(x) {
-        for(let _len1 = arguments.length, args = new Array(_len1 > 1 ? _len1 - 1 : 0), _key1 = 1; _key1 < _len1; _key1++){
-            args[_key1 - 1] = arguments[_key1];
-        }
-        var _this = this, _arguments = arguments;
-        let t = function(y, a) {
-            var _t = _asyncToGenerator(function*(y, a) {
-                var _this1 = _this, _arguments1 = _arguments;
-                let r = function(z, b) {
-                    var _r = _asyncToGenerator(function*(z, b) {
-                        for(let _len = arguments.length, innerArgs = new Array(_len > 2 ? _len - 2 : 0), _key = 2; _key < _len; _key++){
-                            innerArgs[_key - 2] = arguments[_key];
-                        }
-                        yield z;
-                        console.log(_this1, innerArgs, _arguments1);
-                        return _this1.x;
-                    });
-                    function r() {
-                        return _r.apply(this, arguments);
-                    }
-                    return r;
-                }();
-                yield r();
-                console.log(_this, args, _arguments);
-                return _this.g(r);
-            });
-            function t() {
-                return _t.apply(this, arguments);
-            }
-            return t;
-        }();
-        yield t();
-        return this.h(t);
-    });
-    return _s.apply(this, arguments);
-}
 "#
 );
 
@@ -279,34 +171,7 @@ var foo2 = async function () {
 bar = async function () {
   var wat = await foo();
 };
-"#,
-    "
-var foo = function() {
-    var _foo = _asyncToGenerator(function*() {
-        var wat = yield bar();
-    });
-    function foo() {
-        return _foo.apply(this, arguments);
-    }
-    return foo;
-}();
-var foo2 = function() {
-    var _foo2 = _asyncToGenerator(function*() {
-        var wat = yield bar();
-    });
-    function foo2() {
-        return _foo2.apply(this, arguments);
-    }
-    return foo2;
-}(), bar = function() {
-    var _bar = _asyncToGenerator(function*() {
-        var wat = yield foo();
-    });
-    function bar() {
-        return _bar.apply(this, arguments);
-    }
-    return bar;
-}();"
+"#
 );
 
 test!(
@@ -317,18 +182,6 @@ test!(
 var foo = async function bar() {
   console.log(bar);
 };
-"#,
-    r#"
-var foo = function() {
-  var _bar = _asyncToGenerator(function*() {
-    console.log(bar);
-  });
-  function bar() {
-    return _bar.apply(this, arguments);
-  }
-
-  return bar;
-}();
 "#
 );
 
@@ -338,16 +191,7 @@ test!(
     no_parameters_and_no_id,
     r#"
 foo(async function () {
-});"#,
-    r#"
-foo(function() {
-  var _ref = _asyncToGenerator(function*() {
-  });
-  return function() {
-    return _ref.apply(this, arguments);
-  };
-}());
-"#
+});"#
 );
 
 test!(
@@ -375,56 +219,6 @@ class Class {
     }
   }
 }
-"#,
-    r#"
-    class Class {
-      method() {
-          return _asyncToGenerator((function*() {
-              var _this2 = this;
-              this;
-              (function() {
-                  return _this2;
-              });
-              (function() {
-                  var _this1 = _this2;
-                  _this2;
-                  (function() {
-                      return _this1;
-                  });
-                  function x() {
-                      var _this = this;
-                      this;
-                      (function() {
-                          _this;
-                      });
-                      (function() {
-                          var _ref = _asyncToGenerator(function*() {
-                              _this;
-                          });
-                          return function() {
-                              return _ref.apply(this, arguments);
-                          };
-                      })();
-                  }
-              });
-              function x() {
-                  var _this = this;
-                  this;
-                  (function() {
-                      _this;
-                  });
-                  (function() {
-                      var _ref = _asyncToGenerator(function*() {
-                          _this;
-                      });
-                      return function() {
-                          return _ref.apply(this, arguments);
-                      };
-                  })();
-              }
-          }).bind(this))();
-      }
-  }
 "#
 );
 
@@ -438,21 +232,7 @@ test!(
 
     var arrow = () => super.method();
   }
-}"#,
-    r#"
-class Foo extends class{
-}{
-     method() {
-        var _super_method = (..._args)=>super.method(..._args), _super_method1 = (..._args)=>super.method(..._args);
-        return _asyncToGenerator(function*() {
-            _super_method();
-            var arrow = function arrow() {
-                return _super_method1();
-            };
-        })();
-    }
-}
-"#
+}"#
 );
 
 test_exec!(
@@ -594,18 +374,7 @@ let obj = {
   async foo(bar) {
     return await baz(bar);
   }
-}"#,
-    r#"
-let obj = {
-  a: 123,
-
-  foo(bar) {
-    return _asyncToGenerator(function* () {
-      return yield baz(bar);
-    })();
-  }
-
-};"#
+}"#
 );
 
 test!(
@@ -615,15 +384,6 @@ test!(
     r#"
 async function foo(bar) {
 
-}
-"#,
-    r#"
-function foo(bar) {
-  return _foo.apply(this, arguments);
-}
-function _foo() {
-  _foo = _asyncToGenerator(function* (bar) {});
-  return _foo.apply(this, arguments);
 }
 "#
 );
@@ -636,17 +396,6 @@ test!(
 async function foo() {
   var wat = await bar();
 }
-"#,
-    r#"
-function foo() {
-  return _foo.apply(this, arguments);
-}
-function _foo() {
-  _foo = _asyncToGenerator(function* () {
-    var wat = yield bar();
-  });
-  return _foo.apply(this, arguments);
-}
 "#
 );
 
@@ -658,15 +407,7 @@ test!(
     async f() {
         await g();
     }
-});",
-    "export default obj({
-    f () {
-        return _asyncToGenerator(function*() {
-            yield g();
-        })();
-    }
-});
-"
+});"
 );
 
 test_exec!(
@@ -707,7 +448,7 @@ return (new B(20)).print().then(() => console.log('Done'));"
 
 test_exec!(
     syntax(),
-    |_| async_to_generator(),
+    |_| async_to_generator::<SingleThreadedComments>(Default::default(), None, Mark::new()),
     issue_400_2,
     "class A {
     constructor() {
@@ -737,14 +478,21 @@ return (new B(20)).print().then(() => console.log('Done'));"
 
 test_exec!(
     syntax(),
-    |t| chain!(
-        async_to_generator(),
-        es2015(
-            Mark::fresh(Mark::root()),
-            Some(t.comments.clone()),
-            Default::default()
+    |t| {
+        let unresolved_mark = Mark::new();
+        chain!(
+            async_to_generator(
+                Default::default(),
+                Some(t.comments.clone()),
+                unresolved_mark
+            ),
+            es2015(
+                unresolved_mark,
+                Some(t.comments.clone()),
+                Default::default()
+            )
         )
-    ),
+    },
     issue_400_3,
     "class A {
     constructor() {
@@ -762,8 +510,8 @@ return (new A()).print();"
 //// regression_7178
 //test!(
 //    syntax(),
-//    |_| chain!(jsx(), jsc_constant_elements(), async_to_generator(),),
-//    regression_7178,
+//    |_| chain!(jsx(), jsc_constant_elements(),
+// async_to_generator(Default::default()),),    regression_7178,
 //    r#"
 //const title = "Neem contact op";
 //
@@ -771,7 +519,7 @@ return (new A()).print();"
 //  return <Contact title={title} />;
 //}
 //
-//"#,
+//"#
 //    r#"
 //const title = "Neem contact op";
 //
@@ -786,7 +534,7 @@ return (new A()).print();"
 //});
 //
 //function _action() {
-//  _action = _asyncToGenerator(function* () {
+//  _action = _async_to_generator(function* () {
 //    return _ref;
 //  });
 //  return _action.apply(this, arguments);
@@ -799,30 +547,12 @@ return (new A()).print();"
 test!(
     ignore,
     syntax(),
-    |_| async_to_generator(),
+    |_| async_to_generator::<SingleThreadedComments>(Default::default(), None, Mark::new()),
     bluebird_coroutines_named_expression,
     r#"
 var foo = async function bar() {
   console.log(bar);
 };
-
-"#,
-    r#"
-var _coroutine = require("bluebird").coroutine;
-
-var foo =
-/*#__PURE__*/
-function () {
-  var _bar = _coroutine(function* () {
-    console.log(bar);
-  });
-
-  function bar() {
-    return _bar.apply(this, arguments);
-  }
-
-  return bar;
-}();
 
 "#
 );
@@ -832,28 +562,10 @@ test!(
     // TODO: Enable this test after implementing es6 module pass.
     ignore,
     syntax(),
-    |_| async_to_generator(),
+    |_| async_to_generator::<SingleThreadedComments>(Default::default(), None, Mark::new()),
     export_async_lone_export,
     r#"
 export async function foo () { }
-
-"#,
-    r#"
-"use strict";
-
-Object.defineProperty(exports, "__esModule", {
-  value: true
-});
-exports.foo = foo;
-
-function foo() {
-  return _foo.apply(this, arguments);
-}
-
-function _foo() {
-  _foo = _asyncToGenerator(function* () {});
-  return _foo.apply(this, arguments);
-}
 
 "#
 );
@@ -862,18 +574,10 @@ function _foo() {
 test!(
     ignore,
     syntax(),
-    |_| async_to_generator(),
+    |_| async_to_generator::<SingleThreadedComments>(Default::default(), None, Mark::new()),
     bluebird_coroutines_arrow_function,
     r#"
 (async () => { await foo(); })()
-
-"#,
-    r#"
-var _coroutine = require("bluebird").coroutine;
-
-_coroutine(function* () {
-  yield foo();
-})();
 
 "#
 );
@@ -883,9 +587,14 @@ _coroutine(function* () {
 // regression_t7194
 test!(
     // Optimization
-    ignore,
     syntax(),
-    |_| chain!(async_to_generator(), arrow()),
+    |_| {
+        let unresolved_mark = Mark::new();
+        chain!(
+            async_to_generator::<SingleThreadedComments>(Default::default(), None, unresolved_mark),
+            arrow(unresolved_mark)
+        )
+    },
     regression_t7194,
     r#"
 function f() {
@@ -902,31 +611,6 @@ function f() {
   })()
 }).call('foo')
 
-"#,
-    r#"
-function f() {
-  g(
-  /*#__PURE__*/
-  _asyncToGenerator(function* () {
-    var _this = this;
-
-    c(function () {
-      return _this;
-    });
-  }));
-}
-
-/*#__PURE__*/
-_asyncToGenerator(function* () {
-  var _this2 = this;
-
-  console.log('async wrapper:', this === 'foo');
-
-  (function () {
-    console.log('nested arrow:', _this2 === 'foo');
-  })();
-}).call('foo');
-
 "#
 );
 
@@ -935,29 +619,12 @@ test!(
     // TODO: Unignore this
     ignore,
     syntax(),
-    |_| chain!(resolver(), async_to_generator()),
+    |_| with_resolver(),
     async_to_generator_shadowed_promise,
     r#"
 let Promise;
 async function foo() {
   await new Promise(resolve => { resolve() });
-}
-
-"#,
-    r#"
-let _Promise;
-
-function _foo() {
-  _foo = _asyncToGenerator(function* () {
-    yield new _Promise(resolve => {
-      resolve();
-    });
-  });
-  return _foo.apply(this, arguments);
-}
-
-function foo() {
-  return _foo.apply(this, arguments);
 }
 
 "#
@@ -966,7 +633,7 @@ function foo() {
 // async_to_generator_object_method_with_arrows
 test!(
     syntax(),
-    |_| async_to_generator(),
+    |_| async_to_generator::<SingleThreadedComments>(Default::default(), None, Mark::new()),
     async_to_generator_object_method_with_arrows,
     r#"
 class Class {
@@ -989,49 +656,13 @@ class Class {
     }
   }
 }
-
-"#,
-    r#"
-    class Class {
-      method() {
-        var _this = this;
-        return _asyncToGenerator((function*() {
-            this;
-            ()=>_this
-            ;
-            ()=>{
-                _this;
-                ()=>_this
-                ;
-                function x() {
-                    this;
-                    ()=>{
-                        _this;
-                    };
-                    _asyncToGenerator(function*() {
-                        _this;
-                    });
-                }
-            };
-            function x() {
-                this;
-                ()=>{
-                    _this;
-                };
-                _asyncToGenerator(function*() {
-                    _this;
-                });
-            }
-        }).bind(this))();
-      }
-    }
-    "#
+"#
 );
 
 // async_to_generator_object_method
 test!(
     syntax(),
-    |_| async_to_generator(),
+    |_| async_to_generator::<SingleThreadedComments>(Default::default(), None, Mark::new()),
     async_to_generator_object_method,
     r#"
 let obj = {
@@ -1041,19 +672,6 @@ let obj = {
   }
 }
 
-"#,
-    r#"
-let obj = {
-  a: 123,
-
-  foo(bar) {
-    return _asyncToGenerator(function* () {
-      return yield baz(bar);
-    })();
-  }
-
-};
-
 "#
 );
 
@@ -1061,26 +679,13 @@ let obj = {
 test!(
     ignore,
     syntax(),
-    |_| async_to_generator(),
+    |_| async_to_generator::<SingleThreadedComments>(Default::default(), None, Mark::new()),
     bluebird_coroutines_class,
     r#"
 class Foo {
   async foo() {
     var wat = await bar();
   }
-}
-
-"#,
-    r#"
-var _coroutine = require("bluebird").coroutine;
-
-class Foo {
-  foo() {
-    return _coroutine(function* () {
-      var wat = yield bar();
-    })();
-  }
-
 }
 
 "#
@@ -1090,92 +695,20 @@ class Foo {
 test!(
     ignore,
     syntax(),
-    |_| chain!(
-        async_to_generator(),
-        //regenerator(),
-        arrow(),
-    ),
+    |_| {
+        let unresolved_mark = Mark::new();
+        chain!(
+            async_to_generator::<SingleThreadedComments>(Default::default(), None, unresolved_mark),
+            //regenerator(),
+            arrow(unresolved_mark),
+        )
+    },
     async_to_generator_async_iife_with_regenerator,
     r#"
 (async function() { await 'ok' })();
 (async () => { await 'ok' })();
 (async function notIIFE() { await 'ok' });
 (async () => { await 'not iife' });
-
-"#,
-    r#"
-_asyncToGenerator(
- /*#__PURE__*/
-regeneratorRuntime.mark(function _callee() {
-  return regeneratorRuntime.wrap(function _callee$(_context) {
-    while (1) switch (_context.prev = _context.next) {
-      case 0:
-        _context.next = 2;
-        return 'ok';
-
-      case 2:
-      case "end":
-        return _context.stop();
-    }
-  }, _callee);
-}))();
-_asyncToGenerator(
- /*#__PURE__*/
-regeneratorRuntime.mark(function _callee2() {
-  return regeneratorRuntime.wrap(function _callee2$(_context2) {
-    while (1) switch (_context2.prev = _context2.next) {
-      case 0:
-        _context2.next = 2;
-        return 'ok';
-
-      case 2:
-      case "end":
-        return _context2.stop();
-    }
-  }, _callee2);
-}))();
-
- /*#__PURE__*/
-(function () {
-  var _notIIFE = _asyncToGenerator(
-  /*#__PURE__*/
-  regeneratorRuntime.mark(function _callee3() {
-    return regeneratorRuntime.wrap(function _callee3$(_context3) {
-      while (1) switch (_context3.prev = _context3.next) {
-        case 0:
-          _context3.next = 2;
-          return 'ok';
-
-        case 2:
-        case "end":
-          return _context3.stop();
-      }
-    }, _callee3);
-  }));
-
-  function notIIFE() {
-    return _notIIFE.apply(this, arguments);
-  }
-
-  return notIIFE;
-})();
-
- /*#__PURE__*/
-_asyncToGenerator(
- /*#__PURE__*/
-regeneratorRuntime.mark(function _callee4() {
-  return regeneratorRuntime.wrap(function _callee4$(_context4) {
-    while (1) switch (_context4.prev = _context4.next) {
-      case 0:
-        _context4.next = 2;
-        return 'not iife';
-
-      case 2:
-      case "end":
-        return _context4.stop();
-    }
-  }, _callee4);
-}));
 
 "#
 );
@@ -1184,12 +717,12 @@ regeneratorRuntime.mark(function _callee4() {
 //test!(syntax(),|_| tr("{
 //  "presets": [
 //    [
-//      "env",
+//      "env"
 //      {
 //        "targets": {
-//          "chrome": "62",
-//          "edge": "15",
-//          "firefox": "52",
+//          "chrome": "62"
+//          "edge": "15"
+//          "firefox": "52"
 //          "safari": "11"
 //        }
 //      }
@@ -1202,13 +735,13 @@ regeneratorRuntime.mark(function _callee4() {
 //		const tmp = number
 //	})
 //}
-//"#, r#"
+//"# r#"
 //function foo() {
 //  return _foo.apply(this, arguments);
 //}
 //
 //function _foo() {
-//  _foo = _asyncToGenerator(
+//  _foo = _async_to_generator(
 //  /*#__PURE__*/
 //  regeneratorRuntime.mark(function _callee2() {
 //    return regeneratorRuntime.wrap(function _callee2$(_context2) {
@@ -1216,7 +749,7 @@ regeneratorRuntime.mark(function _callee4() {
 //        case 0:
 //          /*#__PURE__*/
 //          (function () {
-//            var _ref = _asyncToGenerator(
+//            var _ref = _async_to_generator(
 //            /*#__PURE__*/
 //            regeneratorRuntime.mark(function _callee(number) {
 //              var tmp;
@@ -1251,28 +784,12 @@ regeneratorRuntime.mark(function _callee4() {
 // async_to_generator_named_expression
 test!(
     syntax(),
-    |_| async_to_generator(),
+    |_| async_to_generator::<SingleThreadedComments>(Default::default(), None, Mark::new()),
     async_to_generator_named_expression,
     r#"
 var foo = async function bar() {
   console.log(bar);
 };
-
-"#,
-    r#"
-var foo =
-/*#__PURE__*/
-function () {
-  var _bar = _asyncToGenerator(function* () {
-    console.log(bar);
-  });
-
-  function bar() {
-    return _bar.apply(this, arguments);
-  }
-
-  return bar;
-}();
 
 "#
 );
@@ -1280,19 +797,19 @@ function () {
 //// async_to_generator_async_iife_with_regenerator_spec
 //test!(
 //    syntax(),
-//    |_| chain!(async_to_generator(), arrow(), regenerator(),),
-//    async_to_generator_async_iife_with_regenerator_spec,
+//    |_| chain!(async_to_generator(Default::default()), arrow(),
+// regenerator(),),    async_to_generator_async_iife_with_regenerator_spec,
 //    r#"
 //(async function() { await 'ok' })();
 //(async () => { await 'ok' })();
 //(async function notIIFE() { await 'ok' });
 //(async () => { await 'not iife' });
 //
-//"#,
+//"#
 //    r#"
 //var _this = this;
 //
-//_asyncToGenerator(
+//_async_to_generator(
 // /*#__PURE__*/
 //regeneratorRuntime.mark(function _callee() {
 //  return regeneratorRuntime.wrap(function _callee$(_context) {
@@ -1307,13 +824,13 @@ function () {
 //    }
 //  }, _callee);
 //}))();
-//_asyncToGenerator(
+//_async_to_generator(
 // /*#__PURE__*/
 //regeneratorRuntime.mark(function _callee2() {
 //  return regeneratorRuntime.wrap(function _callee2$(_context2) {
 //    while (1) switch (_context2.prev = _context2.next) {
 //      case 0:
-//        _newArrowCheck(this, _this);
+//        _new_arrow_check(this, _this);
 //        _context2.next = 3;
 //        return 'ok';
 //
@@ -1326,7 +843,7 @@ function () {
 //
 // /*#__PURE__*/
 //(function () {
-//  var _notIIFE = _asyncToGenerator(
+//  var _notIIFE = _async_to_generator(
 //  /*#__PURE__*/
 //  regeneratorRuntime.mark(function _callee3() {
 //    return regeneratorRuntime.wrap(function _callee3$(_context3) {
@@ -1350,13 +867,13 @@ function () {
 //})();
 //
 // /*#__PURE__*/
-//_asyncToGenerator(
+//_async_to_generator(
 // /*#__PURE__*/
 //regeneratorRuntime.mark(function _callee4() {
 //  return regeneratorRuntime.wrap(function _callee4$(_context4) {
 //    while (1) switch (_context4.prev = _context4.next) {
 //      case 0:
-//        _newArrowCheck(this, _this);
+//        _new_arrow_check(this, _this);
 //        _context4.next = 3;
 //        return 'not iife';
 //
@@ -1373,7 +890,7 @@ function () {
 // async_to_generator_async_arrow_in_method
 test!(
     syntax(),
-    |_| async_to_generator(),
+    |_| async_to_generator::<SingleThreadedComments>(Default::default(), None, Mark::new()),
     async_to_generator_async_arrow_in_method,
     r#"
 let TestClass = {
@@ -1387,18 +904,6 @@ let TestClass = {
   }
 };
 
-"#,
-    r#"
-let TestClass = {
-    name: 'John Doe',
-    testMethodFailure () {
-      return new Promise(_asyncToGenerator((function*(resolve) {
-        console.log(this);
-        setTimeout(resolve, 1000);
-      }).bind(this)).bind(this));
-    }
-};
-
 "#
 );
 
@@ -1406,38 +911,30 @@ let TestClass = {
 test!(
     ignore,
     syntax(),
-    |_| async_to_generator(),
+    |_| async_to_generator::<SingleThreadedComments>(Default::default(), None, Mark::new()),
     bluebird_coroutines_statement,
     r#"
 async function foo() {
   var wat = await bar();
 }
 
-"#,
-    r#"
-var _coroutine = require("bluebird").coroutine;
-
-function _foo() {
-  _foo = _coroutine(function* () {
-    var wat = yield bar();
-  });
-  return _foo.apply(this, arguments);
-}
-
-function foo() {
-  return _foo.apply(this, arguments);
-}
 "#
 );
 
 // regression_4943
 test!(
     syntax(),
-    |_| chain!(
-        async_to_generator(),
-        parameters(),
-        destructuring(destructuring::Config { loose: false }),
-    ),
+    |_| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, false),
+            async_to_generator::<SingleThreadedComments>(Default::default(), None, unresolved_mark),
+            parameters(Default::default(), unresolved_mark),
+            destructuring(destructuring::Config { loose: false }),
+        )
+    },
     regression_4943,
     r#"
 "use strict";
@@ -1450,28 +947,6 @@ async function foo({ a, b = mandatory("b") }) {
   return Promise.resolve(b);
 }
 
-"#,
-    r#"
-"use strict";
-
-function mandatory(paramName) {
-  throw new Error(`Missing parameter: ${paramName}`);
-}
-
-function foo(_) {
-  return _foo.apply(this, arguments);
-}
-
-function _foo() {
-  _foo = _asyncToGenerator(function* (param) {
-    let a = param.a,
-        _b = param.b,
-        b = _b === void 0 ? mandatory("b") : _b;
-    return Promise.resolve(b);
-  });
-  return _foo.apply(this, arguments);
-}
-
 "#
 );
 
@@ -1480,27 +955,10 @@ test!(
     // TODO: Enable this test after implementing es6 module pass.
     ignore,
     syntax(),
-    |_| async_to_generator(),
+    |_| async_to_generator::<SingleThreadedComments>(Default::default(), None, Mark::new()),
     export_async_default_arrow_export,
     r#"
 export default async () => { return await foo(); }
-
-"#,
-    r#"
-"use strict";
-
-Object.defineProperty(exports, "__esModule", {
-  value: true
-});
-exports.default = void 0;
-
-var _default =
-/*#__PURE__*/
-_asyncToGenerator(function* () {
-  return yield foo();
-});
-
-exports.default = _default;
 
 "#
 );
@@ -1508,7 +966,7 @@ exports.default = _default;
 // async_to_generator_function_arity
 test!(
     syntax(),
-    |_| async_to_generator(),
+    |_| async_to_generator::<SingleThreadedComments>(Default::default(), None, Mark::new()),
     async_to_generator_function_arity,
     r#"
 async function one(a, b = 1) {}
@@ -1518,69 +976,13 @@ async function four(a, b = 1, c, ...d) {}
 async function five(a, {b}){}
 async function six(a, {b} = {}){}
 
-"#,
-    r#"
-
-function one(a) {
-  return _one.apply(this, arguments);
-}
-function _one() {
-  _one = _asyncToGenerator(function*(a, b = 1) {
-  });
-  return _one.apply(this, arguments);
-}
-function two(a, b) {
-  return _two.apply(this, arguments);
-}
-function _two() {
-  _two = _asyncToGenerator(function*(a, b, ...c) {
-  });
-  return _two.apply(this, arguments);
-}
-function three(a) {
-  return _three.apply(this, arguments);
-}
-function _three() {
-  _three = _asyncToGenerator(function*(a, b = 1, c, d = 3) {
-  });
-  return _three.apply(this, arguments);
-}
-function four(a) {
-  return _four.apply(this, arguments);
-}
-function _four() {
-  _four = _asyncToGenerator(function*(a, b = 1, c, ...d) {
-  });
-  return _four.apply(this, arguments);
-}
-function five(a, _) {
-  return _five.apply(this, arguments);
-}
-function _five() {
-  _five = _asyncToGenerator(function*(a, { b  }) {
-  });
-  return _five.apply(this, arguments);
-}
-function six(a) {
-  return _six.apply(this, arguments);
-}
-function _six() {
-  _six = _asyncToGenerator(function*(a, { b  } = {
-  }) {
-  });
-  return _six.apply(this, arguments);
-}
-
-
 "#
 );
 
 // async_to_generator_object_method_with_super
 test!(
-    // TODO: Implement caching
-    ignore,
     syntax(),
-    |_| async_to_generator(),
+    |_| async_to_generator::<SingleThreadedComments>(Default::default(), None, Mark::new()),
     async_to_generator_object_method_with_super_caching,
     r#"
 class Foo extends class {} {
@@ -1591,22 +993,6 @@ class Foo extends class {} {
   }
 }
 
-"#,
-    r#"
-class Foo extends class {} {
-  method() {
-    var _superprop_getMethod = () => super.method,
-        _this = this;
-
-    return _asyncToGenerator(function* () {
-      _superprop_getMethod().call(_this);
-
-      var arrow = () => _superprop_getMethod().call(_this);
-    })();
-  }
-
-}
-
 "#
 );
 
@@ -1615,28 +1001,10 @@ test!(
     // TODO: Enable this test after implementing es6 module pass.
     ignore,
     syntax(),
-    |_| async_to_generator(),
+    |_| async_to_generator::<SingleThreadedComments>(Default::default(), None, Mark::new()),
     export_async_default_export,
     r#"
 export default async function myFunc() {}
-
-"#,
-    r#"
-"use strict";
-
-Object.defineProperty(exports, "__esModule", {
-  value: true
-});
-exports.default = myFunc;
-
-function myFunc() {
-  return _myFunc.apply(this, arguments);
-}
-
-function _myFunc() {
-  _myFunc = _asyncToGenerator(function* () {});
-  return _myFunc.apply(this, arguments);
-}
 
 "#
 );
@@ -1644,7 +1012,7 @@ function _myFunc() {
 // async_to_generator_async
 test!(
     syntax(),
-    |_| async_to_generator(),
+    |_| async_to_generator::<SingleThreadedComments>(Default::default(), None, Mark::new()),
     async_to_generator_async,
     r#"
 class Foo {
@@ -1653,52 +1021,26 @@ class Foo {
   }
 }
 
-"#,
-    r#"
-class Foo {
-  foo() {
-    return _asyncToGenerator(function* () {
-      var wat = yield bar();
-    })();
-  }
-
-}
-
 "#
 );
 
 // regression_8783
 test!(
     syntax(),
-    |_| async_to_generator(),
+    |_| async_to_generator::<SingleThreadedComments>(Default::default(), None, Mark::new()),
     regression_8783,
     r#"
 (async function poll() {
   console.log(await Promise.resolve('Hello'))
   setTimeout(poll, 1000);
 })();
-"#,
-    r#"
-(function () {
-  var _poll = _asyncToGenerator(function* () {
-    console.log((yield Promise.resolve('Hello')));
-    setTimeout(poll, 1000);
-  });
-
-  function poll() {
-    return _poll.apply(this, arguments);
-  }
-
-  return poll;
-})()();
-
 "#
 );
 
 // async_to_generator_deeply_nested_asyncs
 test!(
     syntax(),
-    |_| async_to_generator(),
+    |_| with_resolver(),
     async_to_generator_deeply_nested_asyncs,
     r#"
 async function s(x, ...args) {
@@ -1718,29 +1060,7 @@ async function s(x, ...args) {
   return this.h(t);
 }
 
-"#,
-    r#"
-    function s(x) {
-      return _s.apply(this, arguments);
-    }
-    function _s() {
-        _s = _asyncToGenerator(function*(x, ...args) {
-            let t = _asyncToGenerator((function*(y, a) {
-                let r = _asyncToGenerator((function*(z, b, ...innerArgs) {
-                    yield z;
-                    console.log(this, innerArgs, arguments);
-                    return this.x;
-                }).bind(this)).bind(this);
-                yield r();
-                console.log(this, args, arguments);
-                return this.g(r);
-            }).bind(this)).bind(this);
-            yield t();
-            return this.h(t);
-        });
-        return _s.apply(this, arguments);
-    }
-    "#
+"#
 );
 
 // export_async_import_and_export
@@ -1748,32 +1068,12 @@ test!(
     // TODO: Enable this test after implementing es6 module pass.
     ignore,
     syntax(),
-    |_| async_to_generator(),
+    |_| async_to_generator::<SingleThreadedComments>(Default::default(), None, Mark::new()),
     export_async_import_and_export,
     r#"
 import bar from 'bar';
 
 export async function foo () { }
-
-"#,
-    r#"
-"use strict";
-
-Object.defineProperty(exports, "__esModule", {
-  value: true
-});
-exports.foo = foo;
-
-var _bar = _interopRequireDefault(require("bar"));
-
-function foo() {
-  return _foo.apply(this, arguments);
-}
-
-function _foo() {
-  _foo = _asyncToGenerator(function* () {});
-  return _foo.apply(this, arguments);
-}
 
 "#
 );
@@ -1783,7 +1083,7 @@ test!(
     // TODO: Unignore this
     ignore,
     syntax(),
-    |_| chain!(resolver(), async_to_generator()),
+    |_| with_resolver(),
     async_to_generator_shadowed_promise_nested,
     r#"
 let Promise;
@@ -1798,33 +1098,6 @@ async function foo() {
   }
 }
 
-"#,
-    r#"
-let _Promise;
-
-function _foo() {
-  _foo = _asyncToGenerator(function* () {
-    let Promise;
-    yield bar();
-
-    function _bar() {
-      _bar = _asyncToGenerator(function* () {
-        return Promise.resolve();
-      });
-      return _bar.apply(this, arguments);
-    }
-
-    function bar() {
-      return _bar.apply(this, arguments);
-    }
-  });
-  return _foo.apply(this, arguments);
-}
-
-function foo() {
-  return _foo.apply(this, arguments);
-}
-
 "#
 );
 
@@ -1835,24 +1108,12 @@ function foo() {
 // regression_4599
 test!(
     syntax(),
-    |_| async_to_generator(),
+    |_| async_to_generator::<SingleThreadedComments>(Default::default(), None, Mark::new()),
     regression_4599,
     r#"
 async () => await promise
 
 async () => { await promise }
-
-"#,
-    r#"
-/*#__PURE__*/
-_asyncToGenerator(function* () {
-  return yield promise;
-});
-
-/*#__PURE__*/
-_asyncToGenerator(function* () {
-  yield promise;
-});
 
 "#
 );
@@ -1860,7 +1121,7 @@ _asyncToGenerator(function* () {
 // regression_4943_exec
 test_exec!(
     syntax(),
-    |_| async_to_generator(),
+    |_| async_to_generator::<SingleThreadedComments>(Default::default(), None, Mark::new()),
     regression_4943_exec,
     r#"
 "use strict";
@@ -1883,7 +1144,7 @@ return foo().then(() => {
 // regression_8783_exec
 test_exec!(
     syntax(),
-    |_| async_to_generator(),
+    |_| async_to_generator::<SingleThreadedComments>(Default::default(), None, Mark::new()),
     regression_8783_exec,
     r#"
 let log = [];
@@ -1908,28 +1169,12 @@ return main.then(() => {
 test!(
     ignore,
     syntax(),
-    |_| async_to_generator(),
+    |_| async_to_generator::<SingleThreadedComments>(Default::default(), None, Mark::new()),
     bluebird_coroutines_expression,
     r#"
 var foo = async function () {
   var wat = await bar();
 };
-
-"#,
-    r#"
-var _coroutine = require("bluebird").coroutine;
-
-var foo =
-/*#__PURE__*/
-function () {
-  var _ref = _coroutine(function* () {
-    var wat = yield bar();
-  });
-
-  return function foo() {
-    return _ref.apply(this, arguments);
-  };
-}();
 
 "#
 );
@@ -1937,7 +1182,7 @@ function () {
 // async_to_generator_expression
 test!(
     syntax(),
-    |_| async_to_generator(),
+    |_| async_to_generator::<SingleThreadedComments>(Default::default(), None, Mark::new()),
     async_to_generator_expression,
     r#"
 var foo = async function () {
@@ -1951,67 +1196,19 @@ bar = async function () {
   var wat = await foo();
 };
 
-"#,
-    r#"
-var foo =
-/*#__PURE__*/
-function () {
-  var _ref = _asyncToGenerator(function* () {
-    var wat = yield bar();
-  });
-
-  return function () {
-    return _ref.apply(this, arguments);
-  };
-}();
-
-var foo2 =
-/*#__PURE__*/
-function () {
-  var _ref = _asyncToGenerator(function* () {
-    var wat = yield bar();
-  });
-
-  return function () {
-    return _ref.apply(this, arguments);
-  };
-}(),
-    bar =
-/*#__PURE__*/
-function () {
-  var _ref = _asyncToGenerator(function* () {
-    var wat = yield foo();
-  });
-
-  return function () {
-    return _ref.apply(this, arguments);
-  };
-}();
-
 "#
 );
 
 // async_to_generator_statement
 test!(
     syntax(),
-    |_| async_to_generator(),
+    |_| async_to_generator::<SingleThreadedComments>(Default::default(), None, Mark::new()),
     async_to_generator_statement,
     r#"
 async function foo() {
   var wat = await bar();
 }
 
-"#,
-    r#"
-function foo() {
-  return _foo.apply(this, arguments);
-}
-function _foo() {
-  _foo = _asyncToGenerator(function* () {
-    var wat = yield bar();
-  });
-  return _foo.apply(this, arguments);
-}
 "#
 );
 
@@ -2020,7 +1217,7 @@ test!(
     // TODO: Unignore this
     ignore,
     syntax(),
-    |_| chain!(resolver(), async_to_generator()),
+    |_| with_resolver(),
     async_to_generator_shadowed_promise_import,
     r#"
 import Promise from 'somewhere';
@@ -2029,43 +1226,19 @@ async function foo() {
   await Promise.resolve();
 }
 
-"#,
-    r#"
-import _Promise from 'somewhere';
-
-function _foo() {
-  _foo = _asyncToGenerator(function* () {
-    yield _Promise.resolve();
-  });
-  return _foo.apply(this, arguments);
-}
-
-function foo() {
-  return _foo.apply(this, arguments);
-}
-
 "#
 );
 
 // async_to_generator_parameters
 test!(
     syntax(),
-    |_| async_to_generator(),
+    |_| async_to_generator::<SingleThreadedComments>(Default::default(), None, Mark::new()),
     async_to_generator_parameters,
     r#"
 async function foo(bar) {
 
 }
 
-"#,
-    r#"
-function foo(bar) {
-  return _foo.apply(this, arguments);
-}
-function _foo() {
-  _foo = _asyncToGenerator(function* (bar) {});
-  return _foo.apply(this, arguments);
-}
 "#
 );
 
@@ -2074,7 +1247,7 @@ function _foo() {
 // regression_t6882_exec
 test_exec!(
     syntax(),
-    |_| async_to_generator(),
+    |_| async_to_generator::<SingleThreadedComments>(Default::default(), None, Mark::new()),
     regression_t6882_exec,
     r#"
 foo();
@@ -2087,30 +1260,19 @@ async function foo() {}
 // async_to_generator_parameters
 test!(
     syntax(),
-    |_| async_to_generator(),
+    |_| async_to_generator::<SingleThreadedComments>(Default::default(), None, Mark::new()),
     issue_600,
     r#"
 async function foo() {
 for (let a of b) {
 }
 }
-"#,
-    "function foo() {
-  return _foo.apply(this, arguments);
-}
-function _foo() {
-  _foo = _asyncToGenerator(function*() {
-      for (let a of b){
-      }
-  });
-  return _foo.apply(this, arguments);
-}
-"
+"#
 );
 
 test!(
     syntax(),
-    |_| async_to_generator(),
+    |_| async_to_generator::<SingleThreadedComments>(Default::default(), None, Mark::new()),
     issue_1036_1,
     "
     const x = async function() {
@@ -2120,35 +1282,12 @@ test!(
           )
       );
     }
-    ",
-    "
-    const x = function() {
-      var _ref = _asyncToGenerator(function*() {
-          console.log((yield Promise.all([
-              [
-                  1
-              ],
-              [
-                  2
-              ],
-              [
-                  3
-              ]
-          ].map(_asyncToGenerator(function*([a]) {
-              return Promise.resolve().then(()=>a * 2
-              );
-          })))));
-      });
-      return function() {
-          return _ref.apply(this, arguments);
-      };
-    }();
     "
 );
 
 test_exec!(
     syntax(),
-    |_| async_to_generator(),
+    |_| async_to_generator::<SingleThreadedComments>(Default::default(), None, Mark::new()),
     issue_1036_2,
     "
     const x = async function() {
@@ -2164,7 +1303,7 @@ test_exec!(
 
 test!(
     syntax(),
-    |_| async_to_generator(),
+    |_| async_to_generator::<SingleThreadedComments>(Default::default(), None, Mark::new()),
     issue_1216_1,
     "
     const source = Math.random() < 2 ? 'matilda' : 'fred';
@@ -2184,34 +1323,12 @@ test!(
 
         console.log({ obj });
     })();
-    ",
-    "
-    const source = Math.random() < 2 ? 'matilda' : 'fred';
-    const details = {
-        _id: '1'
-    };
-    function request(path) {
-      return _request.apply(this, arguments);
-    }
-    function _request() {
-      _request = _asyncToGenerator(function*(path) {
-          return `success:${path}`;
-      });
-      return _request.apply(this, arguments);
-    }
-    _asyncToGenerator(function*() {
-      const obj = source === 'matilda' ? details : yield \
-     request(`/${details._id}?source=${source}`);
-      console.log({
-          obj
-      });
-  })();
     "
 );
 
 test!(
     Syntax::default(),
-    |_| async_to_generator(),
+    |_| async_to_generator::<SingleThreadedComments>(Default::default(), None, Mark::new()),
     issue_1125_1,
     "
 async function test() {
@@ -2222,29 +1339,12 @@ async function test() {
     }
 }
 test()
-",
-    "
-  function test() {
-    return _test.apply(this, arguments);
-  }
-  function _test() {
-    _test = _asyncToGenerator(function* () {
-      try {
-        yield 1;
-      } finally {
-        console.log(2);
-      }
-    });
-    return _test.apply(this, arguments);
-  }
-  test();
-
-  "
+"
 );
 
 test!(
     Syntax::default(),
-    |_| async_to_generator(),
+    |_| async_to_generator::<SingleThreadedComments>(Default::default(), None, Mark::new()),
     issue_1341_1,
     "
     class A {
@@ -2257,32 +1357,25 @@ test!(
           }
       }
     }
-    ",
-    "
-    class A {
-      val = '1';
-      foo() {
-        var _this = this;
-        return _asyncToGenerator(function*() {
-            try {
-                return yield _asyncToGenerator(function*(x) {
-                    return x + _this.val;
-                })('a');
-            } catch (e) {
-                throw e;
-            }
-        })();
-      }
-    }
     "
 );
 
 test_exec!(
     Syntax::default(),
-    |_| chain!(
-        class_properties(class_properties::Config { loose: false }),
-        async_to_generator()
-    ),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark
+            ),
+            async_to_generator(Default::default(), Some(t.comments.clone()), Mark::new())
+        )
+    },
     issue_1341_1_exec,
     "
     class A {
@@ -2303,7 +1396,7 @@ test_exec!(
 
 test!(
     Syntax::default(),
-    |_| async_to_generator(),
+    |_| async_to_generator::<SingleThreadedComments>(Default::default(), None, Mark::new()),
     issue_1341_2,
     "
   class A {
@@ -2312,28 +1405,25 @@ test!(
       return await (async (x) => x + this.val)('a');
     }
   }
-  ",
-    "
-  class A {
-    val = '1';
-    foo() {
-        var _this = this;
-        return _asyncToGenerator(function*() {
-            return yield _asyncToGenerator(function*(x) {
-                return x + _this.val;
-            })('a');
-        })();
-    }
-  }
   "
 );
 
 test_exec!(
     Syntax::default(),
-    |_| chain!(
-        class_properties(class_properties::Config { loose: false }),
-        async_to_generator()
-    ),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark
+            ),
+            async_to_generator(Default::default(), Some(t.comments.clone()), Mark::new())
+        )
+    },
     issue_1341_2_exec,
     "
   class A {
@@ -2350,7 +1440,7 @@ test_exec!(
 
 test!(
     Syntax::default(),
-    |_| async_to_generator(),
+    |_| async_to_generator::<SingleThreadedComments>(Default::default(), None, Mark::new()),
     issue_1455_1,
     "
     const obj = {
@@ -2364,36 +1454,12 @@ test!(
     };
 
     obj.byPlatform('foo').then(v => console.log(v))
-    ",
-    "
-    const obj = {
-      find ({ platform  }) {
-          return {
-              platform
-          };
-      },
-      byPlatform: function(platform) {
-          var _ref = _asyncToGenerator(function*(platform) {
-              const result = yield this.find({
-                  platform: {
-                      $eq: platform
-                  }
-              });
-              return result;
-          });
-          return function() {
-              return _ref.apply(this, arguments);
-          };
-      }()
-    };
-    obj.byPlatform('foo').then((v)=>console.log(v)
-    );
     "
 );
 
 test_exec!(
     Syntax::default(),
-    |_| async_to_generator(),
+    |_| async_to_generator::<SingleThreadedComments>(Default::default(), None, Mark::new()),
     issue_1575_1,
     "
   const obj = {
@@ -2408,9 +1474,12 @@ test_exec!(
 
 test_exec!(
     Syntax::default(),
-    |_| {
+    |t| {
         let mark = Mark::fresh(Mark::root());
-        chain!(async_to_generator(), regenerator(Default::default(), mark))
+        chain!(
+            async_to_generator::<SingleThreadedComments>(Default::default(), None, mark),
+            generator(mark, t.comments.clone())
+        )
     },
     issue_1575_2,
     "
@@ -2426,31 +1495,18 @@ test_exec!(
 
 test!(
     Syntax::default(),
-    |_| async_to_generator(),
+    |_| async_to_generator::<SingleThreadedComments>(Default::default(), None, Mark::new()),
     issue_1722_1,
     "
     (async function main() {
       console.log(1)
     })(foo);
-    ",
-    "
-    (function () {
-      var _main = _asyncToGenerator(function* () {
-        console.log(1);
-      });
-
-      function main() {
-        return _main.apply(this, arguments);
-      }
-
-      return main;
-    })()(foo);
     "
 );
 
 test!(
     Syntax::default(),
-    |_| async_to_generator(),
+    |_| async_to_generator::<SingleThreadedComments>(Default::default(), None, Mark::new()),
     issue_1721_1,
     "
     async function main() {
@@ -2458,70 +1514,24 @@ test!(
         console.log(x);
       }
     }
-    ",
-    "
-    function main() {
-      return _main.apply(this, arguments);
-    }
-    function _main() {
-      _main = _asyncToGenerator(function*() {
-          {
-              var _iteratorAbruptCompletion = false, _didIteratorError = false, _iteratorError;
-              try {
-                  for(var _iterator = _asyncIterator(lol()), _step; _iteratorAbruptCompletion = \
-     !(_step = yield _iterator.next()).done; _iteratorAbruptCompletion = false){
-                        let _value = _step.value;
-                        const x = _value;
-                        console.log(x);
-                    }
-                } catch (err) {
-                    _didIteratorError = true;
-                    _iteratorError = err;
-                } finally{
-                    try {
-                        if (_iteratorAbruptCompletion && _iterator.return != null) {
-                            yield _iteratorError.return();
-                        }
-                    } finally{
-                        if (_didIteratorError) {
-                            throw _iteratorError;
-                        }
-                    }
-                }
-            }
-        });
-        return _main.apply(this, arguments);
-    }
     "
 );
 
 test!(
     Syntax::default(),
-    |_| async_to_generator(),
+    |_| async_to_generator::<SingleThreadedComments>(Default::default(), None, Mark::new()),
     issue_1721_2_async_generator,
     "
     async function* lol() {
       yield 1;
       yield 2;
     }
-    ",
-    "
-    function lol() {
-      return _lol.apply(this, arguments);
-    }
-    function _lol() {
-      _lol = _wrapAsyncGenerator(function* () {
-        yield 1;
-        yield 2;
-      });
-      return _lol.apply(this, arguments);
-    }
     "
 );
 
 test!(
     Syntax::default(),
-    |_| async_to_generator(),
+    |_| async_to_generator::<SingleThreadedComments>(Default::default(), None, Mark::new()),
     issue_1684_1,
     "
     const cache = {}
@@ -2534,34 +1544,16 @@ test!(
     function fetchThing(key) {
       return Promise.resolve(key.toUpperCase()).then(val => (cache[key] = val))
     }
-    ",
-    "
-    const cache = {
-    };
-    function getThing(key) {
-      return _getThing.apply(this, arguments);
-    }
-    function _getThing() {
-        _getThing = _asyncToGenerator(function*(key) {
-            const it = cache[key] || (yield fetchThing(key));
-            return it;
-        });
-        return _getThing.apply(this, arguments);
-    }
-    function fetchThing(key) {
-      return Promise.resolve(key.toUpperCase()).then((val)=>cache[key] = val
-      );
-    }
     "
 );
 
 test!(
     Syntax::default(),
-    |_| {
-        let top_level_mark = Mark::fresh(Mark::root());
+    |t| {
+        let unresolved_mark = Mark::fresh(Mark::root());
         chain!(
-            async_to_generator(),
-            regenerator(Default::default(), top_level_mark)
+            async_to_generator::<SingleThreadedComments>(Default::default(), None, unresolved_mark),
+            generator(unresolved_mark, t.comments.clone())
         )
     },
     issue_1684_2,
@@ -2576,50 +1568,12 @@ test!(
     function fetchThing(key) {
       return Promise.resolve(key.toUpperCase()).then(val => (cache[key] = val))
     }
-    ",
-    "
-    var regeneratorRuntime = require('regenerator-runtime');
-    const cache = {
-    };
-    function getThing(key) {
-      return _getThing.apply(this, arguments);
-    }
-    function _getThing() {
-        _getThing = _asyncToGenerator(regeneratorRuntime.mark(function _callee(key) {
-            var it;
-            return regeneratorRuntime.wrap(function _callee$(_ctx) {
-                while(1)switch(_ctx.prev = _ctx.next){
-                    case 0:
-                        _ctx.t0 = cache[key];
-                        if (_ctx.t0) {
-                            _ctx.next = 5;
-                            break;
-                        }
-                        _ctx.next = 4;
-                        return fetchThing(key);
-                    case 4:
-                        _ctx.t0 = _ctx.sent;
-                    case 5:
-                        it = _ctx.t0;
-                        return _ctx.abrupt('return', it);
-                    case 7:
-                    case 'end':
-                        return _ctx.stop();
-                }
-            }, _callee);
-        }));
-        return _getThing.apply(this, arguments);
-    }
-    function fetchThing(key) {
-      return Promise.resolve(key.toUpperCase()).then((val)=>cache[key] = val
-      );
-    }
     "
 );
 
 test_exec!(
     syntax(),
-    |_| async_to_generator(),
+    |_| async_to_generator::<SingleThreadedComments>(Default::default(), None, Mark::new()),
     issue_1752_1,
     "
     async function* generate() {
@@ -2647,7 +1601,7 @@ test_exec!(
 
 test_exec!(
     Syntax::default(),
-    |_| async_to_generator(),
+    |_| async_to_generator::<SingleThreadedComments>(Default::default(), None, Mark::new()),
     issue_1918_1,
     "
     let counter = 0;
@@ -2687,7 +1641,7 @@ test_exec!(
 
 test_exec!(
     Syntax::default(),
-    |_| async_to_generator(),
+    |_| async_to_generator::<SingleThreadedComments>(Default::default(), None, Mark::new()),
     issue_2402_1,
     "
 function MyClass(item) {
@@ -2708,11 +1662,11 @@ expect(tmp.fun()).resolves.toEqual({ foo: 'bar' });
 
 test!(
     Syntax::default(),
-    |_| {
-        let top_level_mark = Mark::fresh(Mark::root());
+    |t| {
+        let unresolved_mark = Mark::fresh(Mark::root());
         chain!(
-            async_to_generator(),
-            regenerator(Default::default(), top_level_mark)
+            async_to_generator::<SingleThreadedComments>(Default::default(), None, unresolved_mark),
+            generator(unresolved_mark, t.comments.clone())
         )
     },
     issue_2402_2,
@@ -2732,43 +1686,12 @@ test!(
   tmp.fun().then((res) => {
     console.log('fun result | item', res);
   });
-",
-    "
-    var regeneratorRuntime = require('regenerator-runtime');
-function MyClass(item) {
-    this.item = item;
-    console.log('Constructor | this.item', this.item);
-}
-MyClass.prototype.fun = (function() {
-    var _fun = _asyncToGenerator(regeneratorRuntime.mark(function _callee() {
-        return regeneratorRuntime.wrap(function _callee$(_ctx) {
-            while(1)switch(_ctx.prev = _ctx.next){
-                case 0:
-                    console.log('fun | this.item', this.item);
-                    return _ctx.abrupt('return', this.item);
-                case 2:
-                case 'end':
-                    return _ctx.stop();
-            }
-        }, _callee, this);
-    }));
-    function fun() {
-        return _fun.apply(this, arguments);
-    }
-    return fun;
-})();
-const tmp = new MyClass({
-    foo: 'bar'
-});
-tmp.fun().then((res)=>{
-    console.log('fun result | item', res);
-});
 "
 );
 
 test_exec!(
     Syntax::default(),
-    |_| async_to_generator(),
+    |_| async_to_generator::<SingleThreadedComments>(Default::default(), None, Mark::new()),
     issue_2305_1,
     "
     function MyClass () {}
@@ -2800,11 +1723,11 @@ expect(myclass.init(2)).resolves.toEqual(true);
 
 test!(
     Syntax::default(),
-    |_| {
-        let top_level_mark = Mark::fresh(Mark::root());
+    |t| {
+        let unresolved_mark = Mark::fresh(Mark::root());
         chain!(
-            async_to_generator(),
-            regenerator(Default::default(), top_level_mark)
+            async_to_generator::<SingleThreadedComments>(Default::default(), None, unresolved_mark),
+            generator(unresolved_mark, t.comments.clone())
         )
     },
     issue_2305_2,
@@ -2832,54 +1755,16 @@ test!(
 
     const myclass = new MyClass()
     myclass.handle()
-  ",
-    "
-    var regeneratorRuntime = require('regenerator-runtime');
-function MyClass() {
-}
-MyClass.prototype.handle = function() {
-    console.log('this is MyClass handle');
-};
-MyClass.prototype.init = (function(param1) {
-    var _ref = _asyncToGenerator(regeneratorRuntime.mark(function _callee(param1) {
-        var a;
-        return regeneratorRuntime.wrap(function _callee$(_ctx) {
-            while(1)switch(_ctx.prev = _ctx.next){
-                case 0:
-                    a = 1;
-                    if (!param1) {
-                        console.log(this);
-                        this.handle();
-                    }
-                    if (!(param1 === a)) {
-                        _ctx.next = 4;
-                        break;
-                    }
-                    return _ctx.abrupt('return', false);
-                case 4:
-                    return _ctx.abrupt('return', true);
-                case 5:
-                case 'end':
-                    return _ctx.stop();
-            }
-        }, _callee, this);
-    }));
-    return function() {
-        return _ref.apply(this, arguments);
-    };
-})();
-const myclass = new MyClass();
-myclass.handle();
   "
 );
 
 test!(
     Syntax::default(),
-    |_| {
-        let top_level_mark = Mark::fresh(Mark::root());
+    |t| {
+        let unresolved_mark = Mark::fresh(Mark::root());
         chain!(
-            async_to_generator(),
-            regenerator(Default::default(), top_level_mark)
+            async_to_generator::<SingleThreadedComments>(Default::default(), None, unresolved_mark),
+            generator(unresolved_mark, t.comments.clone())
         )
     },
     issue_2677_1,
@@ -2894,70 +1779,16 @@ export async function otherCall() {
 export default async function someCall() {
   await region();
 }
-  ",
-    "
-            var regeneratorRuntime = require('regenerator-runtime');
-function region() {
-  return _region.apply(this, arguments);
-}
-function _region() {
-    _region = _asyncToGenerator(regeneratorRuntime.mark(function _callee() {
-        return regeneratorRuntime.wrap(function _callee$(_ctx) {
-            while(1)switch(_ctx.prev = _ctx.next){
-                case 0:
-                case 'end':
-                    return _ctx.stop();
-            }
-        }, _callee);
-    }));
-    return _region.apply(this, arguments);
-}
-export function otherCall() {
-  return _otherCall.apply(this, arguments);
-}
-function _otherCall() {
-    _otherCall = _asyncToGenerator(regeneratorRuntime.mark(function _callee() {
-        return regeneratorRuntime.wrap(function _callee$(_ctx) {
-            while(1)switch(_ctx.prev = _ctx.next){
-                case 0:
-                    _ctx.next = 2;
-                    return region();
-                case 2:
-                case 'end':
-                    return _ctx.stop();
-            }
-        }, _callee);
-    }));
-    return _otherCall.apply(this, arguments);
-}
-export default function someCall() {
-  return _someCall.apply(this, arguments);
-}
-function _someCall() {
-  _someCall = _asyncToGenerator(regeneratorRuntime.mark(function _callee() {
-      return regeneratorRuntime.wrap(function _callee$(_ctx) {
-          while(1)switch(_ctx.prev = _ctx.next){
-              case 0:
-                  _ctx.next = 2;
-                  return region();
-              case 2:
-              case 'end':
-                  return _ctx.stop();
-          }
-      }, _callee);
-  }));
-  return _someCall.apply(this, arguments);
-}
   "
 );
 
 test!(
     Syntax::default(),
-    |_| {
-        let top_level_mark = Mark::fresh(Mark::root());
+    |t| {
+        let unresolved_mark = Mark::fresh(Mark::root());
         chain!(
-            async_to_generator(),
-            regenerator(Default::default(), top_level_mark)
+            async_to_generator::<SingleThreadedComments>(Default::default(), None, unresolved_mark),
+            generator(unresolved_mark, t.comments.clone())
         )
     },
     issue_2677_2,
@@ -2968,48 +1799,12 @@ async function region() {
 export default async function() {
   await region();
 }
-",
-    "
-    var regeneratorRuntime = require('regenerator-runtime');
-    function region() {
-      return _region.apply(this, arguments);
-    }
-    function _region() {
-        _region = _asyncToGenerator(regeneratorRuntime.mark(function _callee() {
-            return regeneratorRuntime.wrap(function _callee$(_ctx) {
-                while(1)switch(_ctx.prev = _ctx.next){
-                    case 0:
-                    case 'end':
-                        return _ctx.stop();
-                }
-            }, _callee);
-        }));
-        return _region.apply(this, arguments);
-    }
-    export default function() {
-      return _ref.apply(this, arguments);
-    }
-    function _ref() {
-        _ref = _asyncToGenerator(regeneratorRuntime.mark(function _callee() {
-            return regeneratorRuntime.wrap(function _callee$(_ctx) {
-                while(1)switch(_ctx.prev = _ctx.next){
-                    case 0:
-                        _ctx.next = 2;
-                        return region();
-                    case 2:
-                    case 'end':
-                        return _ctx.stop();
-                }
-            }, _callee);
-        }));
-        return _ref.apply(this, arguments);
-    }
 "
 );
 
 test_exec!(
     Syntax::default(),
-    |_| async_to_generator(),
+    |_| async_to_generator::<SingleThreadedComments>(Default::default(), None, Mark::new()),
     function_parameters,
     "
 class A {
@@ -3020,34 +1815,319 @@ class A {
   }
 }
 
-jest.spyOn(A.prototype, 'doTest').mockImplementation(async function() {
+A.prototype.doTest = async function() {
   const ret = await this.waitForinit();
   return ret;
-});
+}
 
 const a = new A();
 expect(a.doTest()).resolves.toEqual(3);
 "
 );
 
-#[testing::fixture("tests/fixture/async-to-generator/**/exec.js")]
-fn exec(input: PathBuf) {
-    let input = read_to_string(&input).unwrap();
-    compare_stdout(Default::default(), |_| async_to_generator(), &input);
+test!(
+    Syntax::default(),
+    |_| async_to_generator::<SingleThreadedComments>(Default::default(), None, Mark::new()),
+    function_length_issue_3135_1,
+    r#"
+async function foo(x, y, ...z) {
+    return 42;
 }
+"#
+);
 
-#[testing::fixture("tests/fixture/async-to-generator/**/exec.js")]
-fn exec_regenerator(input: PathBuf) {
-    let input = read_to_string(&input).unwrap();
+test!(
+    Syntax::default(),
+    |_| async_to_generator::<SingleThreadedComments>(Default::default(), None, Mark::new()),
+    function_length_issue_3135_2,
+    r#"
+async function* foo(x, y, ...z) {
+    return 42;
+}
+"#
+);
+
+test!(
+    Syntax::default(),
+    |_| async_to_generator::<SingleThreadedComments>(Default::default(), None, Mark::new()),
+    function_length_issue_3135_3,
+    r#"
+const foo = async function (x, y, ...z) {
+    return 42;
+}
+"#
+);
+
+test!(
+    Syntax::default(),
+    |_| async_to_generator::<SingleThreadedComments>(Default::default(), None, Mark::new()),
+    function_length_issue_3135_4,
+    r#"
+const foo = async function* (x, y, ...z) {
+    return 42;
+}
+"#
+);
+
+test!(
+    Syntax::default(),
+    |_| async_to_generator::<SingleThreadedComments>(Default::default(), None, Mark::new()),
+    function_length_issue_3135_5,
+    r#"
+const foo = async function foo(x, y, ...z) {
+    if (x) {
+        return foo(0, y);
+    }
+    return 0;
+};
+"#
+);
+
+test!(
+    Syntax::default(),
+    |_| async_to_generator::<SingleThreadedComments>(Default::default(), None, Mark::new()),
+    function_length_issue_3135_6,
+    r#"
+const foo = async function* foo(x, y, ...z) {
+  if (x) {
+      return foo(0, y);
+  }
+  return 0;
+};
+"#
+);
+
+test!(
+    Syntax::default(),
+    |_| async_to_generator::<SingleThreadedComments>(Default::default(), None, Mark::new()),
+    function_length_issue_3135_7,
+    r#"
+const foo = async (x, y, ...z) => {
+    return this;
+};
+"#
+);
+
+test!(
+    Syntax::default(),
+    |_| async_to_generator::<SingleThreadedComments>(Default::default(), None, Mark::new()),
+    async_wrap_this,
+    r#"
+const foo = async (x, y, ...z) => {
+    return this;
+};
+"#
+);
+
+test!(
+    Syntax::default(),
+    |_| with_resolver(),
+    async_wrap_arguments,
+    r#"
+function foo() {
+    const bar = async () => {
+        return arguments;
+    };
+}
+"#
+);
+
+test!(
+    Syntax::default(),
+    |_| with_resolver(),
+    async_wrap_super_and_new_target,
+    r#"
+class Foo {
+    constractur() {
+        const foo = async () => {
+            return new.target;
+        };
+    }
+
+    hello() {
+        const world = async () => {
+            return super.hello();
+        };
+    }
+}
+"#
+);
+
+test!(
+    Syntax::default(),
+    |_| async_to_generator::<SingleThreadedComments>(Default::default(), None, Mark::new()),
+    export_default_async_nested_1,
+    "
+export default async function foo(x) {
+    async function bar(y){
+        y(x);
+    }
+}
+"
+);
+
+test!(
+    Syntax::default(),
+    |_| async_to_generator::<SingleThreadedComments>(Default::default(), None, Mark::new()),
+    export_default_async_nested_2,
+    "
+export default async function (x) {
+    async function bar(y) {
+        (async (z) => x(y)(z))();
+    }
+}
+"
+);
+
+test!(
+    Syntax::default(),
+    |_| async_to_generator::<SingleThreadedComments>(Default::default(), None, Mark::new()),
+    async_with_optional_params,
+    "
+(async function (a = 10, ...rest) {})();
+(async (a = 10, ...rest) => {})()
+"
+);
+
+test!(
+    Syntax::default(),
+    |_| with_resolver(),
+    issue_2895,
+    "
+export class Quirk {
+  async doStuff() {
+    const args = arguments;
+    console.log(args);
+    return { foo: null, ...args[0] };
+  }
+}
+"
+);
+
+test!(
+    Syntax::default(),
+    |_| async_to_generator::<SingleThreadedComments>(Default::default(), None, Mark::new()),
+    super_field_update,
+    "
+class Foo {
+  async doStuff() {
+    super.foo += 123;
+    super['abc'] *= 456;
+  }
+}
+"
+);
+
+test!(
+    Syntax::default(),
+    |_| async_to_generator::<SingleThreadedComments>(Default::default(), None, Mark::new()),
+    microbundle_835,
+    "
+class A extends B {
+  a() {
+    (async () => {
+      super.b();
+    })();
+  }
+}
+"
+);
+
+test!(
+    Syntax::default(),
+    |_| async_to_generator::<SingleThreadedComments>(Default::default(), None, Mark::new()),
+    super_update,
+    "
+class A extends B {
+  async foo() {
+    super.foo ++;
+    -- super.bar;
+    super['foo'] ++;
+    -- super['bar'];
+  }
+}
+"
+);
+
+test!(
+    Syntax::default(),
+    |_| async_to_generator::<SingleThreadedComments>(Default::default(), None, Mark::new()),
+    async_with_optional_params_2,
+    "
+const Z = (f) => ((x) => f((y) => x(x)(y)))((x) => f((y) => x(x)(y)));
+
+const p = Z(
+    (f) =>
+        async (n = 0) =>
+            n <= 1 ? 1 : n * (await f(n - 1))
+)(5);
+"
+);
+
+test!(
+    Syntax::default(),
+    |_| async_to_generator::<SingleThreadedComments>(Default::default(), None, Mark::new()),
+    issue_4208,
+    "
+    function foo() {
+        const bar = async (baz = this.baz) => {
+            console.log(this);
+        }
+    }
+    "
+);
+
+#[testing::fixture("tests/async-to-generator/**/exec.js")]
+fn exec(input: PathBuf) {
+    let input = read_to_string(input).unwrap();
     compare_stdout(
         Default::default(),
-        |_| {
-            let top_level_mark = Mark::fresh(Mark::root());
+        |t| {
+            let unresolved_mark = Mark::new();
+            let top_level_mark = Mark::new();
 
             chain!(
-                async_to_generator(),
+                resolver(unresolved_mark, top_level_mark, false),
+                class_properties(
+                    Some(t.comments.clone()),
+                    Default::default(),
+                    unresolved_mark
+                ),
+                async_to_generator(
+                    Default::default(),
+                    Some(t.comments.clone()),
+                    unresolved_mark
+                )
+            )
+        },
+        &input,
+    );
+}
+
+#[testing::fixture("tests/async-to-generator/**/exec.js")]
+fn exec_regenerator(input: PathBuf) {
+    let input = read_to_string(input).unwrap();
+    compare_stdout(
+        Default::default(),
+        |t| {
+            let unresolved_mark = Mark::new();
+            let top_level_mark = Mark::new();
+
+            chain!(
+                resolver(unresolved_mark, top_level_mark, false),
+                class_properties(
+                    Some(t.comments.clone()),
+                    Default::default(),
+                    unresolved_mark
+                ),
+                async_to_generator(
+                    Default::default(),
+                    Some(t.comments.clone()),
+                    unresolved_mark
+                ),
                 es2015::for_of(Default::default()),
-                regenerator(Default::default(), top_level_mark)
+                block_scoping(unresolved_mark),
+                generator(unresolved_mark, t.comments.clone())
             )
         },
         &input,

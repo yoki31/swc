@@ -1,20 +1,15 @@
+use is_macro::Is;
+use swc_common::{ast_node, util::take::Take, EqIgnoreSpan, Span, DUMMY_SP};
+
 use crate::{
     expr::Expr,
     ident::{BindingIdent, Ident},
     prop::PropName,
     typescript::TsTypeAnn,
-    Invalid,
+    Id, Invalid,
 };
-use is_macro::Is;
-use swc_common::{ast_node, util::take::Take, EqIgnoreSpan, Span, DUMMY_SP};
 
-impl From<Ident> for Pat {
-    fn from(i: Ident) -> Self {
-        BindingIdent::from(i).into()
-    }
-}
-
-#[ast_node]
+#[ast_node(no_clone)]
 #[derive(Eq, Hash, Is, EqIgnoreSpan)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub enum Pat {
@@ -41,11 +36,45 @@ pub enum Pat {
     Expr(Box<Expr>),
 }
 
+// Implement Clone without inline to avoid multiple copies of the
+// implementation.
+impl Clone for Pat {
+    fn clone(&self) -> Self {
+        use Pat::*;
+        match self {
+            Ident(p) => Ident(p.clone()),
+            Array(p) => Array(p.clone()),
+            Rest(p) => Rest(p.clone()),
+            Object(p) => Object(p.clone()),
+            Assign(p) => Assign(p.clone()),
+            Invalid(p) => Invalid(p.clone()),
+            Expr(p) => Expr(p.clone()),
+        }
+    }
+}
+
 impl Take for Pat {
     fn dummy() -> Self {
         Pat::Invalid(Invalid { span: DUMMY_SP })
     }
 }
+
+bridge_pat_from!(BindingIdent, Ident);
+bridge_pat_from!(BindingIdent, Id);
+
+macro_rules! pat_to_other {
+    ($T:ty) => {
+        bridge_from!(crate::Param, crate::Pat, $T);
+        bridge_from!(Box<crate::Pat>, crate::Pat, $T);
+        bridge_from!(crate::PatOrExpr, crate::Pat, $T);
+    };
+}
+
+pat_to_other!(BindingIdent);
+pat_to_other!(ArrayPat);
+pat_to_other!(ObjectPat);
+pat_to_other!(AssignPat);
+pat_to_other!(RestPat);
 
 #[ast_node("ArrayPattern")]
 #[derive(Eq, Hash, EqIgnoreSpan)]
@@ -53,15 +82,15 @@ impl Take for Pat {
 pub struct ArrayPat {
     pub span: Span,
 
-    #[serde(rename = "elements")]
+    #[cfg_attr(feature = "serde-impl", serde(rename = "elements"))]
     pub elems: Vec<Option<Pat>>,
 
     /// Only in an ambient context
-    #[serde(rename = "optional")]
+    #[cfg_attr(feature = "serde-impl", serde(rename = "optional"))]
     pub optional: bool,
 
-    #[serde(default, rename = "typeAnnotation")]
-    pub type_ann: Option<TsTypeAnn>,
+    #[cfg_attr(feature = "serde-impl", serde(default, rename = "typeAnnotation"))]
+    pub type_ann: Option<Box<TsTypeAnn>>,
 }
 
 #[ast_node("ObjectPattern")]
@@ -70,15 +99,15 @@ pub struct ArrayPat {
 pub struct ObjectPat {
     pub span: Span,
 
-    #[serde(rename = "properties")]
+    #[cfg_attr(feature = "serde-impl", serde(rename = "properties"))]
     pub props: Vec<ObjectPatProp>,
 
     /// Only in an ambient context
-    #[serde(rename = "optional")]
+    #[cfg_attr(feature = "serde-impl", serde(rename = "optional"))]
     pub optional: bool,
 
-    #[serde(default, rename = "typeAnnotation")]
-    pub type_ann: Option<TsTypeAnn>,
+    #[cfg_attr(feature = "serde-impl", serde(default, rename = "typeAnnotation"))]
+    pub type_ann: Option<Box<TsTypeAnn>>,
 }
 
 #[ast_node("AssignmentPattern")]
@@ -90,9 +119,6 @@ pub struct AssignPat {
     pub left: Box<Pat>,
 
     pub right: Box<Expr>,
-
-    #[serde(default, rename = "typeAnnotation")]
-    pub type_ann: Option<TsTypeAnn>,
 }
 
 /// EsTree `RestElement`
@@ -102,14 +128,14 @@ pub struct AssignPat {
 pub struct RestPat {
     pub span: Span,
 
-    #[serde(rename = "rest")]
+    #[cfg_attr(feature = "serde-impl", serde(rename = "rest"))]
     pub dot3_token: Span,
 
-    #[serde(rename = "argument")]
+    #[cfg_attr(feature = "serde-impl", serde(rename = "argument"))]
     pub arg: Box<Pat>,
 
-    #[serde(default, rename = "typeAnnotation")]
-    pub type_ann: Option<TsTypeAnn>,
+    #[cfg_attr(feature = "serde-impl", serde(default, rename = "typeAnnotation"))]
+    pub type_ann: Option<Box<TsTypeAnn>>,
 }
 
 #[ast_node]
@@ -145,6 +171,6 @@ pub struct AssignPatProp {
     pub span: Span,
     pub key: Ident,
 
-    #[serde(default)]
+    #[cfg_attr(feature = "serde-impl", serde(default))]
     pub value: Option<Box<Expr>>,
 }

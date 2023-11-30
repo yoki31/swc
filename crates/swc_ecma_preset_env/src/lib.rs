@@ -1,27 +1,32 @@
+#![deny(clippy::all)]
 #![allow(dead_code)]
 #![recursion_limit = "256"]
 
-pub use self::{transform_data::Feature, version::Version};
-use anyhow::{Context, Error};
-use dashmap::DashMap;
-use once_cell::sync::Lazy;
-use serde::Deserialize;
-use st_map::StaticMap;
 use std::path::PathBuf;
+
+use preset_env_base::query::targets_to_versions;
+pub use preset_env_base::{query::Targets, version::Version, BrowserData, Versions};
+use regenerator::RegeneratorVisitor;
+use serde::Deserialize;
 use swc_atoms::{js_word, JsWord};
-use swc_common::{
-    chain,
-    collections::{AHashMap, AHashSet},
-    comments::Comments,
-    FromVariant, Mark, DUMMY_SP,
-};
+use swc_common::{chain, collections::AHashSet, comments::Comments, FromVariant, Mark, DUMMY_SP};
 use swc_ecma_ast::*;
 use swc_ecma_transforms::{
-    compat::{bugfixes, es2015, es2016, es2017, es2018, es2019, es2020, es2021, es2022, es3},
+    compat::{
+        bugfixes,
+        class_fields_use_set::class_fields_use_set,
+        es2015::{self, generator::generator},
+        es2016, es2017, es2018, es2019, es2020, es2021, es2022, es3,
+        regexp::{self, regexp},
+    },
+    feature::FeatureFlag,
     pass::{noop, Optional},
+    Assumptions,
 };
-use swc_ecma_utils::prepend_stmts;
-use swc_ecma_visit::{Fold, FoldWith, VisitWith};
+use swc_ecma_utils::{prepend_stmts, ExprFactory};
+use swc_ecma_visit::{as_folder, Fold, VisitMut, VisitMutWith, VisitWith};
+
+pub use self::transform_data::Feature;
 
 #[macro_use]
 mod util;
@@ -29,11 +34,16 @@ mod corejs2;
 mod corejs3;
 mod regenerator;
 mod transform_data;
-mod version;
 
-pub fn preset_env<C>(global_mark: Mark, comments: Option<C>, c: Config) -> impl Fold
+pub fn preset_env<C>(
+    unresolved_mark: Mark,
+    comments: Option<C>,
+    c: Config,
+    assumptions: Assumptions,
+    feature_set: &mut FeatureFlag,
+) -> impl Fold
 where
-    C: Comments,
+    C: Comments + Clone,
 {
     let loose = c.loose;
     let targets: Versions = targets_to_versions(c.targets).expect("failed to parse targets");
@@ -63,6 +73,11 @@ where
             let f = transform_data::Feature::$feature;
 
             let enable = should_enable!($feature, $default);
+
+            if !enable {
+                *feature_set |= swc_ecma_transforms::feature::FeatureFlag::$feature;
+            }
+
             if c.debug {
                 println!("{}: {:?}", f.as_str(), enable);
             }
@@ -70,27 +85,74 @@ where
         }};
     }
 
-    // Bugfixes
-    let pass = add!(pass, BugfixEdgeDefaultParam, bugfixes::edge_default_param());
-    let pass = add!(
+    let pass = chain!(
         pass,
-        BugfixAsyncArrowsInClass,
-        bugfixes::async_arrows_in_class()
+        Optional::new(
+            class_fields_use_set(assumptions.pure_getters),
+            assumptions.set_public_class_fields
+        )
     );
-    let pass = add!(
-        pass,
-        BugfixTaggedTemplateCaching,
-        bugfixes::template_literal_caching()
-    );
+
+    let pass = {
+        let enable_dot_all_regex = should_enable!(DotAllRegex, false);
+        let enable_named_capturing_groups_regex = should_enable!(NamedCapturingGroupsRegex, false);
+        let enable_sticky_regex = should_enable!(StickyRegex, false);
+        let enable_unicode_property_regex = should_enable!(UnicodePropertyRegex, false);
+        let enable_unicode_regex = should_enable!(UnicodeRegex, false);
+
+        let enable = enable_dot_all_regex
+            || enable_named_capturing_groups_regex
+            || enable_sticky_regex
+            || enable_unicode_property_regex
+            || enable_unicode_regex;
+
+        chain!(
+            pass,
+            Optional::new(
+                regexp(regexp::Config {
+                    dot_all_regex: enable_dot_all_regex,
+                    // TODO: add Feature:HasIndicesRegex
+                    has_indices: false,
+                    // TODO: add Feature::LookbehindAssertion
+                    lookbehind_assertion: false,
+                    named_capturing_groups_regex: enable_named_capturing_groups_regex,
+                    sticky_regex: enable_sticky_regex,
+                    unicode_property_regex: enable_unicode_property_regex,
+                    unicode_regex: enable_unicode_regex,
+                }),
+                enable
+            )
+        )
+    };
 
     // Proposals
 
-    // ES2021
+    // ES2022
+    // static block needs to be placed before class property
+    // because it transforms into private static property
+    let static_blocks_mark = Mark::new();
+    let pass = add!(
+        pass,
+        ClassStaticBlock,
+        es2022::static_blocks(static_blocks_mark)
+    );
     let pass = add!(
         pass,
         ClassProperties,
-        es2022::class_properties(es2022::class_properties::Config { loose })
+        es2022::class_properties(
+            comments.clone(),
+            es2022::class_properties::Config {
+                private_as_properties: loose || assumptions.private_fields_as_properties,
+                set_public_fields: loose || assumptions.set_public_class_fields,
+                constant_super: loose || assumptions.constant_super,
+                no_document_all: loose || assumptions.no_document_all,
+                static_blocks_mark,
+                pure_getter: loose || assumptions.pure_getters,
+            },
+            unresolved_mark
+        )
     );
+    let pass = add!(pass, PrivatePropertyInObject, es2022::private_in_object());
 
     // ES2021
     let pass = add!(
@@ -106,17 +168,20 @@ where
         pass,
         NullishCoalescing,
         es2020::nullish_coalescing(es2020::nullish_coalescing::Config {
-            no_document_all: loose
+            no_document_all: loose || assumptions.no_document_all
         })
     );
 
     let pass = add!(
         pass,
         OptionalChaining,
-        es2020::optional_chaining(es2020::opt_chaining::Config {
-            no_document_all: loose,
-            pure_getter: loose
-        })
+        es2020::optional_chaining(
+            es2020::optional_chaining::Config {
+                no_document_all: loose || assumptions.no_document_all,
+                pure_getter: loose || assumptions.pure_getters
+            },
+            unresolved_mark
+        )
     );
 
     // ES2019
@@ -127,16 +192,28 @@ where
         pass,
         ObjectRestSpread,
         es2018::object_rest_spread(es2018::object_rest_spread::Config {
-            no_symbol: loose,
-            set_property: loose
+            no_symbol: loose || assumptions.object_rest_no_symbols,
+            set_property: loose || assumptions.set_spread_properties,
+            pure_getters: loose || assumptions.pure_getters
         })
     );
 
     // ES2017
-    let pass = add!(pass, AsyncToGenerator, es2017::async_to_generator());
+    let pass = add!(
+        pass,
+        AsyncToGenerator,
+        es2017::async_to_generator(
+            es2017::async_to_generator::Config {
+                ignore_function_name: loose || assumptions.ignore_function_name,
+                ignore_function_length: loose || assumptions.ignore_function_length,
+            },
+            comments.clone(),
+            unresolved_mark
+        )
+    );
 
     // ES2016
-    let pass = add!(pass, ExponentiationOperator, es2016::exponentation());
+    let pass = add!(pass, ExponentiationOperator, es2016::exponentiation());
 
     // ES2015
     let pass = add!(pass, BlockScopedFunctions, es2015::block_scoped_functions());
@@ -144,31 +221,54 @@ where
         pass,
         TemplateLiterals,
         es2015::template_literal(es2015::template_literal::Config {
-            ignore_to_primitive: loose,
-            mutable_template: loose
+            ignore_to_primitive: loose || assumptions.ignore_to_primitive_hint,
+            mutable_template: loose || assumptions.mutable_template_object
         }),
         true
     );
-    let pass = add!(pass, Classes, es2015::classes(comments));
+    let pass = add!(
+        pass,
+        Classes,
+        es2015::classes(
+            comments.clone(),
+            es2015::classes::Config {
+                constant_super: loose || assumptions.constant_super,
+                no_class_calls: loose || assumptions.no_class_calls,
+                set_class_methods: loose || assumptions.set_class_methods,
+                super_is_callable_constructor: loose || assumptions.super_is_callable_constructor,
+            }
+        )
+    );
     let pass = add!(
         pass,
         Spread,
         es2015::spread(es2015::spread::Config { loose }),
         true
     );
+    let pass = add!(pass, ObjectSuper, es2015::object_super());
     let pass = add!(pass, FunctionName, es2015::function_name());
-    let pass = add!(pass, ArrowFunctions, es2015::arrow());
+    let pass = add!(pass, ArrowFunctions, es2015::arrow(unresolved_mark));
     let pass = add!(pass, DuplicateKeys, es2015::duplicate_keys());
     let pass = add!(pass, StickyRegex, es2015::sticky_regex());
     // TODO:    InstanceOf,
     let pass = add!(pass, TypeOfSymbol, es2015::typeof_symbol());
     let pass = add!(pass, ShorthandProperties, es2015::shorthand());
-    let pass = add!(pass, Parameters, es2015::parameters());
+    let pass = add!(
+        pass,
+        Parameters,
+        es2015::parameters(
+            es2015::parameters::Config {
+                ignore_function_length: loose || assumptions.ignore_function_length
+            },
+            unresolved_mark
+        )
+    );
     let pass = add!(
         pass,
         ForOf,
         es2015::for_of(es2015::for_of::Config {
-            assume_array: loose
+            loose,
+            assume_array: loose || assumptions.iterable_is_array
         }),
         true
     );
@@ -186,18 +286,24 @@ where
     );
     let pass = add!(
         pass,
-        Regenerator,
-        es2015::regenerator(Default::default(), global_mark),
+        BlockScoping,
+        es2015::block_scoping(unresolved_mark),
         true
     );
-    let pass = add!(pass, BlockScoping, es2015::block_scoping(), true);
+    let pass = add!(
+        pass,
+        Regenerator,
+        generator(unresolved_mark, comments),
+        true
+    );
+
+    let pass = add!(pass, NewTarget, es2015::new_target(), true);
 
     // TODO:
     //    Literals,
     //    ObjectSuper,
     //    DotAllRegex,
     //    UnicodeRegex,
-    //    NewTarget,
     //    AsyncGeneratorFunctions,
     //    UnicodePropertyRegex,
     //    JsonStrings,
@@ -212,13 +318,31 @@ where
     );
     let pass = add!(pass, ReservedWords, es3::reserved_words(c.dynamic_import));
 
+    // Bugfixes
+    let pass = add!(pass, BugfixEdgeDefaultParam, bugfixes::edge_default_param());
+    let pass = add!(
+        pass,
+        BugfixAsyncArrowsInClass,
+        bugfixes::async_arrows_in_class(unresolved_mark)
+    );
+    let pass = add!(
+        pass,
+        BugfixTaggedTemplateCaching,
+        bugfixes::template_literal_caching()
+    );
+    let pass = add!(
+        pass,
+        BugfixSafariIdDestructuringCollisionInFunctionExpression,
+        bugfixes::safari_id_destructuring_collision_in_function_expression()
+    );
+
     if c.debug {
         println!("Targets: {:?}", targets);
     }
 
     chain!(
         pass,
-        Polyfills {
+        as_folder(Polyfills {
             mode: c.mode,
             regenerator: should_enable!(Regenerator, true),
             corejs: c.core_js.unwrap_or(Version {
@@ -230,48 +354,9 @@ where
             targets,
             includes: included_modules,
             excludes: excluded_modules,
-        }
+            unresolved_mark,
+        })
     )
-}
-
-/// A map without allocation.
-#[derive(Debug, Default, Deserialize, Clone, Copy, StaticMap)]
-#[serde(deny_unknown_fields)]
-pub struct BrowserData<T: Default> {
-    #[serde(default)]
-    pub chrome: T,
-    #[serde(default)]
-    pub and_chr: T,
-    #[serde(default)]
-    pub and_ff: T,
-    #[serde(default)]
-    pub op_mob: T,
-    #[serde(default)]
-    pub ie: T,
-    #[serde(default)]
-    pub edge: T,
-    #[serde(default)]
-    pub firefox: T,
-    #[serde(default)]
-    pub safari: T,
-    #[serde(default)]
-    pub node: T,
-    #[serde(default)]
-    pub ios: T,
-    #[serde(default)]
-    pub samsung: T,
-    #[serde(default)]
-    pub opera: T,
-    #[serde(default)]
-    pub android: T,
-    #[serde(default)]
-    pub electron: T,
-    #[serde(default)]
-    pub phantom: T,
-    #[serde(default)]
-    pub opera_mobile: T,
-    #[serde(default)]
-    pub rhino: T,
 }
 
 #[derive(Debug)]
@@ -283,34 +368,42 @@ struct Polyfills {
     regenerator: bool,
     includes: AHashSet<String>,
     excludes: AHashSet<String>,
+    unresolved_mark: Mark,
 }
-
-impl Fold for Polyfills {
-    fn fold_module(&mut self, mut m: Module) -> Module {
-        let span = m.span;
-
+impl Polyfills {
+    fn collect<T>(&mut self, m: &mut T) -> Vec<JsWord>
+    where
+        T: VisitWith<corejs2::UsageVisitor>
+            + VisitWith<corejs3::UsageVisitor>
+            + VisitMutWith<corejs2::Entry>
+            + VisitMutWith<corejs3::Entry>
+            + VisitWith<RegeneratorVisitor>,
+    {
         let required = match self.mode {
             None => Default::default(),
             Some(Mode::Usage) => {
                 let mut r = match self.corejs {
                     Version { major: 2, .. } => {
                         let mut v = corejs2::UsageVisitor::new(self.targets);
-                        m.visit_with(&Invalid { span: DUMMY_SP } as _, &mut v);
+                        m.visit_with(&mut v);
 
                         v.required
                     }
                     Version { major: 3, .. } => {
-                        let mut v =
-                            corejs3::UsageVisitor::new(self.targets, self.shipped_proposals);
-                        m.visit_with(&Invalid { span: DUMMY_SP } as _, &mut v);
+                        let mut v = corejs3::UsageVisitor::new(
+                            self.targets,
+                            self.shipped_proposals,
+                            self.corejs,
+                        );
+                        m.visit_with(&mut v);
                         v.required
                     }
 
                     _ => unimplemented!("corejs version other than 2 / 3"),
                 };
 
-                if regenerator::is_required(&m) {
-                    r.insert("regenerator-runtime/runtime".into());
+                if regenerator::is_required(m) {
+                    r.insert("regenerator-runtime/runtime.js");
                 }
 
                 r
@@ -318,38 +411,46 @@ impl Fold for Polyfills {
             Some(Mode::Entry) => match self.corejs {
                 Version { major: 2, .. } => {
                     let mut v = corejs2::Entry::new(self.targets, self.regenerator);
-                    m = m.fold_with(&mut v);
+                    m.visit_mut_with(&mut v);
                     v.imports
                 }
 
                 Version { major: 3, .. } => {
                     let mut v = corejs3::Entry::new(self.targets, self.corejs, !self.regenerator);
-                    m = m.fold_with(&mut v);
+                    m.visit_mut_with(&mut v);
                     v.imports
                 }
 
                 _ => unimplemented!("corejs version other than 2 / 3"),
             },
         };
-        let required = required
-            .into_iter()
-            .filter(|s| !self.excludes.contains(&**s))
+        required
+            .iter()
+            .filter(|s| {
+                !s.starts_with("esnext") || !required.contains(&s.replace("esnext", "es").as_str())
+            })
+            .filter(|s| !self.excludes.contains(&***s))
             .map(|s| -> JsWord {
-                if s != "regenerator-runtime/runtime" {
-                    format!("core-js/modules/{}", s).into()
+                if *s != "regenerator-runtime/runtime.js" {
+                    format!("core-js/modules/{}.js", s).into()
                 } else {
-                    format!("regenerator-runtime/runtime").into()
+                    "regenerator-runtime/runtime.js".to_string().into()
                 }
             })
             .chain(self.includes.iter().map(|s| {
-                if s != "regenerator-runtime/runtime" {
-                    format!("core-js/modules/{}", s).into()
+                if s != "regenerator-runtime/runtime.js" {
+                    format!("core-js/modules/{}.js", s).into()
                 } else {
-                    format!("regenerator-runtime/runtime").into()
+                    "regenerator-runtime/runtime.js".to_string().into()
                 }
             }))
-            .collect::<Vec<_>>();
-
+            .collect::<Vec<_>>()
+    }
+}
+impl VisitMut for Polyfills {
+    fn visit_mut_module(&mut self, m: &mut Module) {
+        let span = m.span;
+        let required = self.collect(m);
         if cfg!(debug_assertions) {
             let mut v = required.into_iter().collect::<Vec<_>>();
             v.sort();
@@ -361,12 +462,12 @@ impl Fold for Polyfills {
                         specifiers: vec![],
                         src: Str {
                             span: DUMMY_SP,
+                            raw: None,
                             value: src,
-                            has_escape: false,
-                            kind: Default::default(),
-                        },
+                        }
+                        .into(),
                         type_only: false,
-                        asserts: None,
+                        with: None,
                     }))
                 }),
             );
@@ -379,35 +480,78 @@ impl Fold for Polyfills {
                         specifiers: vec![],
                         src: Str {
                             span: DUMMY_SP,
+                            raw: None,
                             value: src,
-                            has_escape: false,
-                            kind: Default::default(),
-                        },
+                        }
+                        .into(),
                         type_only: false,
-                        asserts: None,
+                        with: None,
                     }))
                 }),
             );
         }
 
-        m.body.retain(|item| match item {
-            ModuleItem::ModuleDecl(ModuleDecl::Import(ImportDecl {
-                src:
-                    Str {
-                        span: DUMMY_SP,
-                        value: js_word!(""),
-                        ..
-                    },
-                ..
-            })) => false,
-            _ => true,
-        });
-
-        m
+        m.body.retain(|item| !matches!(item, ModuleItem::ModuleDecl(ModuleDecl::Import(ImportDecl { src, .. })) if src.span == DUMMY_SP && src.value == js_word!("")));
     }
 
-    fn fold_script(&mut self, _: Script) -> Script {
-        unimplemented!("automatic polyfill for scripts")
+    fn visit_mut_script(&mut self, m: &mut Script) {
+        let span = m.span;
+        let required = self.collect(m);
+        if cfg!(debug_assertions) {
+            let mut v = required.into_iter().collect::<Vec<_>>();
+            v.sort();
+            prepend_stmts(
+                &mut m.body,
+                v.into_iter().map(|src| {
+                    Stmt::Expr(ExprStmt {
+                        span: DUMMY_SP,
+                        expr: CallExpr {
+                            span,
+                            callee: Expr::Ident(Ident {
+                                span: DUMMY_SP.apply_mark(self.unresolved_mark),
+                                sym: "require".into(),
+                                optional: false,
+                            })
+                            .as_callee(),
+                            args: vec![Str {
+                                span: DUMMY_SP,
+                                value: src,
+                                raw: None,
+                            }
+                            .as_arg()],
+                            type_args: None,
+                        }
+                        .into(),
+                    })
+                }),
+            );
+        } else {
+            prepend_stmts(
+                &mut m.body,
+                required.into_iter().map(|src| {
+                    Stmt::Expr(ExprStmt {
+                        span: DUMMY_SP,
+                        expr: CallExpr {
+                            span,
+                            callee: Expr::Ident(Ident {
+                                span: DUMMY_SP.apply_mark(self.unresolved_mark),
+                                sym: "require".into(),
+                                optional: false,
+                            })
+                            .as_callee(),
+                            args: vec![Str {
+                                span: DUMMY_SP,
+                                value: src,
+                                raw: None,
+                            }
+                            .as_arg()],
+                            type_args: None,
+                        }
+                        .into(),
+                    })
+                }),
+            );
+        }
     }
 }
 
@@ -417,56 +561,6 @@ pub enum Mode {
     Usage,
     #[serde(rename = "entry")]
     Entry,
-}
-
-pub type Versions = BrowserData<Option<Version>>;
-
-impl BrowserData<Option<Version>> {
-    pub(crate) fn is_any_target(&self) -> bool {
-        self.iter().all(|(_, v)| v.is_none())
-    }
-
-    pub(crate) fn parse_versions(distribs: Vec<browserslist::Distrib>) -> Result<Self, Error> {
-        fn remap(key: &str) -> &str {
-            match key {
-                "and_chr" => "chrome".into(),
-                "and_ff" => "firefox".into(),
-                "ie_mob" => "ie".into(),
-                "ios_saf" => "ios".into(),
-                "op_mob" => "opera".into(),
-                _ => key.into(),
-            }
-        }
-
-        let mut data: Versions = BrowserData::default();
-        for dist in distribs {
-            let browser = dist.name();
-            let browser = remap(browser);
-            let version = dist.version();
-            match &*browser {
-                "and_qq" | "and_uc" | "baidu" | "bb" | "kaios" | "op_mini" => continue,
-
-                _ => {}
-            }
-
-            let version = if version.contains("-") {
-                version.split('-').next().unwrap().parse().unwrap()
-            } else {
-                version.parse().unwrap()
-            };
-
-            // lowest version
-            if data[&browser].is_none() || data[&browser].unwrap() > version {
-                for (k, v) in data.iter_mut() {
-                    if browser == k {
-                        *v = Some(version);
-                    }
-                }
-            }
-        }
-
-        Ok(data)
-    }
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -501,7 +595,7 @@ pub struct Config {
     #[serde(default)]
     pub core_js: Option<Version>,
 
-    #[serde(default = "default_targets")]
+    #[serde(default)]
     pub targets: Option<Targets>,
 
     #[serde(default = "default_path")]
@@ -515,10 +609,6 @@ pub struct Config {
 
     #[serde(default)]
     pub bugfixes: bool,
-}
-
-fn default_targets() -> Option<Targets> {
-    Some(Targets::Query(Query::Single("".into())))
 }
 
 fn default_path() -> PathBuf {
@@ -551,131 +641,5 @@ impl FeatureOrModule {
         }
 
         (features, modules)
-    }
-}
-
-#[derive(Debug, Clone, Deserialize, FromVariant)]
-#[serde(untagged)]
-pub enum Targets {
-    Query(Query),
-    EsModules(EsModules),
-    Versions(Versions),
-    HashMap(AHashMap<String, QueryOrVersion>),
-}
-
-#[derive(Debug, Clone, Copy, Deserialize)]
-pub struct EsModules {
-    esmodules: bool,
-}
-
-#[derive(Debug, Clone, Deserialize, FromVariant)]
-#[serde(untagged)]
-pub enum QueryOrVersion {
-    Query(Query),
-    Version(Version),
-}
-
-#[derive(Debug, Clone, Deserialize, FromVariant, Eq, PartialEq, PartialOrd, Ord, Hash)]
-#[serde(untagged)]
-pub enum Query {
-    Single(String),
-    Multiple(Vec<String>),
-}
-
-type QueryResult = Result<Versions, Error>;
-
-impl Query {
-    fn exec(&self) -> QueryResult {
-        fn query<T>(s: &[T]) -> QueryResult
-        where
-            T: AsRef<str>,
-        {
-            let distribs = browserslist::resolve(
-                s,
-                &browserslist::Opts {
-                    mobile_to_desktop: false,
-                    ignore_unknown_versions: true,
-                },
-            )
-            .with_context(|| {
-                format!(
-                    "failed to resolve browserslist query: {:?}",
-                    s.iter().map(|v| v.as_ref()).collect::<Vec<_>>()
-                )
-            })?;
-
-            let versions =
-                BrowserData::parse_versions(distribs).expect("failed to parse browser version");
-
-            Ok(versions)
-        }
-
-        static CACHE: Lazy<DashMap<Query, Versions, ahash::RandomState>> =
-            Lazy::new(Default::default);
-
-        if let Some(v) = CACHE.get(self) {
-            return Ok(v.clone());
-        }
-
-        let result = match *self {
-            Query::Single(ref s) => {
-                if s == "" {
-                    query(&["defaults"])
-                } else {
-                    query(&[s])
-                }
-            }
-            Query::Multiple(ref s) => query(&s),
-        }
-        .context("failed to execute query")?;
-
-        CACHE.insert(self.clone(), result);
-
-        Ok(result)
-    }
-}
-
-fn targets_to_versions(v: Option<Targets>) -> Result<Versions, Error> {
-    match v {
-        None => Ok(Default::default()),
-        Some(Targets::Versions(v)) => Ok(v),
-        Some(Targets::Query(q)) => q
-            .exec()
-            .context("failed to convert target query to version data"),
-        Some(Targets::HashMap(mut map)) => {
-            let q = map.remove("browsers").map(|q| match q {
-                QueryOrVersion::Query(q) => q.exec().expect("failed to run query"),
-                _ => unreachable!(),
-            });
-
-            let node = map.remove("node").map(|q| match q {
-                QueryOrVersion::Version(v) => v,
-                QueryOrVersion::Query(..) => unreachable!(),
-            });
-
-            if map.is_empty() {
-                if let Some(mut q) = q {
-                    q.node = node;
-                    return Ok(q);
-                }
-            }
-
-            unimplemented!("Targets: {:?}", map)
-        }
-        _ => unimplemented!("Option<Targets>: {:?}", v),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::Query;
-
-    #[test]
-    fn test_empty() {
-        let res = Query::Single("".into()).exec().unwrap();
-        assert!(
-            !res.is_any_target(),
-            "empty query should return non-empty result"
-        );
     }
 }

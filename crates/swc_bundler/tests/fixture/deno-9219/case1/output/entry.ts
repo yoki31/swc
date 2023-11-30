@@ -27,22 +27,15 @@ function isNumber(x) {
 function hasKey(obj, keys) {
     let o = obj;
     keys.slice(0, -1).forEach((key)=>{
-        o = get(o, key) ?? {
-        };
+        o = get(o, key) ?? {};
     });
-    const key1 = keys[keys.length - 1];
-    return key1 in o;
+    const key = keys[keys.length - 1];
+    return key in o;
 }
-function parse(args, { "--": doubleDash = false , alias: alias2 = {
-} , boolean: __boolean = false , default: defaults = {
-} , stopEarly =false , string =[] , unknown =(i)=>i
-  } = {
-}) {
+function parse(args, { "--": doubleDash = false, alias = {}, boolean: __boolean = false, default: defaults = {}, stopEarly = false, string = [], unknown = (i)=>i } = {}) {
     const flags = {
-        bools: {
-        },
-        strings: {
-        },
+        bools: {},
+        strings: {},
         unknownFn: unknown,
         allBools: false
     };
@@ -58,11 +51,10 @@ function parse(args, { "--": doubleDash = false , alias: alias2 = {
             }
         }
     }
-    const aliases = {
-    };
-    if (alias2 !== undefined) {
-        for(const key in alias2){
-            const val = getForce(alias2, key);
+    const aliases = {};
+    if (alias !== undefined) {
+        for(const key in alias){
+            const val = getForce(alias, key);
             if (typeof val === "string") {
                 aliases[key] = [
                     val
@@ -70,11 +62,10 @@ function parse(args, { "--": doubleDash = false , alias: alias2 = {
             } else {
                 aliases[key] = val;
             }
-            for (const alias1 of getForce(aliases, key)){
-                aliases[alias1] = [
+            for (const alias of getForce(aliases, key)){
+                aliases[alias] = [
                     key
-                ].concat(aliases[key].filter((y)=>alias1 !== y
-                ));
+                ].concat(aliases[key].filter((y)=>alias !== y));
             }
         }
     }
@@ -102,19 +93,18 @@ function parse(args, { "--": doubleDash = false , alias: alias2 = {
         let o = obj;
         keys.slice(0, -1).forEach(function(key) {
             if (get(o, key) === undefined) {
-                o[key] = {
-                };
+                o[key] = {};
             }
             o = get(o, key);
         });
-        const key4 = keys[keys.length - 1];
-        if (get(o, key4) === undefined || get(flags.bools, key4) || typeof get(o, key4) === "boolean") {
-            o[key4] = value;
-        } else if (Array.isArray(get(o, key4))) {
-            o[key4].push(value);
+        const key = keys[keys.length - 1];
+        if (get(o, key) === undefined || get(flags.bools, key) || typeof get(o, key) === "boolean") {
+            o[key] = value;
+        } else if (Array.isArray(get(o, key))) {
+            o[key].push(value);
         } else {
-            o[key4] = [
-                get(o, key4),
+            o[key] = [
+                get(o, key),
                 value
             ];
         }
@@ -133,11 +123,10 @@ function parse(args, { "--": doubleDash = false , alias: alias2 = {
         }
     }
     function aliasIsBoolean(key) {
-        return getForce(aliases, key).some((x)=>typeof get(flags.bools, x) === "boolean"
-        );
+        return getForce(aliases, key).some((x)=>typeof get(flags.bools, x) === "boolean");
     }
-    for (const key3 of Object.keys(flags.bools)){
-        setArg(key3, defaults[key3] === undefined ? false : defaults[key3]);
+    for (const key of Object.keys(flags.bools)){
+        setArg(key, defaults[key] === undefined ? false : defaults[key]);
     }
     let notFlags = [];
     if (args.includes("--")) {
@@ -223,12 +212,12 @@ function parse(args, { "--": doubleDash = false , alias: alias2 = {
             }
         }
     }
-    for (const key2 of Object.keys(defaults)){
-        if (!hasKey(argv, key2.split("."))) {
-            setKey(argv, key2.split("."), defaults[key2]);
-            if (aliases[key2]) {
-                for (const x of aliases[key2]){
-                    setKey(argv, x.split("."), defaults[key2]);
+    for (const key of Object.keys(defaults)){
+        if (!hasKey(argv, key.split("."))) {
+            setKey(argv, key.split("."), defaults[key]);
+            if (aliases[key]) {
+                for (const x of aliases[key]){
+                    setKey(argv, x.split("."), defaults[key]);
                 }
             }
         }
@@ -245,10 +234,10 @@ function parse(args, { "--": doubleDash = false , alias: alias2 = {
     }
     return argv;
 }
-const args1 = parse(Deno.args, {
+const args = parse(Deno.args, {
     boolean: [
         "help",
-        "verbose", 
+        "verbose"
     ],
     alias: {
         help: "h",
@@ -258,4 +247,4 @@ const args1 = parse(Deno.args, {
         verbose: false
     }
 });
-console.dir(args1);
+console.dir(args);

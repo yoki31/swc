@@ -2,66 +2,66 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                19,
+                20,
             ),
             hi: BytePos(
-                23,
+                24,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    19,
+                    20,
                 ),
                 hi: BytePos(
-                    19,
+                    20,
                 ),
                 ctxt: #0,
             },
-            value: Atom('' type=static),
+            value: "",
         },
         tags: [
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        19,
+                        20,
                     ),
                     hi: BytePos(
-                        24,
+                        25,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            19,
+                            20,
                         ),
                         hi: BytePos(
-                            24,
+                            25,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('alias' type=inline),
+                    value: "alias",
                 },
                 tag: Alias(
                     AliasTag {
                         span: Span {
                             lo: BytePos(
-                                19,
+                                20,
                             ),
                             hi: BytePos(
-                                24,
+                                25,
                             ),
                             ctxt: #0,
                         },
                         name_path: NamePath {
                             span: Span {
                                 lo: BytePos(
-                                    19,
+                                    20,
                                 ),
                                 hi: BytePos(
-                                    23,
+                                    24,
                                 ),
                                 ctxt: #0,
                             },
@@ -69,14 +69,14 @@
                                 Text {
                                     span: Span {
                                         lo: BytePos(
-                                            19,
+                                            20,
                                         ),
                                         hi: BytePos(
-                                            27,
+                                            28,
                                         ),
                                         ctxt: #0,
                                     },
-                                    value: Atom('<global>' type=dynamic),
+                                    value: "<global>",
                                 },
                             ],
                         },

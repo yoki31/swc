@@ -1,33 +1,28 @@
-var s: string;
-var n: number;
-var a: any;
-var v = {
-    get [s] () {
+var s__2: string;
+var n__2: number;
+var a__2: any;
+var v__2 = {
+    get [s__2] () {
         return 0;
     },
-    set [n] (v__2){
-    },
-    get [s + s] () {
+    set [n__2] (v__4){},
+    get [s__2 + s__2] () {
         return 0;
     },
-    set [s + n] (v__3){
-    },
-    get [+s] () {
+    set [s__2 + n__2] (v__7){},
+    get [+s__2] () {
         return 0;
     },
-    set [""] (v__4){
-    },
+    set [""] (v__10){},
     get [0] () {
         return 0;
     },
-    set [a] (v__5){
-    },
+    set [a__2] (v__13){},
     get [<any>true] () {
         return 0;
     },
-    set [`hello bye`] (v__6){
-    },
-    get [`hello ${a} bye`] () {
+    set [`hello bye`] (v__16){},
+    get [`hello ${a__2} bye`] () {
         return 0;
     }
 };

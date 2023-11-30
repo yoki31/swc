@@ -1,19 +1,20 @@
 #![feature(test)]
 extern crate test;
 
-use anyhow::{Context as AnyhowContext, Error};
-use copyless::BoxHelper;
-use pretty_assertions::assert_eq;
-use serde_json::{Number, Value};
 use std::{
     env, fs,
     path::{Path, PathBuf},
     sync::Arc,
 };
+
+use anyhow::{Context as AnyhowContext, Error};
+use copyless::BoxHelper;
+use pretty_assertions::assert_eq;
+use serde_json::{Number, Value};
 use swc::{config::IsModule, Compiler};
 use swc_common::{
     errors::{ColorConfig, Handler},
-    FileName, FilePathMapping, SourceMap,
+    FileName, FilePathMapping, SourceMap, GLOBALS,
 };
 use swc_ecma_parser::{EsConfig, Syntax};
 use swc_estree_compat::babelify::{Babelify, Context};
@@ -70,25 +71,31 @@ fn fixtures() -> Result<(), Error> {
                 )),
                 ignore: false,
                 should_panic: ShouldPanic::No,
-                allow_fail: false,
                 compile_fail: false,
                 no_run: false,
+                ignore_message: Default::default(),
+                source_file: Default::default(),
+                start_line: 0,
+                start_col: 0,
+                end_line: 0,
+                end_col: 0,
             },
             testfn: DynTestFn(Box::alloc().init(move || {
-                let syntax = if is_typescript {
-                    Syntax::Typescript(Default::default())
-                } else if is_jsx {
-                    Syntax::Es(EsConfig {
-                        jsx: true,
-                        ..Default::default()
-                    })
-                } else {
-                    Syntax::Es(EsConfig {
-                        static_blocks: true,
-                        ..Default::default()
-                    })
-                };
-                run_test(input, output, syntax, is_module);
+                GLOBALS.set(&Default::default(), || {
+                    let syntax = if is_typescript {
+                        Syntax::Typescript(Default::default())
+                    } else if is_jsx {
+                        Syntax::Es(EsConfig {
+                            jsx: true,
+                            ..Default::default()
+                        })
+                    } else {
+                        Syntax::Es(Default::default())
+                    };
+                    run_test(input, output, syntax, is_module);
+
+                    Ok(())
+                })
             })),
         })
     }
@@ -131,6 +138,8 @@ fn run_test(src: String, expected: String, syntax: Syntax, is_module: bool) {
     let compiler = Compiler::new(cm.clone());
     let fm = compiler.cm.new_source_file(FileName::Anon, src);
 
+    let comments = compiler.comments().clone();
+
     let swc_ast = compiler
         .parse_js(
             fm.clone(),
@@ -138,7 +147,7 @@ fn run_test(src: String, expected: String, syntax: Syntax, is_module: bool) {
             Default::default(), // EsVersion (ES version)
             syntax,
             IsModule::Bool(is_module),
-            true, // parse_conmments
+            Some(&comments),
         )
         .unwrap();
 
@@ -167,38 +176,26 @@ fn run_test(src: String, expected: String, syntax: Syntax, is_module: bool) {
         "optional" | "computed" | "static" | "abstract" | "declare" | "definite" | "generator"
         | "readonly" | "expression" => {
             // TODO(kdy1): Remove this
-            match v {
-                Value::Bool(false) => {
-                    *v = Value::Null;
-                }
-
-                _ => {}
+            if let Value::Bool(false) = v {
+                *v = Value::Null;
             }
         }
 
         "decorators" | "implements" => {
             // TODO(kdy1): Remove this
-            match v {
-                Value::Array(arr) => {
-                    if arr.is_empty() {
-                        *v = Value::Null;
-                    }
+            if let Value::Array(arr) = v {
+                if arr.is_empty() {
+                    *v = Value::Null;
                 }
-
-                _ => {}
             }
         }
 
         "sourceFile" => {
             // TODO(kdy1): Remove this
-            match v {
-                Value::String(s) => {
-                    if s.is_empty() {
-                        *v = Value::Null;
-                    }
+            if let Value::String(s) = v {
+                if s.is_empty() {
+                    *v = Value::Null;
                 }
-
-                _ => {}
             }
         }
 
@@ -212,11 +209,17 @@ fn run_test(src: String, expected: String, syntax: Syntax, is_module: bool) {
                 Value::String(s) => {
                     // TODO(kdy1): Remove this
                     // This is wrong, but we are not babel ast at the moment
-                    *s = s.replace("\n", "");
+                    *s = s.replace('\n', "");
                 }
 
                 _ => {}
             }
+        }
+
+        "raw" => {
+            // TODO fix me
+            // Remove
+            *v = Value::Null;
         }
 
         _ => {}

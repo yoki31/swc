@@ -1,44 +1,52 @@
-use abi_stable::{
-    library::RootModule,
-    std_types::{RResult, RStr},
-};
-use anyhow::{anyhow, Context, Error};
-use std::path::Path;
-use swc_ecma_ast::Program;
-use swc_plugin_api::{deserialize_ast, serialize_ast, SwcPluginRef};
+#![cfg_attr(not(feature = "__rkyv"), allow(warnings))]
 
-pub fn apply_js_plugin(
-    plugin_name: &str,
-    path: &Path,
-    config_json: &str,
-    program: &Program,
-) -> Result<Program, Error> {
-    (|| -> Result<_, Error> {
-        let plugin_rt = swc_common::plugin::get_runtime_for_plugin(plugin_name.to_string());
+use std::sync::Arc;
 
-        let plugin = SwcPluginRef::load_from_file(path).context("failed to load plugin")?;
+use swc_common::{plugin::metadata::TransformPluginMetadataContext, SourceMap};
+use transform_executor::TransformExecutor;
 
-        let ast_serde = serialize_ast(&program).context("failed to serialize ast")?;
+pub mod cache;
+mod host_environment;
+#[cfg(feature = "__rkyv")]
+mod imported_fn;
+#[cfg(feature = "__rkyv")]
+mod memory_interop;
+pub mod plugin_module_bytes;
+mod transform_executor;
+pub mod wasix_runtime;
 
-        let plugin_fn = plugin
-            .process_js()
-            .ok_or_else(|| anyhow!("the plugin does not support transforming js"))?;
+use plugin_module_bytes::PluginModuleBytes;
 
-        let new_ast = plugin_fn(plugin_rt, RStr::from(config_json), ast_serde.into());
+/**
+ * Creates an executor to run plugin binaries.
+ */
+#[cfg(feature = "__rkyv")]
+pub fn create_plugin_transform_executor(
+    source_map: &Arc<SourceMap>,
+    unresolved_mark: &swc_common::Mark,
+    metadata_context: &Arc<TransformPluginMetadataContext>,
+    plugin_module: Box<dyn PluginModuleBytes>,
+    plugin_config: Option<serde_json::Value>,
+    runtime: Option<Arc<dyn wasmer_wasix::Runtime + Send + Sync>>,
+) -> TransformExecutor {
+    TransformExecutor::new(
+        plugin_module,
+        source_map,
+        unresolved_mark,
+        metadata_context,
+        plugin_config,
+        runtime,
+    )
+}
 
-        let new = match new_ast {
-            RResult::ROk(v) => v,
-            RResult::RErr(err) => return Err(anyhow!("plugin returned an error\n{}", err)),
-        };
-        let new: Program = deserialize_ast(new.as_slice())
-            .with_context(|| format!("plugin generated invalid ast`"))?;
-
-        Ok(new)
-    })()
-    .with_context(|| {
-        format!(
-            "failed to invoke `{}` as js transform plugin",
-            path.display()
-        )
-    })
+#[cfg(not(feature = "__rkyv"))]
+pub fn create_plugin_transform_executor(
+    source_map: &Arc<SourceMap>,
+    unresolved_mark: &swc_common::Mark,
+    metadata_context: &Arc<TransformPluginMetadataContext>,
+    plugin_module: Box<dyn PluginModuleBytes>,
+    plugin_config: Option<serde_json::Value>,
+    runtime: Option<()>,
+) -> TransformExecutor {
+    unimplemented!("Transform plugin cannot be used without serialization support")
 }

@@ -1,2 +1,2 @@
-'use strict';
-('\0');
+"use strict";
+("\x00");

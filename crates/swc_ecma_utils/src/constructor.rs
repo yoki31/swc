@@ -1,13 +1,15 @@
-use crate::{prepend_stmts, ExprFactory};
 use std::iter;
+
 use swc_common::{util::take::Take, DUMMY_SP};
 use swc_ecma_ast::*;
 use swc_ecma_visit::{noop_fold_type, noop_visit_mut_type, Fold, FoldWith, VisitMut, VisitMutWith};
 
-pub fn inject_after_super(c: &mut Constructor, exprs: Vec<Box<Expr>>) {
+use crate::{prepend_stmts, ExprFactory};
+
+pub fn inject_after_super(c: &mut Constructor, mut exprs: Vec<Box<Expr>>) {
     // Allow using super multiple time
     let mut folder = Injector {
-        exprs: &exprs,
+        exprs: &mut exprs,
         injected: false,
     };
 
@@ -29,7 +31,7 @@ pub fn inject_after_super(c: &mut Constructor, exprs: Vec<Box<Expr>>) {
 
 struct Injector<'a> {
     injected: bool,
-    exprs: &'a [Box<Expr>],
+    exprs: &'a mut Vec<Box<Expr>>,
 }
 
 impl<'a> Fold for Injector<'a> {
@@ -56,17 +58,15 @@ impl<'a> Fold for Injector<'a> {
 
         stmts.into_iter().for_each(|stmt| {
             if let Stmt::Expr(ExprStmt { ref expr, .. }) = stmt {
-                match &**expr {
-                    Expr::Call(CallExpr {
-                        callee: ExprOrSuper::Super(..),
-                        ..
-                    }) => {
-                        self.injected = true;
-                        buf.push(stmt);
-                        buf.extend(self.exprs.iter().cloned().map(|v| v.into_stmt()));
-                        return;
-                    }
-                    _ => {}
+                if let Expr::Call(CallExpr {
+                    callee: Callee::Super(..),
+                    ..
+                }) = &**expr
+                {
+                    self.injected = true;
+                    buf.push(stmt);
+                    buf.extend(self.exprs.clone().into_iter().map(|v| v.into_stmt()));
+                    return;
                 }
             }
 
@@ -89,7 +89,7 @@ impl<'a> Fold for Injector<'a> {
                 self.injected |= folder.injected;
 
                 buf.extend(folder.injected_tmp.map(|ident| {
-                    Stmt::Decl(Decl::Var(VarDecl {
+                    Stmt::Decl(Decl::Var(Box::new(VarDecl {
                         span: DUMMY_SP,
                         kind: VarDeclKind::Var,
                         decls: vec![VarDeclarator {
@@ -99,7 +99,7 @@ impl<'a> Fold for Injector<'a> {
                             definite: false,
                         }],
                         declare: false,
-                    }))
+                    })))
                 }));
                 buf.push(stmt);
             }
@@ -112,7 +112,7 @@ impl<'a> Fold for Injector<'a> {
 /// Handles code like `foo(super())`
 struct ExprInjector<'a> {
     injected: bool,
-    exprs: &'a [Box<Expr>],
+    exprs: &'a mut Vec<Box<Expr>>,
     injected_tmp: Option<Ident>,
 }
 
@@ -128,37 +128,35 @@ impl VisitMut for ExprInjector<'_> {
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
         expr.visit_mut_children_with(self);
 
-        match expr {
-            Expr::Call(CallExpr {
-                callee: ExprOrSuper::Super(..),
-                ..
-            }) => {
-                self.injected_tmp = Some(
-                    self.injected_tmp
-                        .take()
-                        .unwrap_or_else(|| private_ident!("_temp")),
-                );
-                self.injected = true;
-                let e = expr.take();
+        if let Expr::Call(CallExpr {
+            callee: Callee::Super(..),
+            ..
+        }) = expr
+        {
+            self.injected_tmp = Some(
+                self.injected_tmp
+                    .take()
+                    .unwrap_or_else(|| private_ident!("_temp")),
+            );
+            self.injected = true;
+            let e = expr.take();
 
-                *expr = Expr::Seq(SeqExpr {
+            *expr = Expr::Seq(SeqExpr {
+                span: DUMMY_SP,
+                exprs: iter::once(Box::new(Expr::Assign(AssignExpr {
                     span: DUMMY_SP,
-                    exprs: iter::once(Box::new(Expr::Assign(AssignExpr {
-                        span: DUMMY_SP,
-                        left: PatOrExpr::Pat(Box::new(Pat::Ident(
-                            self.injected_tmp.as_ref().cloned().unwrap().into(),
-                        ))),
-                        op: op!("="),
-                        right: Box::new(e),
-                    })))
-                    .chain(self.exprs.iter().cloned())
-                    .chain(iter::once(Box::new(Expr::Ident(
-                        self.injected_tmp.as_ref().cloned().unwrap(),
-                    ))))
-                    .collect(),
-                })
-            }
-            _ => {}
+                    left: PatOrExpr::Pat(Box::new(Pat::Ident(
+                        self.injected_tmp.as_ref().cloned().unwrap().into(),
+                    ))),
+                    op: op!("="),
+                    right: Box::new(e),
+                })))
+                .chain(self.exprs.clone())
+                .chain(iter::once(Box::new(Expr::Ident(
+                    self.injected_tmp.as_ref().cloned().unwrap(),
+                ))))
+                .collect(),
+            })
         }
     }
 

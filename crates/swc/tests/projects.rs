@@ -1,25 +1,31 @@
-#![cfg(not(feature = "wrong-target"))]
-
-use rayon::prelude::*;
 use std::{
     fs::create_dir_all,
     path::{Path, PathBuf},
 };
+
+use anyhow::Context;
+use rayon::prelude::*;
 use swc::{
     config::{
-        BuiltInput, Config, IsModule, JscConfig, ModuleConfig, Options, SourceMapsConfig,
+        Config, FileMatcher, JsMinifyOptions, JscConfig, ModuleConfig, Options, SourceMapsConfig,
         TransformConfig,
     },
-    Compiler, TransformOutput,
+    try_with_handler, BoolOrDataConfig, Compiler, TransformOutput,
 };
-use swc_common::{chain, comments::Comment, BytePos, FileName};
+use swc_common::{
+    chain,
+    comments::{Comment, SingleThreadedComments},
+    errors::{EmitterWriter, Handler, HANDLER},
+    sync::Lrc,
+    BytePos, FileName, Globals, SourceMap, GLOBALS,
+};
 use swc_ecma_ast::{EsVersion, *};
+use swc_ecma_minifier::option::MangleOptions;
 use swc_ecma_parser::{EsConfig, Syntax, TsConfig};
 use swc_ecma_transforms::{
     helpers::{self, Helpers},
     pass::noop,
 };
-use swc_ecma_utils::HANDLER;
 use swc_ecma_visit::{Fold, FoldWith};
 use testing::{NormalizedOutput, StdErr, Tester};
 use walkdir::WalkDir;
@@ -41,14 +47,7 @@ fn file_with_opt(filename: &str, options: Options) -> Result<NormalizedOutput, S
         let fm = cm
             .load_file(Path::new(filename))
             .expect("failed to load file");
-        let s = c.process_js_file(
-            fm,
-            &handler,
-            &Options {
-                is_module: IsModule::Bool(true),
-                ..options
-            },
-        );
+        let s = c.process_js_file(fm, &handler, &options);
 
         match s {
             Ok(v) => {
@@ -76,14 +75,7 @@ fn compile_str(
         let c = Compiler::new(cm.clone());
 
         let fm = cm.new_source_file(filename, content.to_string());
-        let s = c.process_js_file(
-            fm,
-            &handler,
-            &Options {
-                is_module: IsModule::Bool(true),
-                ..options
-            },
-        );
+        let s = c.process_js_file(fm, &handler, &options);
 
         match s {
             Ok(v) => {
@@ -122,8 +114,6 @@ fn project(dir: &str) {
                 if c.read_config(
                     &Options {
                         swcrc: true,
-                        is_module: IsModule::Bool(true),
-
                         ..Default::default()
                     },
                     &fm.name,
@@ -139,8 +129,7 @@ fn project(dir: &str) {
                     &handler,
                     &Options {
                         swcrc: true,
-                        is_module: IsModule::Bool(true),
-
+                        config: Default::default(),
                         ..Default::default()
                     },
                 ) {
@@ -190,7 +179,6 @@ fn par_project(dir: &str) {
                     &handler,
                     &Options {
                         swcrc: true,
-                        is_module: IsModule::Bool(true),
                         source_maps: Some(SourceMapsConfig::Bool(true)),
                         ..Default::default()
                     },
@@ -213,8 +201,8 @@ fn issue_225() {
     let s = file("tests/projects/issue-225/input.js").unwrap();
     println!("{}", s);
 
-    assert!(s.contains("function _interopRequireDefault"));
-    assert!(s.contains("var _foo = _interopRequireDefault(require(\"foo\"))"));
+    assert!(s.contains("function _interop_require_default"));
+    assert!(s.contains("_interop_require_default(require(\"foo\"))"));
 }
 
 /// should handle exportNamespaceFrom configured by .swcrc
@@ -223,7 +211,7 @@ fn issue_226() {
     let s = file("tests/projects/issue-226/input.js").unwrap();
     println!("{}", s);
 
-    assert!(s.contains("import * as _Foo from 'bar';"));
+    assert!(s.contains("import * as _Foo from \"bar\";"));
     assert!(s.contains("export { _Foo as Foo }"));
 }
 
@@ -251,7 +239,7 @@ fn issue_406() {
     let s = file("tests/projects/issue-406/input.js").unwrap();
     println!("{}", s);
 
-    assert!(s.contains("return true"));
+    assert!(s.contains("return("));
 }
 
 #[test]
@@ -280,7 +268,7 @@ fn issue_414() {
     let s2 = file("tests/projects/issue-414/b.ts").unwrap();
     println!("{}", s2);
     assert!(s2.contains("define("));
-    assert!(s2.contains("function(_bar) {"));
+    assert!(s2.contains("__esModule"));
 }
 
 /// should handle comments in return statement
@@ -288,7 +276,7 @@ fn issue_414() {
 fn issue_415() {
     let s = file("tests/projects/issue-415/input.js").unwrap();
 
-    assert!(s.replace(" ", "").contains("return(/*#__PURE__*/"));
+    assert!(s.replace(' ', "").contains("return/*#__PURE__*/"));
 }
 
 #[test]
@@ -315,7 +303,7 @@ fn issue_468() {
 fn issue_528() {
     let f = file("tests/projects/issue-528/input.js")
         .unwrap()
-        .replace(" ", "");
+        .replace(' ', "");
     let f = f.trim();
 
     println!("{}", f);
@@ -327,8 +315,8 @@ fn issue_528() {
 //foo
 a,
 //bar
-(//baz
-b)
+//baz
+b
 ];"
     );
 }
@@ -337,36 +325,36 @@ b)
 fn env_entry_chrome_49() {
     let f = file("tests/env/entry/chrome-49/input.js")
         .unwrap()
-        .replace(" ", "");
+        .replace(' ', "");
     let f = f.trim();
 
     println!("{}", f);
 
-    assert_eq!(f.lines().count(), 78);
+    assert_eq!(f.lines().count(), 84);
 }
 
 #[test]
 fn env_entry_chrome_71() {
     let f = file("tests/env/entry/chrome-71/input.js")
         .unwrap()
-        .replace(" ", "");
+        .replace(' ', "");
     let f = f.trim();
 
     println!("{}", f);
 
-    assert_eq!(f.lines().count(), 7);
+    assert_eq!(f.lines().count(), 10);
 }
 
 #[test]
 fn env_query_chrome_71() {
     let f = file("tests/env/query/chrome-71/input.js")
         .unwrap()
-        .replace(" ", "");
+        .replace(' ', "");
     let f = f.trim();
 
     println!("{}", f);
 
-    assert_eq!(f.lines().count(), 7);
+    assert_eq!(f.lines().count(), 10);
 }
 
 #[test]
@@ -395,7 +383,7 @@ fn issue_605() {
     let f = file("tests/projects/issue-605/input.js").unwrap();
     println!("{}", f);
 
-    assert!(f.contains("Object.keys(_c)"));
+    assert!(f.contains(r#"_export_star(require("c"), exports);"#));
 }
 
 #[test]
@@ -451,7 +439,7 @@ fn issue_779_1() {
     let f = file("tests/projects/issue-779-1/input.js").unwrap();
     println!("{}", f);
 
-    assert!(f.contains("require(\"core-js/modules/es.array-buffer.constructor\");"))
+    assert!(f.contains("require(\"core-js/modules/es.array-buffer.constructor.js\");"))
 }
 
 #[test]
@@ -468,7 +456,7 @@ fn issue_783() {
     println!("{}", f);
 
     assert!(!f.contains("require(\"core-js\");"));
-    assert!(f.contains("require(\"core-js/modules/es.array-buffer.constructor\");"))
+    assert!(f.contains("require(\"core-js/modules/es.array-buffer.constructor.js\");"))
 }
 
 #[test]
@@ -541,7 +529,6 @@ fn issue_879() {
     let f = file_with_opt(
         "tests/projects/issue-879/input.ts",
         Options {
-            is_module: IsModule::Bool(true),
             config: Config {
                 env: Some(Default::default()),
                 module: Some(ModuleConfig::CommonJs(Default::default())),
@@ -552,9 +539,10 @@ fn issue_879() {
                         ..Default::default()
                     })),
                     transform: Some(TransformConfig {
-                        legacy_decorator: true,
+                        legacy_decorator: true.into(),
                         ..Default::default()
-                    }),
+                    })
+                    .into(),
                     ..Default::default()
                 },
                 ..Default::default()
@@ -579,7 +567,7 @@ fn issue_895() {
     println!("{}", f);
 
     assert!(f.contains("_url ="));
-    assert!(f.contains("(0, _url).queryString"));
+    assert!(f.contains("(0, _url.queryString)"));
     let s = f.replace("_url =", "").replace("_url.queryString", "");
 
     assert!(!s.contains("_url."));
@@ -607,7 +595,7 @@ fn codegen_1() {
     let f = file("tests/projects/codegen-1/input.js").unwrap();
     println!("{}", f);
 
-    assert_eq!(f.to_string(), "\"\\\"\";\n");
+    assert_eq!(f.to_string(), "'\"';\n");
 }
 
 #[test]
@@ -615,7 +603,6 @@ fn issue_1549() {
     let output = str_with_opt(
         "const a = `\r\n`;",
         Options {
-            is_module: IsModule::Bool(true),
             config: Config {
                 jsc: JscConfig {
                     target: Some(EsVersion::Es5),
@@ -637,7 +624,6 @@ fn deno_10282_1() {
     let output = str_with_opt(
         "const a = `\r\n`;",
         Options {
-            is_module: IsModule::Bool(true),
             config: Config {
                 jsc: JscConfig {
                     target: Some(EsVersion::Es3),
@@ -659,7 +645,6 @@ fn deno_10282_2() {
     let output = str_with_opt(
         "const a = `\r\n`;",
         Options {
-            is_module: IsModule::Bool(true),
             config: Config {
                 jsc: JscConfig {
                     target: Some(EsVersion::Es2020),
@@ -687,7 +672,7 @@ impl Fold for Panicking {
             panic!("visited: {}", sym)
         }
 
-        JSXOpeningElement { ..node }
+        node
     }
 }
 
@@ -706,13 +691,13 @@ fn should_visit() {
                 "
                 .into(),
             );
+            let comments = SingleThreadedComments::default();
             let config = c
                 .parse_js_as_input(
                     fm.clone(),
                     None,
                     &handler,
                     &swc::config::Options {
-                        is_module: IsModule::Bool(true),
                         config: swc::config::Config {
                             jsc: JscConfig {
                                 syntax: Some(Syntax::Es(EsConfig {
@@ -726,6 +711,7 @@ fn should_visit() {
                         ..Default::default()
                     },
                     &fm.name,
+                    Some(&comments),
                     |_| noop(),
                 )
                 .unwrap()
@@ -733,25 +719,11 @@ fn should_visit() {
 
             dbg!(config.syntax);
 
-            let config = BuiltInput {
-                program: config.program,
-                pass: chain!(Panicking, config.pass),
-                syntax: config.syntax,
-                target: config.target,
-                minify: config.minify,
-                external_helpers: config.external_helpers,
-                source_maps: config.source_maps,
-                input_source_map: config.input_source_map,
-                is_module: config.is_module,
-                output_path: config.output_path,
-                source_file_name: config.source_file_name,
-                preserve_comments: config.preserve_comments,
-                inline_sources_content: config.inline_sources_content,
-            };
+            let config = config.with_pass(|pass| chain!(Panicking, pass));
 
             if config.minify {
                 let preserve_excl = |_: &BytePos, vc: &mut Vec<Comment>| -> bool {
-                    vc.retain(|c: &Comment| c.text.starts_with("!"));
+                    vc.retain(|c: &Comment| c.text.starts_with('!'));
                     !vc.is_empty()
                 };
                 c.comments().leading.retain(preserve_excl);
@@ -771,13 +743,16 @@ fn should_visit() {
                 None,
                 config.output_path,
                 config.inline_sources_content,
-                config.target,
                 config.source_maps,
                 &Default::default(),
                 None,
                 // TODO: figure out sourcemaps
-                config.minify,
-                config.preserve_comments,
+                Some(&comments),
+                config.emit_source_map_columns,
+                Default::default(),
+                swc_ecma_codegen::Config::default()
+                    .with_target(config.target)
+                    .with_minify(config.minify),
             )
             .unwrap()
             .code)
@@ -787,6 +762,10 @@ fn should_visit() {
 
 #[testing::fixture("tests/fixture/**/input/")]
 #[testing::fixture("tests/vercel/**/input/")]
+fn fixture(input_dir: PathBuf) {
+    tests(input_dir)
+}
+
 fn tests(input_dir: PathBuf) {
     let output = input_dir.parent().unwrap().join("output");
 
@@ -819,8 +798,14 @@ fn tests(input_dir: PathBuf) {
                     &handler,
                     &Options {
                         swcrc: true,
-                        is_module: IsModule::Bool(true),
                         output_path: Some(output.join(entry.file_name())),
+                        config: Config {
+                            jsc: JscConfig {
+                                external_helpers: true.into(),
+                                ..Default::default()
+                            },
+                            ..Default::default()
+                        },
 
                         ..Default::default()
                     },
@@ -858,7 +843,7 @@ fn tests(input_dir: PathBuf) {
 #[test]
 fn issue_1984() {
     testing::run_test2(false, |cm, handler| {
-        let c = Compiler::new(cm.clone());
+        let c = Compiler::new(cm);
         let fm = c.cm.new_source_file(
             FileName::Anon,
             "
@@ -879,7 +864,7 @@ fn issue_1984() {
     })
     .unwrap()
 }
-
+//
 #[test]
 fn opt_source_file_name_1() {
     let map = compile_str(
@@ -899,4 +884,270 @@ fn opt_source_file_name_1() {
     println!("{}", map);
 
     assert!(map.contains("entry-foo"));
+}
+
+#[test]
+fn issue_2224() {
+    let output = str_with_opt(
+        r#"
+        const Injectable = () => {};
+
+        @Injectable
+        export class TestClass {
+            private readonly property = TestClass.name;
+        }"#,
+        Options {
+            config: Config {
+                jsc: JscConfig {
+                    syntax: Some(Syntax::Typescript(TsConfig {
+                        decorators: true,
+                        ..Default::default()
+                    })),
+                    transform: Some(TransformConfig {
+                        use_define_for_class_fields: false.into(),
+                        ..Default::default()
+                    })
+                    .into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    println!("{}", output);
+
+    assert!(output.contains("this.property = TestClass.name"));
+}
+
+#[test]
+fn bom() {
+    project("tests/projects/bom")
+}
+#[test]
+fn json_schema() {
+    project("tests/projects/json-schema")
+}
+
+#[test]
+fn issue_6009() {
+    // any of the files to not be excluded should contains
+    // `export function hello(){`
+    let files_to_not_excludes = ["input.ts"];
+    // file to be excluded should contain the pattern `.*.spec.ts`
+    let files_to_exclude = ["input.spec.ts"];
+
+    testing::run_test2(false, |cm, handler| {
+        let c = swc::Compiler::new(cm.clone());
+
+        let get_fm = |file_name: &str| {
+            let full_path_str = format!("{}{}", "tests/projects/issue-6009/", file_name);
+            let file_path = Path::new(&full_path_str);
+            cm.load_file(file_path).expect("failed to load file")
+        };
+
+        let get_options = |exclude: Option<FileMatcher>| Options {
+            config: Config {
+                exclude,
+                jsc: JscConfig {
+                    syntax: Some(Syntax::Typescript(Default::default())),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        for file in files_to_not_excludes {
+            let result = c.process_js_file(
+                get_fm(file),
+                &handler,
+                &get_options(Some(FileMatcher::Regex(".*\\.spec.ts$".into()))),
+            );
+
+            match result {
+                Ok(r) => {
+                    assert!(
+                        r.code.contains("export function hello() {"),
+                        "Failed to compile! it doesn't contain the right code! `export function \
+                         hello() {{`"
+                    );
+                }
+                Err(out) => panic!("Failed to compile where it should not!\nErr:{:?}", out),
+            }
+        }
+
+        for file in files_to_exclude {
+            let fm = get_fm(file);
+            let options = get_options(Some(FileMatcher::Regex(".*\\.spec.ts$".into())));
+
+            let result = c.process_js_file(fm.clone(), &handler, &options);
+
+            match result {
+                Ok(out) => {
+                    panic!(
+                        "Expected to return an error because the file is being excluded. And that \
+                         didn't happen!\nTransformOutput: {:?}",
+                        out
+                    );
+                }
+                Err(err) => {
+                    let expected_error_msg = "cannot process file because";
+
+                    assert!(
+                        err.to_string().contains(expected_error_msg),
+                        "Not expected error! received: {}, expected: {}",
+                        &err.to_string(),
+                        expected_error_msg
+                    )
+                }
+            }
+
+            // test parsing input
+            let config = c
+                .parse_js_as_input(fm.clone(), None, &handler, &options, &fm.name, None, |_| {
+                    noop()
+                })
+                .unwrap();
+
+            assert!(
+                config.is_none(),
+                "config should be None when file excluded. But got a no None value instead!"
+            );
+        }
+
+        Ok(())
+    })
+    .unwrap()
+}
+
+#[test]
+fn issue_7513_1() {
+    static TEST_CODE: &str = r#"
+function test() {
+    return {
+        a: 1,
+        b: 2,
+        c: 3,
+    }
+}
+"#;
+
+    let globals = Globals::default();
+    let cm: Lrc<SourceMap> = Default::default();
+    let compiler = Compiler::new(cm.clone());
+    let handler = Handler::with_emitter(
+        true,
+        false,
+        Box::new(EmitterWriter::new(
+            Box::new(std::io::stderr()),
+            None,
+            false,
+            false,
+        )),
+    );
+
+    GLOBALS.set(&globals, || {
+        let fm = cm.new_source_file(
+            FileName::Custom(String::from("Test")),
+            TEST_CODE.to_string(),
+        );
+        let options = Options {
+            config: Config {
+                jsc: JscConfig {
+                    target: Some(EsVersion::Es2022),
+                    minify: Some(JsMinifyOptions {
+                        compress: BoolOrDataConfig::from_bool(false),
+                        mangle: BoolOrDataConfig::from_bool(true),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+                minify: true.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let program = compiler.process_js_file(fm, &handler, &options).unwrap();
+
+        eprintln!("{}", program.code);
+        assert_eq!(program.code, "function n(){return{a:1,b:2,c:3}}");
+    })
+}
+
+#[test]
+fn issue_7513_2() {
+    static INPUT: &str = "export const cachedTextDecoder = { ignoreBOM: true, fatal: true };";
+
+    let cm = Lrc::<SourceMap>::default();
+    let c = swc::Compiler::new(cm.clone());
+    let output = GLOBALS
+        .set(&Default::default(), || {
+            try_with_handler(cm.clone(), Default::default(), |handler| {
+                let fm = cm.new_source_file(FileName::Anon, INPUT.to_string());
+
+                c.minify(
+                    fm,
+                    handler,
+                    &JsMinifyOptions {
+                        module: true,
+                        compress: BoolOrDataConfig::from_bool(true),
+                        mangle: BoolOrDataConfig::from_obj(MangleOptions {
+                            props: None,
+                            top_level: Some(true),
+                            keep_class_names: false,
+                            keep_fn_names: false,
+                            keep_private_props: false,
+                            ..Default::default()
+                        }),
+                        keep_classnames: false,
+                        keep_fnames: false,
+                        toplevel: true,
+                        ..Default::default()
+                    },
+                )
+                .context("failed to minify")
+            })
+        })
+        .unwrap();
+
+    println!("{}", output.code);
+    assert_eq!(
+        output.code,
+        "export const cachedTextDecoder={ignoreBOM:!0,fatal:!0};"
+    );
+}
+
+#[testing::fixture("tests/minify/**/input.js")]
+fn minify(input_js: PathBuf) {
+    let input_dir = input_js.parent().unwrap();
+    let config_json_path = input_dir.join("config.json");
+
+    testing::run_test2(false, |cm, handler| {
+        let c = Compiler::new(cm);
+        let fm = c.cm.load_file(&input_js).unwrap();
+
+        let mut config: JsMinifyOptions =
+            serde_json::from_str(&std::fs::read_to_string(&config_json_path).unwrap()).unwrap();
+
+        config.source_map = BoolOrDataConfig::from_bool(true);
+        let output = c.minify(fm, &handler, &config).unwrap();
+
+        NormalizedOutput::from(output.code)
+            .compare_to_file(input_dir.join("output.js"))
+            .unwrap();
+
+        let map = output.map.map(|json| {
+            let json: serde_json::Value = serde_json::from_str(&json).unwrap();
+            serde_json::to_string_pretty(&json).unwrap()
+        });
+
+        NormalizedOutput::from(map.unwrap())
+            .compare_to_file(input_dir.join("output.map"))
+            .unwrap();
+
+        Ok(())
+    })
+    .unwrap()
 }

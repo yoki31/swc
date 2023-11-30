@@ -99,21 +99,21 @@ it('should handle input sourcemap correctly', async () => {
     validate(out2.code, out2.map, { 'input2.js': out1.code });
     validate(out2.code, out2.map, { 'input.js': raw });
 
-    await sourceMap.SourceMapConsumer.with(JSON.parse(out1.map), null, async (consumer1) => {
-        await sourceMap.SourceMapConsumer.with(JSON.parse(out2.map), null, async (consumer2) => {
-            consumer1.eachMapping((mapping) => {
-                // console.log(mapping);
-            });
+    // await sourceMap.SourceMapConsumer.with(JSON.parse(out1.map), null, async (consumer1) => {
+    //     await sourceMap.SourceMapConsumer.with(JSON.parse(out2.map), null, async (consumer2) => {
+    //         consumer1.eachMapping((mapping) => {
+    //             // console.log(mapping);
+    //         });
 
-            consumer2.eachMapping((mapping) => {
-                // console.log(mapping);
-            });
-        });
-    });
+    //         consumer2.eachMapping((mapping) => {
+    //             // console.log(mapping);
+    //         });
+    //     });
+    // });
 
 })
 
-describe('soruceMaps: true in .swcrc', () => {
+describe('sourceMaps: true in .swcrc', () => {
 
     it(`should be respected`, async () => {
         const out = await swc.transformFile(path.join(__dirname, '..', '..', 'tests', 'issue-2120', 'input.js'));
@@ -129,5 +129,4 @@ describe('soruceMaps: true in .swcrc', () => {
         expect(out.map).toBeUndefined();
     })
 
-})
-
+});

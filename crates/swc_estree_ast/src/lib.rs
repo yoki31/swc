@@ -1,3 +1,7 @@
+#![deny(clippy::all)]
+#![allow(clippy::enum_variant_names)]
+#![allow(clippy::large_enum_variant)]
+
 pub use class::*;
 pub use comment::*;
 pub use common::*;

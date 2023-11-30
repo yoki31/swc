@@ -1,16 +1,20 @@
-use anyhow::{Context, Error};
-use glob::glob;
-use pmutil::q;
-use proc_macro2::Span;
-use regex::Regex;
-use relative_path::RelativePath;
 use std::{
     env,
     path::{Component, PathBuf},
 };
+
+use anyhow::{Context, Error};
+use glob::glob;
+use once_cell::sync::Lazy;
+use pmutil::{q, Quote};
+use proc_macro2::Span;
+use regex::Regex;
+use relative_path::RelativePath;
 use syn::{
     parse::{Parse, ParseStream},
-    Ident, ItemFn, Lit, LitStr, Meta, NestedMeta, Token,
+    parse2,
+    punctuated::Punctuated,
+    Ident, LitStr, Meta, Token,
 };
 
 pub struct Config {
@@ -21,57 +25,44 @@ pub struct Config {
 impl Parse for Config {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         fn update(c: &mut Config, meta: Meta) {
-            match &meta {
-                Meta::List(list) => {
-                    if list
-                        .path
-                        .get_ident()
-                        .map(|i| i.to_string() == "exclude")
-                        .unwrap_or(false)
-                    {
-                        //
-                        macro_rules! fail {
-                            () => {{
-                                fail!("invalid input to the attribute")
-                            }};
-                            ($inner:expr) => {{
-                                panic!(
-                                    "{}\nnote: exclude() expects one or more comma-separated \
-             regular expressions, like exclude(\".*\\\\.d\\\\.ts\") or \
-             exclude(\".*\\\\.d\\\\.ts\", \".*\\\\.tsx\")",
-                                    $inner
-                                )
-                            }};
-                        }
-
-                        if list.nested.is_empty() {
-                            fail!("empty exclude()")
-                        }
-
-                        for token in list.nested.iter() {
-                            match token {
-                                NestedMeta::Meta(_) => fail!(),
-                                NestedMeta::Lit(lit) => {
-                                    let lit = match lit {
-                                        Lit::Str(v) => v.value(),
-                                        _ => fail!(),
-                                    };
-                                    c.exclude_patterns.push(Regex::new(&lit).unwrap_or_else(
-                                        |err| {
-                                            fail!(format!(
-                                                "failed to parse regex: {}\n{}",
-                                                lit, err
-                                            ))
-                                        },
-                                    ));
-                                }
-                            }
-                        }
-
-                        return;
+            if let Meta::List(list) = &meta {
+                if list
+                    .path
+                    .get_ident()
+                    .map(|i| *i == "exclude")
+                    .unwrap_or(false)
+                {
+                    //
+                    macro_rules! fail {
+                        () => {{
+                            fail!("invalid input to the attribute")
+                        }};
+                        ($inner:expr) => {{
+                            panic!(
+                                "{}\nnote: exclude() expects one or more comma-separated regular \
+                                 expressions, like exclude(\".*\\\\.d\\\\.ts\") or \
+                                 exclude(\".*\\\\.d\\\\.ts\", \".*\\\\.tsx\")",
+                                $inner
+                            )
+                        }};
                     }
+
+                    if list.tokens.is_empty() {
+                        fail!("empty exclude()")
+                    }
+
+                    let input = parse2::<InputParen>(list.tokens.clone())
+                        .expect("failed to parse token as `InputParen`");
+
+                    for lit in input.input {
+                        c.exclude_patterns
+                            .push(Regex::new(&lit.value()).unwrap_or_else(|err| {
+                                fail!(format!("failed to parse regex: {}\n{}", lit.value(), err))
+                            }));
+                    }
+
+                    return;
                 }
-                _ => {}
             }
 
             let expected = r#"#[fixture("fixture/**/*.ts", exclude("*\.d\.ts"))]"#;
@@ -101,7 +92,7 @@ impl Parse for Config {
     }
 }
 
-pub fn expand(callee: &Ident, attr: Config) -> Result<Vec<ItemFn>, Error> {
+pub fn expand(callee: &Ident, attr: Config) -> Result<Vec<Quote>, Error> {
     let base_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect(
         "#[fixture] requires CARGO_MANIFEST_DIR because it's relative to cargo manifest directory",
     ));
@@ -111,9 +102,11 @@ pub fn expand(callee: &Ident, attr: Config) -> Result<Vec<ItemFn>, Error> {
     let paths =
         glob(&pattern).with_context(|| format!("glob failed for whole path: `{}`", pattern))?;
     let mut test_fns = vec![];
+    // Allow only alphanumeric and underscore characters for the test_name.
+    static RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"[^A-Za-z0-9_]").unwrap());
 
     'add: for path in paths {
-        let path = path.with_context(|| format!("glob failed for file"))?;
+        let path = path.with_context(|| "glob failed for file".to_string())?;
         let abs_path = path
             .canonicalize()
             .with_context(|| format!("failed to canonicalize {}", path.display()))?;
@@ -132,66 +125,55 @@ pub fn expand(callee: &Ident, attr: Config) -> Result<Vec<ItemFn>, Error> {
                 continue 'add;
             }
 
-            if cfg!(target_os = "windows") {
-                if pattern.is_match(&path_str.replace("\\", "/")) {
-                    continue 'add;
-                }
+            if cfg!(target_os = "windows") && pattern.is_match(&path_str.replace('\\', "/")) {
+                continue 'add;
             }
         }
 
         let ignored = path.components().any(|c| match c {
-            Component::Normal(s) => s.to_string_lossy().starts_with("."),
+            Component::Normal(s) => s.to_string_lossy().starts_with('.'),
             _ => false,
         });
         let test_name = format!(
             "{}_{}",
             callee,
-            path_for_name
-                .to_string_lossy()
-                .replace("\\", "__")
-                .replace(" ", "_")
-                .replace("/", "__")
-                .replace(".", "_")
-                .replace("-", "_")
+            RE.replace_all(
+                path_for_name
+                    .to_string_lossy()
+                    .replace(['\\', '/'], "__")
+                    .as_str(),
+                "_",
+            )
         )
         .replace("___", "__");
         let test_ident = Ident::new(&test_name, Span::call_site());
 
-        let mut f = q!(
+        let ignored_attr = if ignored {
+            q!(Vars {}, { #[ignore] })
+        } else {
+            Quote::new_call_site()
+        };
+
+        let f = q!(
             Vars {
                 test_ident,
                 path_str: &abs_path.to_string_lossy(),
-                callee
+                callee,
+                ignored_attr,
             },
             {
                 #[test]
                 #[inline(never)]
-                #[ignore]
                 #[doc(hidden)]
+                #[allow(non_snake_case)]
+                ignored_attr
                 fn test_ident() {
                     eprintln!("Input: {}", path_str);
 
                     callee(::std::path::PathBuf::from(path_str));
                 }
             }
-        )
-        .parse::<ItemFn>();
-
-        if !ignored {
-            f.attrs.retain(|attr| {
-                match attr.path.get_ident() {
-                    Some(name) => {
-                        if name == "ignore" {
-                            return false;
-                        }
-                    }
-                    None => {}
-                }
-
-                true
-            });
-            //
-        }
+        );
 
         test_fns.push(f);
     }
@@ -201,4 +183,16 @@ pub fn expand(callee: &Ident, attr: Config) -> Result<Vec<ItemFn>, Error> {
     }
 
     Ok(test_fns)
+}
+
+struct InputParen {
+    input: Punctuated<LitStr, Token![,]>,
+}
+
+impl Parse for InputParen {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        Ok(Self {
+            input: input.call(Punctuated::parse_terminated)?,
+        })
+    }
 }

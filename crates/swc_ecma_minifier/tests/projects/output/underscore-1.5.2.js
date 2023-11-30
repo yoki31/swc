@@ -1,6 +1,5 @@
 (function() {
-    var root = this, previousUnderscore = root._, breaker = {
-    }, ArrayProto = Array.prototype, ObjProto = Object.prototype, FuncProto = Function.prototype, push = ArrayProto.push, slice = ArrayProto.slice, concat = ArrayProto.concat, toString = ObjProto.toString, hasOwnProperty = ObjProto.hasOwnProperty, nativeForEach = ArrayProto.forEach, nativeMap = ArrayProto.map, nativeReduce = ArrayProto.reduce, nativeReduceRight = ArrayProto.reduceRight, nativeFilter = ArrayProto.filter, nativeEvery = ArrayProto.every, nativeSome = ArrayProto.some, nativeIndexOf = ArrayProto.indexOf, nativeLastIndexOf = ArrayProto.lastIndexOf, nativeIsArray = Array.isArray, nativeKeys = Object.keys, nativeBind = FuncProto.bind, _ = function(obj) {
+    var root = this, previousUnderscore = root._, breaker = {}, ArrayProto = Array.prototype, ObjProto = Object.prototype, FuncProto = Function.prototype, push = ArrayProto.push, slice = ArrayProto.slice, concat = ArrayProto.concat, toString = ObjProto.toString, hasOwnProperty = ObjProto.hasOwnProperty, nativeForEach = ArrayProto.forEach, nativeMap = ArrayProto.map, nativeReduce = ArrayProto.reduce, nativeReduceRight = ArrayProto.reduceRight, nativeFilter = ArrayProto.filter, nativeEvery = ArrayProto.every, nativeSome = ArrayProto.some, nativeIndexOf = ArrayProto.indexOf, nativeLastIndexOf = ArrayProto.lastIndexOf, nativeIsArray = Array.isArray, nativeKeys = Object.keys, nativeBind = FuncProto.bind, _ = function(obj) {
         return obj instanceof _ ? obj : this instanceof _ ? void (this._wrapped = obj) : new _(obj);
     };
     "undefined" != typeof exports ? ("undefined" != typeof module && module.exports && (exports = module.exports = _), exports._ = _) : root._ = _, _.VERSION = "1.5.2";
@@ -24,7 +23,7 @@
         if (null == obj && (obj = []), nativeReduce && obj.reduce === nativeReduce) return context && (iterator = _.bind(iterator, context)), initial ? obj.reduce(iterator, memo) : obj.reduce(iterator);
         if (each(obj, function(value, index, list) {
             initial ? memo = iterator.call(context, memo, value, index, list) : (memo = value, initial = !0);
-        }), !initial) throw new TypeError(reduceError);
+        }), !initial) throw TypeError(reduceError);
         return memo;
     }, _.reduceRight = _.foldr = function(obj, iterator, memo, context) {
         var initial = arguments.length > 2;
@@ -36,7 +35,7 @@
         }
         if (each(obj, function(value, index, list) {
             index = keys ? keys[--length] : --length, initial ? memo = iterator.call(context, memo, obj[index], index, list) : (memo = obj[index], initial = !0);
-        }), !initial) throw new TypeError(reduceError);
+        }), !initial) throw TypeError(reduceError);
         return memo;
     }, _.find = _.detect = function(obj, iterator, context) {
         var result;
@@ -127,8 +126,8 @@
             return obj[value];
         };
     };
-    _.sortBy = function(obj, value1, context) {
-        var iterator = lookupIterator(value1);
+    _.sortBy = function(obj, value, context) {
+        var iterator = lookupIterator(value);
         return _.pluck(_.map(obj, function(value, index, list) {
             return {
                 value: value,
@@ -145,9 +144,8 @@
         }), "value");
     };
     var group = function(behavior) {
-        return function(obj, value2, context) {
-            var result = {
-            }, iterator = null == value2 ? _.identity : lookupIterator(value2);
+        return function(obj, value, context) {
+            var result = {}, iterator = null == value ? _.identity : lookupIterator(value);
             return each(obj, function(value, index) {
                 behavior(result, iterator.call(context, value, index, obj), value);
             }), result;
@@ -174,8 +172,7 @@
     }, _.initial = function(array, n, guard) {
         return slice.call(array, 0, array.length - (null == n || guard ? 1 : n));
     }, _.last = function(array, n, guard) {
-        if (null != array) if (null == n || guard) return array[array.length - 1];
-        else return slice.call(array, Math.max(array.length - n, 0));
+        if (null != array) return null == n || guard ? array[array.length - 1] : slice.call(array, Math.max(array.length - n, 0));
     }, _.rest = _.tail = _.drop = function(array, n, guard) {
         return slice.call(array, null == n || guard ? 1 : n);
     }, _.compact = function(array) {
@@ -211,13 +208,11 @@
             return !_.contains(rest, value);
         });
     }, _.zip = function() {
-        for(var length = _.max(_.pluck(arguments, "length").concat(0)), results = new Array(length), i = 0; i < length; i++)results[i] = _.pluck(arguments, "" + i);
+        for(var length = _.max(_.pluck(arguments, "length").concat(0)), results = Array(length), i = 0; i < length; i++)results[i] = _.pluck(arguments, "" + i);
         return results;
     }, _.object = function(list, values) {
-        if (null == list) return {
-        };
-        for(var result = {
-        }, i = 0, length = list.length; i < length; i++)values ? result[list[i]] = values[i] : result[list[i][0]] = list[i][1];
+        if (null == list) return {};
+        for(var result = {}, i = 0, length = list.length; i < length; i++)values ? result[list[i]] = values[i] : result[list[i][0]] = list[i][1];
         return result;
     }, _.indexOf = function(array, item, isSorted) {
         if (null == array) return -1;
@@ -237,19 +232,18 @@
         return -1;
     }, _.range = function(start, stop, step) {
         arguments.length <= 1 && (stop = start || 0, start = 0), step = arguments[2] || 1;
-        for(var length = Math.max(Math.ceil((stop - start) / step), 0), idx = 0, range = new Array(length); idx < length;)range[idx++] = start, start += step;
+        for(var length = Math.max(Math.ceil((stop - start) / step), 0), idx = 0, range = Array(length); idx < length;)range[idx++] = start, start += step;
         return range;
     };
-    var ctor = function() {
-    };
+    var ctor = function() {};
     _.bind = function(func, context) {
         var args, bound;
         if (nativeBind && func.bind === nativeBind) return nativeBind.apply(func, slice.call(arguments, 1));
-        if (!_.isFunction(func)) throw new TypeError;
+        if (!_.isFunction(func)) throw TypeError();
         return args = slice.call(arguments, 2), bound = function() {
             if (!(this instanceof bound)) return func.apply(context, args.concat(slice.call(arguments)));
             ctor.prototype = func.prototype;
-            var self = new ctor;
+            var self = new ctor();
             ctor.prototype = null;
             var result = func.apply(self, args.concat(slice.call(arguments)));
             return Object(result) === result ? result : self;
@@ -261,13 +255,12 @@
         };
     }, _.bindAll = function(obj) {
         var funcs = slice.call(arguments, 1);
-        if (0 === funcs.length) throw new Error("bindAll must be passed function names");
+        if (0 === funcs.length) throw Error("bindAll must be passed function names");
         return each(funcs, function(f) {
             obj[f] = _.bind(obj[f], obj);
         }), obj;
     }, _.memoize = function(func, hasher) {
-        var memo = {
-        };
+        var memo = {};
         return hasher || (hasher = _.identity), function() {
             var key = hasher.apply(this, arguments);
             return _.has(memo, key) ? memo[key] : memo[key] = func.apply(this, arguments);
@@ -284,13 +277,12 @@
         ].concat(slice.call(arguments, 1)));
     }, _.throttle = function(func, wait, options) {
         var context, args, result, timeout = null, previous = 0;
-        options || (options = {
-        });
+        options || (options = {});
         var later = function() {
-            previous = !1 === options.leading ? 0 : new Date, timeout = null, result = func.apply(context, args);
+            previous = !1 === options.leading ? 0 : new Date(), timeout = null, result = func.apply(context, args);
         };
         return function() {
-            var now = new Date;
+            var now = new Date();
             previous || !1 !== options.leading || (previous = now);
             var remaining = wait - (now - previous);
             return context = this, args = arguments, remaining <= 0 ? (clearTimeout(timeout), timeout = null, previous = now, result = func.apply(context, args)) : timeout || !1 === options.trailing || (timeout = setTimeout(later, remaining)), result;
@@ -330,22 +322,21 @@
             if (--times < 1) return func.apply(this, arguments);
         };
     }, _.keys = nativeKeys || function(obj) {
-        if (obj !== Object(obj)) throw new TypeError("Invalid object");
+        if (obj !== Object(obj)) throw TypeError("Invalid object");
         var keys = [];
         for(var key in obj)_.has(obj, key) && keys.push(key);
         return keys;
     }, _.values = function(obj) {
-        for(var keys = _.keys(obj), length = keys.length, values = new Array(length), i = 0; i < length; i++)values[i] = obj[keys[i]];
+        for(var keys = _.keys(obj), length = keys.length, values = Array(length), i = 0; i < length; i++)values[i] = obj[keys[i]];
         return values;
     }, _.pairs = function(obj) {
-        for(var keys = _.keys(obj), length = keys.length, pairs = new Array(length), i = 0; i < length; i++)pairs[i] = [
+        for(var keys = _.keys(obj), length = keys.length, pairs = Array(length), i = 0; i < length; i++)pairs[i] = [
             keys[i],
             obj[keys[i]]
         ];
         return pairs;
     }, _.invert = function(obj) {
-        for(var result = {
-        }, keys = _.keys(obj), i = 0, length = keys.length; i < length; i++)result[obj[keys[i]]] = keys[i];
+        for(var result = {}, keys = _.keys(obj), i = 0, length = keys.length; i < length; i++)result[obj[keys[i]]] = keys[i];
         return result;
     }, _.functions = _.methods = function(obj) {
         var names = [];
@@ -356,14 +347,12 @@
             if (source) for(var prop in source)obj[prop] = source[prop];
         }), obj;
     }, _.pick = function(obj) {
-        var copy = {
-        }, keys = concat.apply(ArrayProto, slice.call(arguments, 1));
+        var copy = {}, keys = concat.apply(ArrayProto, slice.call(arguments, 1));
         return each(keys, function(key) {
             key in obj && (copy[key] = obj[key]);
         }), copy;
     }, _.omit = function(obj) {
-        var copy = {
-        }, keys = concat.apply(ArrayProto, slice.call(arguments, 1));
+        var copy = {}, keys = concat.apply(ArrayProto, slice.call(arguments, 1));
         for(var key in obj)_.contains(keys, key) || (copy[key] = obj[key]);
         return copy;
     }, _.defaults = function(obj) {
@@ -371,8 +360,7 @@
             if (source) for(var prop in source)void 0 === obj[prop] && (obj[prop] = source[prop]);
         }), obj;
     }, _.clone = function(obj) {
-        return _.isObject(obj) ? _.isArray(obj) ? obj.slice() : _.extend({
-        }, obj) : obj;
+        return _.isObject(obj) ? _.isArray(obj) ? obj.slice() : _.extend({}, obj) : obj;
     }, _.tap = function(obj, interceptor) {
         return interceptor(obj), obj;
     };
@@ -465,14 +453,14 @@
             "&": "&amp;",
             "<": "&lt;",
             ">": "&gt;",
-            "\"": "&quot;",
+            '"': "&quot;",
             "'": "&#x27;"
         }
     };
     entityMap.unescape = _.invert(entityMap.escape);
     var entityRegexes = {
-        escape: new RegExp("[" + _.keys(entityMap.escape).join("") + "]", "g"),
-        unescape: new RegExp("(" + _.keys(entityMap.unescape).join("|") + ")", "g")
+        escape: RegExp("[" + _.keys(entityMap.escape).join("") + "]", "g"),
+        unescape: RegExp("(" + _.keys(entityMap.unescape).join("|") + ")", "g")
     };
     _.each([
         "escape",
@@ -495,7 +483,7 @@
                 var args = [
                     this._wrapped
                 ];
-                return push.apply(args, arguments), result1.call(this, func.apply(_, args));
+                return push.apply(args, arguments), result.call(this, func.apply(_, args));
             };
         });
     };
@@ -517,12 +505,9 @@
         "\u2028": "u2028",
         "\u2029": "u2029"
     }, escaper = /\\|'|\r|\n|\t|\u2028|\u2029/g;
-    _.template = function(text, data1, settings) {
-        var render;
-        settings = _.defaults({
-        }, settings, _.templateSettings);
-        var matcher = new RegExp([
-            (settings.escape || noMatch).source,
+    _.template = function(text, data, settings) {
+        var render, matcher = RegExp([
+            ((settings = _.defaults({}, settings, _.templateSettings)).escape || noMatch).source,
             (settings.interpolate || noMatch).source,
             (settings.evaluate || noMatch).source
         ].join("|") + "|$", "g"), index = 0, source = "__p+='";
@@ -532,11 +517,11 @@
             }), escape && (source += "'+\n((__t=(" + escape + "))==null?'':_.escape(__t))+\n'"), interpolate && (source += "'+\n((__t=(" + interpolate + "))==null?'':__t)+\n'"), evaluate && (source += "';\n" + evaluate + "\n__p+='"), index = offset + match.length, match;
         }), source += "';\n", settings.variable || (source = "with(obj||{}){\n" + source + "}\n"), source = "var __t,__p='',__j=Array.prototype.join,print=function(){__p+=__j.call(arguments,'');};\n" + source + "return __p;\n";
         try {
-            render = new Function(settings.variable || "obj", "_", source);
+            render = Function(settings.variable || "obj", "_", source);
         } catch (e) {
             throw e.source = source, e;
         }
-        if (data1) return render(data1, _);
+        if (data) return render(data, _);
         var template = function(data) {
             return render.call(this, data, _);
         };
@@ -544,7 +529,7 @@
     }, _.chain = function(obj) {
         return _(obj).chain();
     };
-    var result1 = function(obj) {
+    var result = function(obj) {
         return this._chain ? _(obj).chain() : obj;
     };
     _.mixin(_), each([
@@ -559,7 +544,7 @@
         var method = ArrayProto[name];
         _.prototype[name] = function() {
             var obj = this._wrapped;
-            return method.apply(obj, arguments), ("shift" == name || "splice" == name) && 0 === obj.length && delete obj[0], result1.call(this, obj);
+            return method.apply(obj, arguments), ("shift" == name || "splice" == name) && 0 === obj.length && delete obj[0], result.call(this, obj);
         };
     }), each([
         "concat",
@@ -568,7 +553,7 @@
     ], function(name) {
         var method = ArrayProto[name];
         _.prototype[name] = function() {
-            return result1.call(this, method.apply(this._wrapped, arguments));
+            return result.call(this, method.apply(this._wrapped, arguments));
         };
     }), _.extend(_.prototype, {
         chain: function() {

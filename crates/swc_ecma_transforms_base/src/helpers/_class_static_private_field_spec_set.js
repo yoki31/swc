@@ -1,12 +1,6 @@
-function _classStaticPrivateFieldSpecSet(receiver, classConstructor, descriptor, value) {
-  if (receiver !== classConstructor) {
-    throw new TypeError("Private static access of wrong provenance");
-  }
-
-  if (!descriptor.writable) {
-    throw new TypeError("attempted to set read only private field");
-  }
-
-  descriptor.value = value;
-  return value;
+function _class_static_private_field_spec_set(receiver, classConstructor, descriptor, value) {
+    _class_check_private_static_access(receiver, classConstructor);
+    _class_check_private_static_field_descriptor(descriptor, "set");
+    _class_apply_descriptor_set(receiver, descriptor, value);
+    return value;
 }

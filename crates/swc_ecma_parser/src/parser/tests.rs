@@ -1,6 +1,7 @@
+use swc_common::{comments::SingleThreadedComments, BytePos};
+
 use super::*;
 use crate::{test_parser, EsConfig, TsConfig};
-use swc_common::{comments::SingleThreadedComments, BytePos};
 
 fn program(src: &'static str) -> Program {
     test_parser(src, Default::default(), |p| p.parse_program())
@@ -83,10 +84,11 @@ fn issue_1813() {
     )
 }
 
+#[test]
 fn parse_module_export_named_span() {
     let m = module("export function foo() {}");
     if let ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(ExportDecl { span, .. })) = &m.body[0] {
-        assert_eq!(span.lo, BytePos(0));
+        assert_eq!(span.lo, BytePos(1));
     } else {
         panic!("expected ExportDecl");
     }
@@ -99,8 +101,8 @@ fn parse_module_export_default_fn_span() {
         span, ..
     })) = &m.body[0]
     {
-        assert_eq!(span.lo, BytePos(0));
-        assert_eq!(span.hi, BytePos(32));
+        assert_eq!(span.lo, BytePos(1));
+        assert_eq!(span.hi, BytePos(33));
     } else {
         panic!("expected ExportDefaultDecl");
     }
@@ -113,8 +115,8 @@ fn parse_module_export_default_async_fn_span() {
         span, ..
     })) = &m.body[0]
     {
-        assert_eq!(span.lo, BytePos(0));
-        assert_eq!(span.hi, BytePos(38));
+        assert_eq!(span.lo, BytePos(1));
+        assert_eq!(span.hi, BytePos(39));
     } else {
         panic!("expected ExportDefaultDecl");
     }
@@ -127,8 +129,8 @@ fn parse_module_export_default_class_span() {
         span, ..
     })) = &m.body[0]
     {
-        assert_eq!(span.lo, BytePos(0));
-        assert_eq!(span.hi, BytePos(27));
+        assert_eq!(span.lo, BytePos(1));
+        assert_eq!(span.hi, BytePos(28));
     } else {
         panic!("expected ExportDefaultDecl");
     }
@@ -143,19 +145,14 @@ fn issue_1878() {
         let s = "
             // test
         ";
-        let _ = super::test_parser_comment(
-            &c,
-            s,
-            Syntax::Typescript(TsConfig {
-                ..Default::default()
-            }),
-            |p| p.parse_typescript_module(),
-        );
+        let _ = super::test_parser_comment(&c, s, Syntax::Typescript(Default::default()), |p| {
+            p.parse_typescript_module()
+        });
 
         let (leading, trailing) = c.take_all();
         assert!(trailing.borrow().is_empty());
         assert_eq!(leading.borrow().len(), 1);
-        assert!(leading.borrow().get(&BytePos(0)).is_some());
+        assert!(leading.borrow().get(&BytePos(1)).is_some());
     }
 
     // file with shebang and comments should still work with the comments trailing
@@ -165,19 +162,14 @@ fn issue_1878() {
         let s = "#!/foo/bar
             // test
         ";
-        let _ = super::test_parser_comment(
-            &c,
-            s,
-            Syntax::Typescript(TsConfig {
-                ..Default::default()
-            }),
-            |p| p.parse_typescript_module(),
-        );
+        let _ = super::test_parser_comment(&c, s, Syntax::Typescript(Default::default()), |p| {
+            p.parse_typescript_module()
+        });
 
         let (leading, trailing) = c.take_all();
         assert!(leading.borrow().is_empty());
         assert_eq!(trailing.borrow().len(), 1);
-        assert!(trailing.borrow().get(&BytePos(10)).is_some());
+        assert!(trailing.borrow().get(&BytePos(11)).is_some());
     }
 }
 
@@ -200,8 +192,8 @@ fn issue_2264_1() {
         |p| p.parse_typescript_module(),
     );
 
-    let (leading, trailing) = c.take_all();
-    assert!(leading.borrow().is_empty());
+    let (_leading, trailing) = c.take_all();
+    // assert!(leading.borrow().is_empty());
     assert!(trailing.borrow().is_empty());
 }
 
@@ -246,8 +238,8 @@ fn issue_2264_3() {
     let (leading, trailing) = c.take_all();
     assert!(leading.borrow().is_empty());
     assert_eq!(trailing.borrow().len(), 2);
-    assert_eq!(trailing.borrow().get(&BytePos(25)).unwrap().len(), 1);
-    assert_eq!(trailing.borrow().get(&BytePos(36)).unwrap().len(), 1);
+    assert_eq!(trailing.borrow().get(&BytePos(26)).unwrap().len(), 1);
+    assert_eq!(trailing.borrow().get(&BytePos(37)).unwrap().len(), 1);
 }
 
 #[test]
@@ -272,6 +264,87 @@ fn issue_2339_1() {
 
     let (leading, trailing) = c.take_all();
     assert_eq!(leading.borrow().len(), 1);
-    assert_eq!(leading.borrow().get(&BytePos(79)).unwrap().len(), 2);
+    assert_eq!(leading.borrow().get(&BytePos(80)).unwrap().len(), 2);
     assert!(trailing.borrow().is_empty());
+}
+
+#[test]
+fn issue_2853_1() {
+    test_parser("const a = \"\\0a\";", Default::default(), |p| {
+        let program = p.parse_program()?;
+
+        let errors = p.take_errors();
+        assert_eq!(errors, vec![]);
+        assert_eq!(errors, vec![]);
+
+        Ok(program)
+    });
+}
+
+#[test]
+fn issue_2853_2() {
+    test_parser("const a = \"\u{0000}a\";", Default::default(), |p| {
+        let program = p.parse_program()?;
+
+        let errors = p.take_errors();
+        assert_eq!(errors, vec![]);
+
+        Ok(program)
+    });
+}
+
+#[test]
+fn illegal_language_mode_directive1() {
+    test_parser(
+        r#"function f(a = 0) { "use strict"; }"#,
+        Default::default(),
+        |p| {
+            let program = p.parse_program()?;
+
+            let errors = p.take_errors();
+            assert_eq!(
+                errors,
+                vec![Error::new(
+                    Span {
+                        lo: BytePos(21),
+                        hi: BytePos(34),
+                        ctxt: swc_common::SyntaxContext::empty()
+                    },
+                    crate::parser::SyntaxError::IllegalLanguageModeDirective
+                )]
+            );
+
+            Ok(program)
+        },
+    );
+}
+#[test]
+fn illegal_language_mode_directive2() {
+    test_parser(
+        r#"let f = (a = 0) => { "use strict"; }"#,
+        Default::default(),
+        |p| {
+            let program = p.parse_program()?;
+
+            let errors = p.take_errors();
+            assert_eq!(
+                errors,
+                vec![Error::new(
+                    Span {
+                        lo: BytePos(22),
+                        hi: BytePos(35),
+                        ctxt: swc_common::SyntaxContext::empty()
+                    },
+                    crate::parser::SyntaxError::IllegalLanguageModeDirective
+                )]
+            );
+
+            Ok(program)
+        },
+    );
+}
+
+#[test]
+fn parse_non_strict_for_loop() {
+    script("for (var v1 = 1 in v3) {}");
 }

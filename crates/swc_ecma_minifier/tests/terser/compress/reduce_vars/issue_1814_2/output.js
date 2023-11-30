@@ -1,4 +1,4 @@
-const a1 = "32";
+const a = "32";
 !function() {
     !function(a) {
         console.log("321", a++);

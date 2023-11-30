@@ -1,12 +1,11 @@
-#![feature(bench_black_box)]
+use std::path::PathBuf;
 
 use dashmap::DashMap;
-use std::path::PathBuf;
 use swc_common::{
     comments::{Comment, CommentKind, Comments},
     BytePos, DUMMY_SP,
 };
-use swc_ecma_parser::{lexer::Lexer, EsConfig, Parser, StringInput, Syntax};
+use swc_ecma_parser::{parse_file_as_module, EsConfig, Syntax};
 use testing::NormalizedOutput;
 
 #[testing::fixture("tests/fixtures/**/*.js")]
@@ -16,24 +15,21 @@ fn fixture(path: PathBuf) {
 
         let fm = cm.load_file(&path).expect("failed to load fixture file");
 
-        let lexer = Lexer::new(
+        let mut errors = vec![];
+
+        if let Err(err) = parse_file_as_module(
+            &fm,
             Syntax::Es(EsConfig {
                 jsx: true,
                 ..Default::default()
             }),
             Default::default(),
-            StringInput::from(&*fm),
             Some(&comments),
-        );
-        let mut p = Parser::new_from(lexer);
-
-        match p.parse_module() {
-            Err(err) => {
-                err.into_diagnostic(&handler).emit();
-            }
-            _ => {}
+            &mut errors,
+        ) {
+            err.into_diagnostic(&handler).emit();
         }
-        for err in p.take_errors() {
+        for err in errors {
             err.into_diagnostic(&handler).emit();
         }
         if handler.has_errors() {
@@ -49,7 +45,7 @@ fn fixture(path: PathBuf) {
                     continue;
                 }
 
-                if !cmt.text.starts_with("*") {
+                if !cmt.text.starts_with('*') {
                     continue;
                 }
 
@@ -93,10 +89,14 @@ impl Comments for SwcComments {
     }
 
     fn move_leading(&self, from: BytePos, to: BytePos) {
-        let cmt = self.leading.remove(&from);
+        let cmt = self.take_leading(from);
 
-        if let Some(cmt) = cmt {
-            self.leading.entry(to).or_default().extend(cmt.1);
+        if let Some(mut cmt) = cmt {
+            if from < to && self.has_leading(to) {
+                cmt.extend(self.take_leading(to).unwrap());
+            }
+
+            self.add_leading_comments(to, cmt);
         }
     }
 
@@ -121,10 +121,14 @@ impl Comments for SwcComments {
     }
 
     fn move_trailing(&self, from: BytePos, to: BytePos) {
-        let cmt = self.trailing.remove(&from);
+        let cmt = self.take_trailing(from);
 
-        if let Some(cmt) = cmt {
-            self.trailing.entry(to).or_default().extend(cmt.1);
+        if let Some(mut cmt) = cmt {
+            if from < to && self.has_trailing(to) {
+                cmt.extend(self.take_trailing(to).unwrap());
+            }
+
+            self.add_trailing_comments(to, cmt);
         }
     }
 
@@ -137,6 +141,8 @@ impl Comments for SwcComments {
     }
 
     fn add_pure_comment(&self, pos: BytePos) {
+        assert_ne!(pos, BytePos(0), "cannot add pure comment to zero position");
+
         let mut leading = self.leading.entry(pos).or_default();
         let pure_comment = Comment {
             kind: CommentKind::Block,

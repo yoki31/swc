@@ -1,51 +1,52 @@
-use super::*;
-use crate::hygiene::Config;
 use swc_ecma_parser::Syntax;
-use swc_ecma_visit::{Fold, VisitMut, VisitMutWith};
+use swc_ecma_visit::Fold;
 
-struct TsHygiene {
-    top_level_mark: Mark,
-}
+use super::{InnerConfig, *};
+use crate::hygiene::Config;
 
-impl VisitMut for TsHygiene {
-    fn visit_mut_ident(&mut self, i: &mut Ident) {
-        if SyntaxContext::empty().apply_mark(self.top_level_mark) == i.span.ctxt {
-            println!("ts_hygiene: {} is top-level", i.sym);
-            return;
-        }
+// struct TsHygiene {
+//     top_level_mark: Mark,
+// }
 
-        let ctxt = format!("{:?}", i.span.ctxt).replace("#", "");
-        i.sym = format!("{}__{}", i.sym, ctxt).into();
-        i.span = i.span.with_ctxt(SyntaxContext::empty());
-    }
+// impl VisitMut for TsHygiene {
+//     fn visit_mut_ident(&mut self, i: &mut Ident) {
+//         if SyntaxContext::empty().apply_mark(self.top_level_mark) ==
+// i.span.ctxt {             println!("ts_hygiene: {} is top-level", i.sym);
+//             return;
+//         }
 
-    fn visit_mut_member_expr(&mut self, n: &mut MemberExpr) {
-        n.obj.visit_mut_with(self);
-        if n.computed {
-            n.prop.visit_mut_with(self);
-        }
-    }
+//         let ctxt = format!("{:?}", i.span.ctxt).replace("#", "");
+//         i.sym = format!("{}__{}", i.sym, ctxt).into();
+//         i.span = i.span.with_ctxt(SyntaxContext::empty());
+//     }
 
-    fn visit_mut_prop_name(&mut self, n: &mut PropName) {
-        match n {
-            PropName::Computed(n) => {
-                n.visit_mut_with(self);
-            }
-            _ => {}
-        }
-    }
+//     fn visit_mut_member_expr(&mut self, n: &mut MemberExpr) {
+//         n.obj.visit_mut_with(self);
+//         if n.computed {
+//             n.prop.visit_mut_with(self);
+//         }
+//     }
 
-    fn visit_mut_ts_qualified_name(&mut self, q: &mut TsQualifiedName) {
-        q.left.visit_mut_with(self);
-    }
-}
+//     fn visit_mut_prop_name(&mut self, n: &mut PropName) {
+//         match n {
+//             PropName::Computed(n) => {
+//                 n.visit_mut_with(self);
+//             }
+//             _ => {}
+//         }
+//     }
+
+//     fn visit_mut_ts_qualified_name(&mut self, q: &mut TsQualifiedName) {
+//         q.left.visit_mut_with(self);
+//     }
+// }
 
 fn run_test_with_config<F, V>(
     syntax: Syntax,
     tr: F,
     src: &str,
     to: &str,
-    config: crate::hygiene::Config,
+    config: impl FnOnce() -> crate::hygiene::Config,
 ) where
     F: FnOnce() -> V,
     V: Fold,
@@ -61,25 +62,53 @@ fn test_mark_for() {
         let mark3 = Mark::fresh(mark2);
         let mark4 = Mark::fresh(mark3);
 
-        let folder1 = Resolver::new(Scope::new(ScopeKind::Block, mark1, None), true);
+        let folder1 = Resolver::new(
+            Scope::new(ScopeKind::Block, mark1, None),
+            InnerConfig {
+                handle_types: true,
+                unresolved_mark: Mark::fresh(Mark::root()),
+                top_level_mark: mark1,
+            },
+        );
         let mut folder2 = Resolver::new(
             Scope::new(ScopeKind::Block, mark2, Some(&folder1.current)),
-            true,
+            InnerConfig {
+                handle_types: true,
+                unresolved_mark: Mark::fresh(Mark::root()),
+                top_level_mark: mark2,
+            },
         );
-        folder2.current.declared_symbols.insert("foo".into());
+        folder2
+            .current
+            .declared_symbols
+            .insert("foo".into(), DeclKind::Var);
 
         let mut folder3 = Resolver::new(
             Scope::new(ScopeKind::Block, mark3, Some(&folder2.current)),
-            true,
+            InnerConfig {
+                handle_types: true,
+                unresolved_mark: Mark::fresh(Mark::root()),
+                top_level_mark: mark3,
+            },
         );
-        folder3.current.declared_symbols.insert("bar".into());
+        folder3
+            .current
+            .declared_symbols
+            .insert("bar".into(), DeclKind::Var);
         assert_eq!(folder3.mark_for_ref(&"bar".into()), Some(mark3));
 
         let mut folder4 = Resolver::new(
             Scope::new(ScopeKind::Block, mark4, Some(&folder3.current)),
-            true,
+            InnerConfig {
+                handle_types: true,
+                unresolved_mark: Mark::fresh(Mark::root()),
+                top_level_mark: mark4,
+            },
         );
-        folder4.current.declared_symbols.insert("foo".into());
+        folder4
+            .current
+            .declared_symbols
+            .insert("foo".into(), DeclKind::Var);
 
         assert_eq!(folder4.mark_for_ref(&"foo".into()), Some(mark4));
         assert_eq!(folder4.mark_for_ref(&"bar".into()), Some(mark3));
@@ -92,7 +121,7 @@ fn test_mark_for() {
 fn issue_1279_1() {
     run_test_with_config(
         Default::default(),
-        || resolver(),
+        || resolver(Mark::new(), Mark::new(), false),
         "class Foo {
             static f = 1;
             static g = Foo.f;
@@ -103,8 +132,9 @@ fn issue_1279_1() {
             static g = Foo.f;
         };
         ",
-        Config {
+        || Config {
             keep_class_names: true,
+            ..Default::default()
         },
     );
 }
@@ -113,7 +143,7 @@ fn issue_1279_1() {
 fn issue_1279_2() {
     run_test_with_config(
         Default::default(),
-        || resolver(),
+        || resolver(Mark::new(), Mark::new(), false),
         "class Foo {
             static f = 1;
             static g = Foo.f;
@@ -136,8 +166,29 @@ fn issue_1279_2() {
             }
         };
         ",
-        Config {
+        || Config {
             keep_class_names: true,
+            ..Default::default()
+        },
+    );
+}
+
+#[test]
+fn issue_2516() {
+    run_test_with_config(
+        Default::default(),
+        || resolver(Mark::new(), Mark::new(), false),
+        "class A {
+            static A = class {}
+          }",
+        "
+        let A = class A {
+            static A = class {}
+          };
+        ",
+        || Config {
+            keep_class_names: true,
+            ..Default::default()
         },
     );
 }

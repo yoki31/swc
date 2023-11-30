@@ -1,40 +1,39 @@
 #![allow(deprecated)]
 
 use std::{fs::read_to_string, path::PathBuf};
-use swc_common::chain;
-use swc_ecma_parser::{EsConfig, Syntax, TsConfig};
-use swc_ecma_transforms_base::resolver::resolver;
+
+use swc_common::{chain, Mark};
+use swc_ecma_parser::Syntax;
+use swc_ecma_transforms_base::resolver;
 use swc_ecma_transforms_compat::{
     es2015::{arrow, block_scoping, classes, function_name, template_literal},
-    es2016::exponentation,
+    es2016::exponentiation,
     es2017::async_to_generator,
+    es2020::optional_chaining,
     es2022::class_properties,
     es3::reserved_words,
 };
-use swc_ecma_transforms_testing::{compare_stdout, test, test_exec, Tester};
+use swc_ecma_transforms_testing::{compare_stdout, test, test_exec, test_fixture, Tester};
 use swc_ecma_visit::Fold;
 
-fn ts() -> Syntax {
-    Syntax::Typescript(TsConfig {
-        ..Default::default()
-    })
-}
-
 fn syntax() -> Syntax {
-    Syntax::Es(EsConfig {
-        class_private_props: true,
-        class_props: true,
-        ..Default::default()
-    })
+    Syntax::Es(Default::default())
 }
 
 fn tr(t: &Tester) -> impl Fold {
+    let unresolved_mark = Mark::new();
+    let top_level_mark = Mark::new();
+
     chain!(
-        resolver(),
+        resolver(unresolved_mark, top_level_mark, false),
         function_name(),
-        class_properties(class_properties::Config { loose: false }),
-        classes(Some(t.comments.clone())),
-        block_scoping(),
+        class_properties(
+            Some(t.comments.clone()),
+            Default::default(),
+            unresolved_mark
+        ),
+        classes(Some(t.comments.clone()), Default::default()),
+        block_scoping(unresolved_mark),
         reserved_words(false),
     )
 }
@@ -48,16 +47,6 @@ var Foo = class {
   static num = 0;
 }
 
-"#,
-    r#"
-var Foo = function() {
-    var Foo = function Foo() {
-        'use strict';
-        _classCallCheck(this, Foo);
-    };
-    _defineProperty(Foo, 'num', 0);
-    return Foo;
-}();
 "#
 );
 
@@ -104,22 +93,6 @@ function test(x) {
 
 test('foo');
 
-"#,
-    r#"
-function test(x) {
-    var _x = x;
-    var F = function F() {
-        'use strict';
-        _classCallCheck(this, F);
-        _defineProperty(this, _x, 1);
-    };
-    x = 'deadbeef';
-    expect(new F().foo).toBe(1);
-    x = 'wrong';
-    expect(new F().foo).toBe(1);
-}
-test('foo');
-
 "#
 );
 
@@ -136,27 +109,30 @@ class Foo extends Bar {
   }
 }
 
-"#,
+"#
+);
+
+test!(
+    syntax(),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, false),
+            function_name(),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark
+            ),
+        )
+    },
+    private_class_method,
     r#"
-var Foo =
-/*#__PURE__*/
-function (Bar) {
-  'use strict';
-
-  _inherits(Foo, Bar);
-  var _super = _createSuper(Foo);
-  function Foo() {
-    _classCallCheck(this, Foo);
-    var _this;
-
-    _this = _super.call(this);
-    _defineProperty(_assertThisInitialized(_this), "bar", "foo");
-    return _this;
-  }
-
-  return Foo;
-}(Bar);
-
+class Foo {
+    #foo () {}
+}
 "#
 );
 
@@ -174,36 +150,6 @@ class Child extends Parent {
     this.name = {};
   }
 }
-
-"#,
-    r#"
-var Child =
-/*#__PURE__*/
-function (Parent) {
-  'use strict';
-
-  _inherits(Child, Parent);
-  var _super = _createSuper(Child);
-  function Child() {
-    _classCallCheck(this, Child);
-    var _this;
-
-    _this = _super.call(this);
-
-    _scopedFunctionWithThis.set(_assertThisInitialized(_this), {
-      writable: true,
-      value: () => {
-        _this.name = {};
-      }
-    });
-
-    return _this;
-  }
-
-  return Child;
-}(Parent);
-
-var _scopedFunctionWithThis = new WeakMap();
 
 "#
 );
@@ -248,34 +194,6 @@ class Foo extends Bar {
     }
   }
 }
-
-"#,
-    r#"
-var Foo =
-/*#__PURE__*/
-function (Bar) {
-  'use strict';
-
-  _inherits(Foo, Bar);
-  var _super = _createSuper(Foo);
-  function Foo() {
-    _classCallCheck(this, Foo);
-    var _this;
-
-
-    if (condition) {
-      _this = _super.call(this);
-      _defineProperty(_assertThisInitialized(_this), "bar", "foo");
-    } else {
-      _this = _super.call(this);
-      _defineProperty(_assertThisInitialized(_this), "bar", "foo");
-    }
-
-    return _possibleConstructorReturn(_this);
-  }
-
-  return Foo;
-}(Bar);
 
 "#
 );
@@ -384,31 +302,6 @@ function withContext(ComposedComponent) {
     };
 }
 
-"#,
-    r#"
-function withContext(ComposedComponent) {
-  return (function() {
-    var WithContext = function(Component) {
-      'use strict';
-      _inherits(WithContext, Component);
-      var _super = _createSuper(WithContext);
-      function WithContext() {
-        _classCallCheck(this, WithContext);
-        return _super.apply(this, arguments);
-      }
-      return WithContext;
-    }(Component);
-    _defineProperty(WithContext, 'propTypes', {
-      context: PropTypes.shape({
-        addCss: PropTypes.func,
-        setTitle: PropTypes.func,
-        setMeta: PropTypes.func
-      })
-    });
-    return WithContext;
-  })();
-}
-
 "#
 );
 
@@ -423,16 +316,6 @@ class A {
 
   constructor(force) {}
 }
-
-"#,
-    r#"
-var A = function A(force1) {
-  'use strict';
-
-  _classCallCheck(this, A);
-  _defineProperty(this, "force", force);
-  _defineProperty(this, "foo", _get(_getPrototypeOf(A.prototype), "method", this).call(this));
-};
 
 "#
 );
@@ -452,30 +335,6 @@ class Foo {
     other.obj.foo();
   }
 }
-
-"#,
-    r#"
-var Foo =
-/*#__PURE__*/
-function () {
-  'use strict';
-
-  function Foo() {
-    _classCallCheck(this, Foo);
-    _defineProperty(this, "foo", function () {
-      return this;
-    });
-  }
-
-  _createClass(Foo, [{
-    key: "test",
-    value: function test(other) {
-      this.foo();
-      other.obj.foo();
-    }
-  }]);
-  return Foo;
-}();
 
 "#
 );
@@ -516,26 +375,6 @@ expect(() => {
   new C();
 }).toThrow();
 
-"#,
-    r#"
-var C = function C() {
-  'use strict';
-
-  _classCallCheck(this, C);
-  _defineProperty(this, "y", _classPrivateFieldGet(this, _x));
-
-  _x.set(this, {
-    writable: true,
-    value: void 0
-  });
-};
-
-var _x = new WeakMap();
-
-expect(() => {
-  new C();
-}).toThrow();
-
 "#
 );
 
@@ -567,44 +406,6 @@ class Outer extends Hello {
 
 expect(new Outer().hello).toBe('hello');
 
-"#,
-    r#"
-
-
-var Hello = function Hello() {
-  'use strict';
-  _classCallCheck(this, Hello);
-  return {
-    toString() {
-      return 'hello';
-    }
-
-  };
-};
-
-var Outer = function (Hello) {
-  'use strict';
-  _inherits(Outer, Hello);
-  var _super = _createSuper(Outer);
-  function Outer() {
-    _classCallCheck(this, Outer);
-    var _this;
-
-    var _ref = _this = _super.call(this);
-
-    var Inner = function Inner() {
-      _classCallCheck(this, Inner);
-      _defineProperty(this, _ref, "hello");
-    };
-
-    return _possibleConstructorReturn(_this, new Inner());
-  }
-
-  return Outer;
-}(Hello);
-
-expect(new Outer().hello).toBe('hello');
-
 "#
 );
 
@@ -616,15 +417,6 @@ test!(
 class Foo {
   bar;
 }
-
-"#,
-    r#"
-var Foo = function Foo() {
-  'use strict';
-
-  _classCallCheck(this, Foo);
-  _defineProperty(this, "bar", void 0);
-};
 
 "#
 );
@@ -645,44 +437,6 @@ class Foo extends Bar {
     }
   }
 }
-
-"#,
-    r#"
-var Foo =
-/*#__PURE__*/
-function (Bar) {
-  'use strict';
-
-  _inherits(Foo, Bar);
-  var _super = _createSuper(Foo);
-  function Foo() {
-    _classCallCheck(this, Foo);
-    var _this;
-
-
-    if (condition) {
-      _this = _super.call(this);
-
-      _bar.set(_assertThisInitialized(_this), {
-        writable: true,
-        value: "foo"
-      });
-    } else {
-      _this = _super.call(this);
-
-      _bar.set(_assertThisInitialized(_this), {
-        writable: true,
-        value: "foo"
-      });
-    }
-
-    return _possibleConstructorReturn(_this);
-  }
-
-  return Foo;
-}(Bar);
-
-var _bar = new WeakMap();
 
 "#
 );
@@ -727,22 +481,6 @@ export default class {
   static test = true
 }
 
-"#,
-    r#"
-  call(function() {
-      var _class = function _class() {
-          "use strict";
-          _classCallCheck(this, _class);
-      };
-      _defineProperty(_class, "test", true);
-      return _class;
-  }());
-  var _class1 = function _class1() {
-      "use strict";
-      _classCallCheck(this, _class1);
-  };
-  _defineProperty(_class1, "test", true);
-  export { _class1 as default };
 "#
 );
 
@@ -755,16 +493,6 @@ class Foo {
   static bar = "foo";
 }
 
-"#,
-    r#"
-var Foo = function Foo() {
-  'use strict';
-
-  _classCallCheck(this, Foo);
-};
-
-_defineProperty(Foo, "bar", "foo");
-
 "#
 );
 
@@ -776,21 +504,6 @@ test!(
 class Foo {
   #bar;
 }
-
-"#,
-    r#"
-var Foo = function Foo() {
-  'use strict';
-
-  _classCallCheck(this, Foo);
-
-  _bar.set(this, {
-    writable: true,
-    value: void 0
-  });
-};
-
-var _bar = new WeakMap();
 
 "#
 );
@@ -828,30 +541,6 @@ class Foo {
   }
 }
 
-"#,
-    r#"
-var Foo =
-/*#__PURE__*/
-function () {
-  'use strict';
-
-  function Foo() {
-    _classCallCheck(this, Foo);
-    _defineProperty(this, "foo", 0);
-  }
-
-  _createClass(Foo, [{
-    key: "test",
-    value: function test(other) {
-      this.foo++;
-      ++this.foo;
-      other.obj.foo++;
-      ++other.obj.foo;
-    }
-  }]);
-  return Foo;
-}();
-
 "#
 );
 
@@ -870,48 +559,7 @@ class B extends A {
   foo = super.foo();
 }
 
-"#,
-    "
-var A =
-/*#__PURE__*/
-function () {
-  'use strict';
-
-  function A() {
-    _classCallCheck(this, A);
-  }
-
-  _createClass(A, [{
-    key: 'foo',
-    value: function foo() {
-      return 'bar';
-    }
-  }]);
-  return A;
-}();
-
-var B =
-/*#__PURE__*/
-function (A) {
-  'use strict';
-
-  _inherits(B, A);
-  var _super = _createSuper(B);
-  function B() {
-    _classCallCheck(this, B);
-    var _thisSuper, _this;
-
-    _this = _super.apply(this, arguments);
-    _defineProperty(_assertThisInitialized(_this), 'foo', _get((_thisSuper = \
-     _assertThisInitialized(_this), _getPrototypeOf(B.prototype)), 'foo', \
-     _thisSuper).call(_thisSuper));
-    return _this;
-  }
-
-  return B;
-}(A);
-
-"
+"#
 );
 
 test!(
@@ -928,25 +576,6 @@ class Foo {
     var foo = "foo";
   }
 }
-
-"#,
-    r#"
-var foo = "bar";
-
-var Foo = function Foo() {
-  'use strict';
-
-  _classCallCheck(this, Foo);
-
-  _bar.set(this, {
-    writable: true,
-    value: foo
-  });
-  var foo1 = "foo";
-
-};
-
-var _bar = new WeakMap();
 
 "#
 );
@@ -967,21 +596,6 @@ class Foo {
     var baz = "baz";
   }
 }
-
-"#,
-    r#"
-var foo = "bar";
-
-var Foo = function Foo() {
-  'use strict';
-
-  _classCallCheck(this, Foo);
-  _defineProperty(this, "bar", foo);
-  var foo1 = "foo";
-  var baz = "baz";
-};
-
-_defineProperty(Foo, "bar", baz);
 
 "#
 );
@@ -1017,72 +631,6 @@ class MyClass {
   [`template${expression}`] = "template-with-expression";
 }
 
-"#,
-    r#"
-var foo = 'foo';
-var bar = ()=>{
-};
-var four = 4;
-var _ref = one(),
-    _ref1 = 2 * 4 + 7,
-    _ref2 = 2 * four + 7,
-    _ref3 = 2 * four + seven,
-    _ref4 = null,
-    _undefined = undefined,
-    _ref5 = void 0,
-    tmp = 'whatever',
-    tmp1 = 'whatever',
-    tmp2 = computed(),
-    tmp3 = computed(),
-    tmp4 = 'test' + one,
-    tmp5 = 10,
-    _ref6 = /regex/,
-    _foo = foo,
-    _bar = bar,
-    _baz = baz,
-    _ref7 = `template`, _ref8 = `template${expression}`;
-
-
-var MyClass = function() {
-    'use strict';
-    function MyClass() {
-        _classCallCheck(this, MyClass);
-        _defineProperty(this, _ref4, 'null');
-        _defineProperty(this, _undefined, 'undefined');
-        _defineProperty(this, _ref5, 'void 0');
-        _defineProperty(this, _ref6, 'regex');
-        _defineProperty(this, _foo, 'foo');
-        _defineProperty(this, _bar, 'bar');
-        _defineProperty(this, _baz, 'baz');
-        _defineProperty(this, _ref7, 'template');
-        _defineProperty(this, _ref8, 'template-with-expression');
-    }
-    _createClass(MyClass, [{
-             key: tmp, get: function () {
-                }
-        }, {
-             key: tmp1, set: function (value) {
-                }
-        }, {
-             key: tmp2, get: function () {
-                }
-        }, {
-             key: tmp3, set: function (value) {
-                }
-        }, {
-             key: tmp4, value: function () {
-                }
-        }], [{
-             key: tmp5, value: function () {
-                }
-        }]);
-    return MyClass;
-}();
-_defineProperty(MyClass, _ref, 'test');
-_defineProperty(MyClass, _ref1, '247');
-_defineProperty(MyClass, _ref2, '247');
-_defineProperty(MyClass, _ref3, '247');
-
 "#
 );
 
@@ -1103,32 +651,6 @@ class Foo {
     other.obj.foo = 2;
   }
 }
-
-"#,
-    r#"
-var Foo =
-/*#__PURE__*/
-function () {
-  'use strict';
-
-  function Foo() {
-    _classCallCheck(this, Foo);
-    _defineProperty(this, "foo", 0);
-  }
-
-  _createClass(Foo, [{
-    key: "test",
-    value: function test(other) {
-      this.foo++;
-      this.foo += 1;
-      this.foo = 2;
-      other.obj.foo++;
-      other.obj.foo += 1;
-      other.obj.foo = 2;
-    }
-  }]);
-  return Foo;
-}();
 
 "#
 );
@@ -1385,34 +907,6 @@ class Foo extends Bar {
   }
 }
 
-"#,
-    r#"
-var Foo =
-/*#__PURE__*/
-function (Bar) {
-  'use strict';
-
-  _inherits(Foo, Bar);
-  var _super = _createSuper(Foo);
-  function Foo() {
-    _classCallCheck(this, Foo);
-    var _this;
-
-    _this = _super.call(this);
-
-    _bar.set(_assertThisInitialized(_this), {
-      writable: true,
-      value: "foo"
-    });
-
-    return _this;
-  }
-
-  return Foo;
-}(Bar);
-
-var _bar = new WeakMap();
-
 "#
 );
 
@@ -1429,32 +923,6 @@ class Outer {
     }
   }
 }
-
-"#,
-    r#"
-var Outer = function Outer() {
- 'use strict';
-  _classCallCheck(this, Outer);
-  var _this = this;
-
-  _outer.set(this, {
-    writable: true,
-    value: void 0
-  });
-
-  var Test = function (_super) {
-    _inherits(Test, _super);
-    var _super1 = _createSuper(Test);
-    function Test() {
-      _classCallCheck(this, Test);
-      return _super1.apply(this, arguments);
-    }
-
-    return Test;
-  }(_classPrivateFieldGet(_this, _outer));
-};
-
-var _outer = new WeakMap();
 
 "#
 );
@@ -1475,38 +943,6 @@ class Foo {
   }
 }
 
-"#,
-    r#"
-var Foo =
-/*#__PURE__*/
-function () {
-  'use strict';
-
-  function Foo() {
-    _classCallCheck(this, Foo);
-
-    _foo.set(this, {
-      writable: true,
-      value: 0
-    });
-  }
-
-  _createClass(Foo, [{
-    key: "test",
-    value: function test(other) {
-      var old, _obj, old1, _obj1;
-
-      _classPrivateFieldSet(this, _foo, (old = +_classPrivateFieldGet(this, _foo)) + 1), old;
-      _classPrivateFieldSet(this, _foo, +_classPrivateFieldGet(this, _foo) + 1);
-      _classPrivateFieldSet(_obj = other.obj, _foo, (old1 = +_classPrivateFieldGet(_obj, _foo)) + 1), old1;
-      _classPrivateFieldSet(_obj1 = other.obj, _foo, +_classPrivateFieldGet(_obj1, _foo) + 1);
-    }
-  }]);
-  return Foo;
-}();
-
-var _foo = new WeakMap();
-
 "#
 );
 
@@ -1522,25 +958,6 @@ class Foo extends Bar {
     foo(super());
   }
 }
-
-"#,
-    r#"
-var Foo = function (Bar) {
-  'use strict';
-
-  _inherits(Foo, Bar);
-  var _super = _createSuper(Foo);
-  function Foo() {
-    _classCallCheck(this, Foo);
-    var _this;
-
-    var _temp;
-    foo((_temp = _this = _super.call(this), _defineProperty(_assertThisInitialized(_this), "bar", "foo"), _temp));
-    return _possibleConstructorReturn(_this);
-  }
-
-  return Foo;
-}(Bar);
 
 "#
 );
@@ -1674,18 +1091,6 @@ class Foo {
   }
 }
 
-"#,
-    r#"
-var foo = "bar";
-
-var Foo = function Foo(foo1) {
-  'use strict';
-
-  _classCallCheck(this, Foo);
-  _defineProperty(this, "bar", this);
-  _defineProperty(this, "baz", foo);
-};
-
 "#
 );
 
@@ -1701,47 +1106,6 @@ class Foo {
 class Bar extends Foo {
   #prop = "bar";
 }
-
-"#,
-    r#"
-var Foo = function Foo() {
-  'use strict';
-
-  _classCallCheck(this, Foo);
-
-  _prop.set(this, {
-    writable: true,
-    value: "foo"
-  });
-};
-
-var _prop = new WeakMap();
-
-var Bar =
-/*#__PURE__*/
-function (Foo) {
-  'use strict';
-
-  _inherits(Bar, Foo);
-  var _super = _createSuper(Bar);
-  function Bar() {
-    _classCallCheck(this, Bar);
-    var _this;
-
-    _this = _super.apply(this, arguments);
-
-    _prop1.set(_assertThisInitialized(_this), {
-      writable: true,
-      value: "bar"
-    });
-
-    return _this;
-  }
-
-  return Bar;
-}(Foo);
-
-var _prop1 = new WeakMap();
 
 "#
 );
@@ -1761,50 +1125,6 @@ class B extends A {
   #foo = super.foo();
 }
 
-"#,
-    r#"
-var A = function () {
-  'use strict';
-
-  function A() {
-    _classCallCheck(this, A);
-  }
-
-  _createClass(A, [{
-    key: "foo",
-    value: function foo() {
-      return "bar";
-    }
-  }]);
-  return A;
-}();
-
-var B =
-/*#__PURE__*/
-function (A) {
-  'use strict';
-
-  _inherits(B, A);
-  var _super = _createSuper(B);
-  function B() {
-    _classCallCheck(this, B);
-    var _thisSuper, _this;
-
-    _this = _super.apply(this, arguments);
-
-    _foo.set(_assertThisInitialized(_this), {
-      writable: true,
-      value: _get((_thisSuper = _assertThisInitialized(_this), _getPrototypeOf(B.prototype)), "foo", _thisSuper).call(_thisSuper)
-    });
-
-    return _this;
-  }
-
-  return B;
-}(A);
-
-var _foo = new WeakMap();
-
 "#
 );
 
@@ -1820,38 +1140,6 @@ class Foo {
   three = this.#private;
   #four = this.#private;
 }
-
-"#,
-    r#"
-var Foo = function Foo() {
-  'use strict';
-
-  _classCallCheck(this, Foo);
-  _defineProperty(this, "one", _classPrivateFieldGet(this, _private));
-
-  _two.set(this, {
-    writable: true,
-    value: _classPrivateFieldGet(this, _private)
-  });
-
-  _private.set(this, {
-    writable: true,
-    value: 0
-  });
-
-  _defineProperty(this, "three", _classPrivateFieldGet(this, _private));
-
-  _four.set(this, {
-    writable: true,
-    value: _classPrivateFieldGet(this, _private)
-  });
-};
-
-var _two = new WeakMap();
-
-var _private = new WeakMap();
-
-var _four = new WeakMap();
 
 "#
 );
@@ -1878,49 +1166,6 @@ class Outer extends Hello {
     return new Inner();
   }
 }
-
-expect(new Outer().hello).toBe('hello');
-
-"#,
-    r#"
-
-
-var Hello = function () {
-  'use strict';
-  function Hello() {
-    _classCallCheck(this, Hello);
-  }
-
-  _createClass(Hello, [{
-    key: "toString",
-    value: function toString() {
-      return 'hello';
-    }
-  }]);
-  return Hello;
-}();
-
-var Outer = function (Hello) {
-  'use strict';
-  _inherits(Outer, Hello);
-  var _super = _createSuper(Outer);
-  function Outer() {
-    _classCallCheck(this, Outer);
-    var _thisSuper;
-    var _this = _super.call(this);
-
-    var _ref = _get((_thisSuper = _assertThisInitialized(_this), _getPrototypeOf(Outer.prototype)), "toString", _thisSuper).call(_thisSuper);
-
-    var Inner = function Inner() {
-      _classCallCheck(this, Inner);
-      _defineProperty(this, _ref, 'hello');
-    };
-
-    return _possibleConstructorReturn(_this, new Inner());
-  }
-
-  return Outer;
-}(Hello);
 
 expect(new Outer().hello).toBe('hello');
 
@@ -1997,16 +1242,6 @@ class Foo {
   1 = "bar";
 }
 
-"#,
-    r#"
-var Foo = function Foo() {
-  'use strict';
-
-  _classCallCheck(this, Foo);
-  _defineProperty(this, 0, "foo");
-  _defineProperty(this, 1, "bar");
-};
-
 "#
 );
 
@@ -2025,38 +1260,6 @@ class Foo {
     other.obj.#foo = 2;
   }
 }
-
-"#,
-    r#"
-var Foo =
-/*#__PURE__*/
-function () {
-  'use strict';
-
-  function Foo() {
-    _classCallCheck(this, Foo);
-
-    _foo.set(this, {
-      writable: true,
-      value: 0
-    });
-  }
-
-  _createClass(Foo, [{
-    key: "test",
-    value: function test(other) {
-      var _obj;
-
-      _classPrivateFieldSet(this, _foo, _classPrivateFieldGet(this, _foo) + 1);
-      _classPrivateFieldSet(this, _foo, 2);
-      _classPrivateFieldSet(_obj = other.obj, _foo, _classPrivateFieldGet(_obj, _foo) + 1);
-      _classPrivateFieldSet(other.obj, _foo, 2);
-    }
-  }]);
-  return Foo;
-}();
-
-var _foo = new WeakMap();
 
 "#
 );
@@ -2100,22 +1303,6 @@ export default class MyClass2 {
   static property = value;
 }
 
-"#,
-    r#"
-export var MyClass = function MyClass() {
-  'use strict';
-  _classCallCheck(this, MyClass);
-};
-_defineProperty(MyClass, "property", value);
-
-var MyClass2 = function MyClass2() {
-  'use strict';
-  _classCallCheck(this, MyClass2);
-};
-
-_defineProperty(MyClass2, "property", value);
-export { MyClass2 as default };
-
 "#
 );
 
@@ -2129,28 +1316,6 @@ class Foo {
   #y = this.#x;
 }
 
-"#,
-    r#"
-var Foo = function Foo() {
-  'use strict';
-
-  _classCallCheck(this, Foo);
-
-  _x.set(this, {
-    writable: true,
-    value: 0
-  });
-
-  _y.set(this, {
-    writable: true,
-    value: _classPrivateFieldGet(this, _x)
-  });
-};
-
-var _x = new WeakMap();
-
-var _y = new WeakMap();
-
 "#
 );
 
@@ -2162,27 +1327,6 @@ test!(
 class Foo extends Bar {
   bar = "foo";
 }
-
-"#,
-    r#"
-var Foo =
-/*#__PURE__*/
-function (Bar) {
-  'use strict';
-
-  _inherits(Foo, Bar);
-  var _super = _createSuper(Foo);
-  function Foo() {
-    _classCallCheck(this, Foo);
-    var _this;
-
-    _this = _super.apply(this, arguments);
-    _defineProperty(_assertThisInitialized(_this), "bar", "foo");
-    return _this;
-  }
-
-  return Foo;
-}(Bar);
 
 "#
 );
@@ -2210,15 +1354,6 @@ test!(
 class Foo {
   bar = "foo";
 }
-
-"#,
-    r#"
-var Foo = function Foo() {
-  'use strict';
-
-  _classCallCheck(this, Foo);
-  _defineProperty(this, "bar", "foo");
-};
 
 "#
 );
@@ -2254,27 +1389,6 @@ export default param =>
     }
   }
 
-"#,
-    r#"
-export default ((param)=>{
-  var App = function() {
-    'use strict';
-    function App() {
-      _classCallCheck(this, App);
-    }
-    _createClass(App, [{
-      key: 'getParam',
-      value: function getParam() {
-        return param;
-      }
-    }]);
-    return App;
-  }();
-  _defineProperty(App, 'props', {
-    prop1: 'prop1', prop2: 'prop2'
-  });
-  return App;
-});
 "#
 );
 
@@ -2286,16 +1400,6 @@ test!(
 class Foo {
   static bar;
 }
-
-"#,
-    r#"
-var Foo = function Foo() {
-  'use strict';
-
-  _classCallCheck(this, Foo);
-};
-
-_defineProperty(Foo, "bar", void 0);
 
 "#
 );
@@ -2346,36 +1450,6 @@ class Foo {
   }
 }
 
-"#,
-    r#"
-var Foo = function () {
-  'use strict';
-
-  function Foo() {
-    _classCallCheck(this, Foo);
-
-    _foo.set(this, {
-      writable: true,
-      value: function () {
-        return this;
-      }
-    });
-  }
-
-  _createClass(Foo, [{
-    key: "test",
-    value: function test(other) {
-      var _obj;
-
-      _classPrivateFieldGet(this, _foo).call(this);
-      _classPrivateFieldGet(_obj = other.obj, _foo).call(_obj);
-    }
-  }]);
-  return Foo;
-}();
-
-var _foo = new WeakMap();
-
 "#
 );
 
@@ -2424,30 +1498,6 @@ class Foo {
   constructor(foo) {
   }
 }
-
-"#,
-    r#"
-var foo = "bar";
-
-var Foo = function Foo(foo1) {
-  'use strict';
-
-  _classCallCheck(this, Foo);
-
-  _bar.set(this, {
-    writable: true,
-    value: this
-  });
-
-  _baz.set(this, {
-    writable: true,
-    value: foo
-  });
-};
-
-var _bar = new WeakMap();
-
-var _baz = new WeakMap();
 
 "#
 );
@@ -2610,33 +1660,6 @@ class Foo {
 }
 
 
-"#,
-    r#"
-var Foo =
-/*#__PURE__*/
-function () {
-  'use strict';
-
-  function Foo() {
-    _classCallCheck(this, Foo);
-  }
-
-  _createClass(Foo, [{
-    key: "test",
-    value: function test(x) {
-      return _classStaticPrivateFieldSpecGet(Foo, Foo, _foo).call(Foo, x);
-    }
-  }]);
-  return Foo;
-}();
-
-var _foo = {
-  writable: true,
-  value: function (x) {
-    return x;
-  }
-};
-
 "#
 );
 
@@ -2652,32 +1675,6 @@ class Foo extends Bar {
     foo(super());
   }
 }
-
-"#,
-    r#"
-var Foo =
-/*#__PURE__*/
-function (Bar) {
-  'use strict';
-
-  _inherits(Foo, Bar);
-  var _super = _createSuper(Foo);
-  function Foo() {
-    _classCallCheck(this, Foo);
-    var _this;
-
-    var _temp;
-    foo((_temp = _this = _super.call(this), _bar.set(_assertThisInitialized(_this), {
-      writable: true,
-      value: "foo"
-    }), _temp));
-    return _possibleConstructorReturn(_this);
-  }
-
-  return Foo;
-}(Bar);
-
-var _bar = new WeakMap();
 
 "#
 );
@@ -2742,34 +1739,6 @@ class Foo {
         ++this.#x;
     }
 }
-",
-    "
-var Foo = function () {
-  'use strict';
-  function Foo() {
-    _classCallCheck(this, Foo);
-
-    _x.set(this, {
-      writable: true,
-      value: 0
-    });
-  }
-
-  _createClass(Foo, [{
-    key: 'test',
-    value: function test() {
-      var old;
-
-      _classPrivateFieldSet(this, _x, (old = +_classPrivateFieldGet(this, _x)) + 1), old;
-
-      _classPrivateFieldSet(this, _x, +_classPrivateFieldGet(this, _x) + 1);
-    }
-  }]);
-
-  return Foo;
-}();
-
-var _x = new WeakMap();
 "
 );
 
@@ -2786,42 +1755,24 @@ class Foo {
         ++Foo.#x;
     }
 }
-",
-    "
-var Foo = function () {
-  'use strict';
-  function Foo() {
-    _classCallCheck(this, Foo);
-  }
-
-  _createClass(Foo, [{
-    key: 'test',
-    value: function test() {
-      var old;
-
-      _classStaticPrivateFieldSpecSet(Foo, Foo, _x, (old = +_classStaticPrivateFieldSpecGet(Foo, \
-     Foo, _x)) + 1), old;
-
-      _classStaticPrivateFieldSpecSet(Foo, Foo, _x, +_classStaticPrivateFieldSpecGet(Foo, Foo, _x) \
-     + 1);
-    }
-  }]);
-
-  return Foo;
-}();
-
-var _x = {
-  writable: true,
-  value: 0
-};"
+"
 );
 
 test!(
     syntax(),
-    |_| chain!(
-        resolver(),
-        class_properties(class_properties::Config { loose: false })
-    ),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, false),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark
+            )
+        )
+    },
     issue_308,
     "function bar(props) {}
 class Foo {
@@ -2832,28 +1783,25 @@ class Foo {
   onBar = () => {
     bar();
   };
-}",
-    "function bar(props) {
-}
-class Foo{
-    constructor(){
-        super();
-        _defineProperty(this, 'onBar', ()=>{
-            bar();
-        });
-        bar();
-    }
-}
-"
+}"
 );
 
 test!(
     syntax(),
-    |t| chain!(
-        resolver(),
-        class_properties(class_properties::Config { loose: false }),
-        classes(Some(t.comments.clone()))
-    ),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, false),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark
+            ),
+            classes(Some(t.comments.clone()), Default::default())
+        )
+    },
     issue_342,
     "class Foo {
   constructor(bar) {
@@ -2863,26 +1811,25 @@ test!(
   qux = {
     frob: (bar) => {},
   };
-}",
-    "
-let Foo = function Foo(bar) {
-    'use strict';
-    _classCallCheck(this, Foo);
-    _defineProperty(this, 'qux', {
-        frob: (bar)=>{
-        }
-    });
-    this._bar = bar;
-};"
+}"
 );
 
 test!(
     syntax(),
-    |_| chain!(
-        resolver(),
-        class_properties(class_properties::Config { loose: false }),
-        block_scoping()
-    ),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, false),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark
+            ),
+            block_scoping(unresolved_mark)
+        )
+    },
     issue_443,
     "
 const MODE = 1;
@@ -2894,23 +1841,26 @@ class foo {
     this.mode = MODE;
   }
 }
-",
-    "var MODE = 1;
-class foo{
-    constructor(){
-        this.mode = MODE;
-    }
-}
-_defineProperty(foo, 'MODE', MODE);"
+"
 );
 
 // public_regression_t7364
 test!(
     syntax(),
-    |_| chain!(
-        class_properties(class_properties::Config { loose: false }),
-        async_to_generator()
-    ),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark
+            ),
+            async_to_generator(Default::default(), Some(t.comments.clone()), Mark::new())
+        )
+    },
     public_regression_t7364,
     r#"
 class MyClass {
@@ -2931,42 +1881,26 @@ export default class MyClass3 {
   }
 }
 
-"#,
-    r#"
-    class MyClass {
-      constructor(){
-          _defineProperty(this, "myAsyncMethod", _asyncToGenerator((function*() {
-              console.log(this);
-          }).bind(this)).bind(this));
-      }
-    }
-
-    (class MyClass2 {
-        constructor(){
-            _defineProperty(this, "myAsyncMethod", _asyncToGenerator((function*() {
-                console.log(this);
-            }).bind(this)).bind(this));
-        }
-    })
-
-    class MyClass3 {
-        constructor(){
-            _defineProperty(this, "myAsyncMethod", _asyncToGenerator((function*() {
-                console.log(this);
-            }).bind(this)).bind(this));
-        }
-    }
-    export { MyClass3 as default };
 "#
 );
 
 // private_regression_t6719
 test!(
     syntax(),
-    |_| chain!(
-        class_properties(class_properties::Config { loose: false }),
-        block_scoping()
-    ),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark
+            ),
+            block_scoping(Mark::new())
+        )
+    },
     private_regression_t6719,
     r#"
 function withContext(ComposedComponent) {
@@ -2984,32 +1918,11 @@ function withContext(ComposedComponent) {
     };
 }
 
-"#,
-    r#"
-function withContext(ComposedComponent) {
-    return (function() {
-        class WithContext extends Component{
-        }
-        var _propTypes = {
-            writable: true,
-            value: {
-                context: PropTypes.shape({
-                    addCss: PropTypes.func,
-                    setTitle: PropTypes.func,
-                    setMeta: PropTypes.func
-                })
-            }
-        };
-        return WithContext;
-    })();
-}
-
-
 "#
 );
 
 // public_foobar
-//test!(syntax(),|_| tr("{
+//test!(syntax(),|t| tr("{
 //  "plugins": [ "proposal-class-properties"],
 //  "presets": ["env"]
 //}
@@ -3024,7 +1937,7 @@ function withContext(ComposedComponent) {
 //    }
 //}
 //
-//"#, r#"
+//"# r#"
 //var Child =
 // /*#__PURE__*/
 //function (_Parent) {
@@ -3035,11 +1948,11 @@ function withContext(ComposedComponent) {
 //  function Child() {
 //    var _this;
 //
-//    _classCallCheck(this, Child);
-//    _this = _possibleConstructorReturn(this,
-// _getPrototypeOf(Child).call(this));
-//    _defineProperty(_assertThisInitialized(_this), "scopedFunctionWithThis",
-// function () {      _this.name = {};
+//    _class_call_check(this, Child);
+//    _this = _possible_constructor_return(this,
+// _get_prototype_of(Child).call(this));
+//    _define_property(_assert_this_initialized(_this),
+// "scopedFunctionWithThis" function () {      _this.name = {};
 //    });
 //    return _this;
 //  }
@@ -3052,10 +1965,20 @@ function withContext(ComposedComponent) {
 // private_reevaluated
 test!(
     syntax(),
-    |_| chain!(
-        class_properties(class_properties::Config { loose: false }),
-        block_scoping()
-    ),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark
+            ),
+            block_scoping(Mark::new())
+        )
+    },
     private_reevaluated,
     r#"
 function classFactory() {
@@ -3081,48 +2004,26 @@ function classFactory() {
   };
 }
 
-"#,
-    r#"
-function classFactory() {
-    return (function() {
-        class Foo{
-             instance() {
-                return _classPrivateFieldGet(this, _foo);
-            }
-             static() {
-                return _classStaticPrivateFieldSpecGet(Foo, Foo, _bar);
-            }
-            static  instance(inst) {
-                return _classPrivateFieldGet(inst, _foo);
-            }
-            static  static() {
-                return _classStaticPrivateFieldSpecGet(Foo, Foo, _bar);
-            }
-            constructor(){
-                _foo.set(this, {
-                    writable: true,
-                    value: 'foo'
-                });
-            }
-        }
-        var _foo = new WeakMap();
-        var _bar = {
-            writable: true,
-            value: 'bar'
-        };
-        return Foo;
-    })();
-}
 "#
 );
 
 // private_static
 test!(
     syntax(),
-    |_| chain!(
-        class_properties(class_properties::Config { loose: false }),
-        block_scoping()
-    ),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark
+            ),
+            block_scoping(Mark::new())
+        )
+    },
     private_static,
     r#"
 class Foo {
@@ -3141,38 +2042,27 @@ expect("bar" in Foo).toBe(false)
 expect(Foo.test()).toBe("foo")
 expect(Foo.test()).toBe("foo")
 
-"#,
-    r#"
-class Foo {
-  static test() {
-    return _classStaticPrivateFieldSpecGet(Foo, Foo, _bar);
-  }
-
-  test() {
-    return _classStaticPrivateFieldSpecGet(Foo, Foo, _bar);
-  }
-
-}
-
-var _bar = {
-  writable: true,
-  value: "foo"
-};
-expect("bar" in Foo).toBe(false);
-expect(Foo.test()).toBe("foo");
-expect(Foo.test()).toBe("foo");
-
 "#
 );
 
 // private_destructuring_object_pattern_1
 test!(
     syntax(),
-    |t| chain!(
-        class_properties(class_properties::Config { loose: false }),
-        classes(Some(t.comments.clone())),
-        block_scoping()
-    ),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark
+            ),
+            classes(Some(t.comments.clone()), Default::default()),
+            block_scoping(Mark::new())
+        )
+    },
     private_destructuring_object_pattern_1,
     r#"
 class Foo {
@@ -3183,38 +2073,26 @@ class Foo {
     ({ x: this.x = this.#client, y: this.#client, z: this.z = this.#client } = props)
   }
 }
-"#,
-    r#"
-var Foo = function Foo(props) {
-  "use strict";
-
-  _classCallCheck(this, Foo);
-
-  _client.set(this, {
-    writable: true,
-    value: void 0
-  });
-
-  _classPrivateFieldSet(this, _client, 'foo');
-  ({
-    x: this.x = _classPrivateFieldGet(this, _client),
-    y: _classPrivateFieldDestructureSet(this, _client).value,
-    z: this.z = _classPrivateFieldGet(this, _client)
-  } = props);
-};
-
-var _client = new WeakMap();
-
 "#
 );
 
 // private_static_inherited
 test!(
     syntax(),
-    |_| chain!(
-        class_properties(class_properties::Config { loose: false }),
-        block_scoping()
-    ),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark
+            ),
+            block_scoping(Mark::new())
+        )
+    },
     private_static_inherited,
     r#"
 class Base {
@@ -3247,53 +2125,25 @@ class Sub1 extends Base {
 
 class Sub2 extends Base {}
 
-"#,
-    r#"
-class Base {
-  static getThis() {
-    return _classStaticPrivateFieldSpecGet(this, Base, _foo);
-  }
-
-  static updateThis(val) {
-    return _classStaticPrivateFieldSpecSet(this, Base, _foo, val);
-  }
-
-  static getClass() {
-    return _classStaticPrivateFieldSpecGet(Base, Base, _foo);
-  }
-
-  static updateClass(val) {
-    return _classStaticPrivateFieldSpecSet(Base, Base, _foo, val);
-  }
-
-}
-
-var _foo = {
-  writable: true,
-  value: 1
-};
-
-class Sub1 extends Base {
-  static update(val) {
-    return _classStaticPrivateFieldSpecSet(this, Sub1, _foo1, val);
-  }
-
-}
-
-var _foo1 = {
-  writable: true,
-  value: 2
-};
-
-class Sub2 extends Base {}
-
 "#
 );
 
 // private_destructuring_object_pattern_1_exec
 test_exec!(
     syntax(),
-    |_| class_properties(class_properties::Config { loose: false }),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark,
+            )
+        )
+    },
     private_destructuring_object_pattern_1_exec,
     r#"
 class Foo {
@@ -3320,10 +2170,20 @@ expect(foo.z).toBe('bar');
 // private_static_undefined
 test!(
     syntax(),
-    |_| chain!(
-        class_properties(class_properties::Config { loose: false }),
-        block_scoping()
-    ),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark
+            ),
+            block_scoping(Mark::new())
+        )
+    },
     private_static_undefined,
     r#"
 class Foo {
@@ -3338,35 +2198,27 @@ class Foo {
   }
 }
 
-"#,
-    r#"
-class Foo {
-  static test() {
-    return _classStaticPrivateFieldSpecGet(Foo, Foo, _bar);
-  }
-
-  test() {
-    return _classStaticPrivateFieldSpecGet(Foo, Foo, _bar);
-  }
-
-}
-
-var _bar = {
-  writable: true,
-  value: void 0
-};
-
 "#
 );
 
 // private_destructuring_array_pattern
 test!(
     syntax(),
-    |t| chain!(
-        class_properties(class_properties::Config { loose: false }),
-        classes(Some(t.comments.clone())),
-        block_scoping()
-    ),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark
+            ),
+            classes(Some(t.comments.clone()), Default::default()),
+            block_scoping(Mark::new())
+        )
+    },
     private_destructuring_array_pattern,
     r#"
 class Foo {
@@ -3377,33 +2229,26 @@ class Foo {
   }
 }
 
-"#,
-    r#"
-var Foo = function Foo(props) {
-  "use strict";
-
-  _classCallCheck(this, Foo);
-
-  _client.set(this, {
-    writable: true,
-    value: void 0
-  });
-
-  [_classPrivateFieldDestructureSet(this, _client).value] = props;
-};
-
-var _client = new WeakMap();
-
 "#
 );
 
 // private_regression_t2983
 test!(
     syntax(),
-    |_| chain!(
-        class_properties(class_properties::Config { loose: false }),
-        block_scoping()
-    ),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark
+            ),
+            block_scoping(Mark::new())
+        )
+    },
     private_regression_t2983,
     r#"
 call(class {
@@ -3414,37 +2259,31 @@ export default class {
   static #test = true
 }
 
-"#,
-    r#"
-call(function() {
-    class _class{
-    }
-    var _test = {
-        writable: true,
-        value: true
-    };
-    return _class;
-}());
-class _class1{
-}
-var _test = {
-    writable: true,
-    value: true
-};
-export { _class1 as default }
-
-
 "#
 );
 
 // private_regression_t7364
 test!(
     syntax(),
-    |_| chain!(
-        class_properties(class_properties::Config { loose: false }),
-        async_to_generator(),
-        block_scoping()
-    ),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark
+            ),
+            async_to_generator(
+                Default::default(),
+                Some(t.comments.clone()),
+                unresolved_mark
+            ),
+            block_scoping(unresolved_mark)
+        )
+    },
     private_regression_t7364,
     r#"
 class MyClass {
@@ -3465,58 +2304,27 @@ export default class MyClass3 {
   }
 }
 
-"#,
-    r#"
-class MyClass {
-    constructor(){
-        _myAsyncMethod2.set(this, {
-            writable: true,
-            value: _asyncToGenerator((function*() {
-                console.log(this);
-            }).bind(this)).bind(this)
-        });
-    }
-}
-var _myAsyncMethod2 = new WeakMap();
-(function() {
-    class MyClass2 {
-        constructor(){
-            _myAsyncMethod.set(this, {
-                writable: true,
-                value: _asyncToGenerator((function*() {
-                    console.log(this);
-                }).bind(this)).bind(this)
-            });
-        }
-    }
-    var _myAsyncMethod = new WeakMap();
-    return MyClass2;
-})();
-class MyClass3 {
-    constructor(){
-        _myAsyncMethod1.set(this, {
-            writable: true,
-            value: _asyncToGenerator((function*() {
-                console.log(this);
-            }).bind(this)).bind(this)
-        });
-    }
-}
-var _myAsyncMethod1 = new WeakMap();
-export { MyClass3 as default };
-
-
 "#
 );
 
 // private_destructuring_array_pattern_1
 test!(
     syntax(),
-    |t| chain!(
-        class_properties(class_properties::Config { loose: false }),
-        classes(Some(t.comments.clone())),
-        block_scoping()
-    ),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark
+            ),
+            classes(Some(t.comments.clone()), Default::default()),
+            block_scoping(Mark::new())
+        )
+    },
     private_destructuring_array_pattern_1,
     r#"
 class Foo {
@@ -3527,31 +2335,25 @@ class Foo {
     ([this.x = this.#client, this.#client, this.y = this.#client] = props);
   }
 }
-"#,
-    r#"
-var Foo = function Foo(props) {
-  "use strict";
-
-  _classCallCheck(this, Foo);
-
-  _client.set(this, {
-    writable: true,
-    value: void 0
-  });
-
-  _classPrivateFieldSet(this, _client, 1);
-  [this.x = _classPrivateFieldGet(this, _client), _classPrivateFieldDestructureSet(this, _client).value, this.y = _classPrivateFieldGet(this, _client)] = props;
-};
-
-var _client = new WeakMap();
-
 "#
 );
 
 // regression_8882_exec
 test_exec!(
     syntax(),
-    |_| class_properties(class_properties::Config { loose: false }),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark,
+            )
+        )
+    },
     regression_8882_exec,
     r#"
 const classes = [];
@@ -3580,10 +2382,86 @@ for(let i=0; i<= 10; ++i) {
 "#
 );
 
+test_exec!(
+    syntax(),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark,
+            ),
+        )
+    },
+    regression_8882_exec_2,
+    r#"
+const classes = [];
+for (let i = 0; i <= 10; ++i) {
+  class A {
+    [i] = `computed field ${i}`;
+    static foo = `static field ${i}`;
+    #bar = `private field ${i}`;
+    getBar() {
+      return this.#bar;
+    }
+  }
+
+  classes.push(A)
+}
+
+for(let i=0; i<= 10; ++i) {
+  const clazz = classes[i];
+  expect(clazz.foo).toBe('static field ' + i);
+
+  const instance = new clazz();
+  expect(Object.getOwnPropertyNames(instance)).toEqual([String(i)])
+  expect(instance[i]).toBe('computed field ' + i);
+  expect(instance.getBar()).toBe('private field ' + i);
+}
+"#
+);
+
+test_exec!(
+    syntax(),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark,
+            )
+        )
+    },
+    private_field_reinitialized,
+    r#"
+class Base {
+  constructor(obj) {
+    return obj;
+  }
+}
+
+class Derived extends Base {
+  #c = 123
+}
+
+const foo = {}
+new Derived(foo)
+expect(() => new Derived(foo)).toThrow()
+"#
+);
+
 //// regression_6154
-//test!(syntax(),|_| tr("{
+//test!(syntax(),|t| tr("{
 //  "presets": ["env"],
-//  "plugins": class_properties(class_properties::Config { loose: false })
+//  "plugins": class_properties(Some(t.comments.clone()),Default::default())
 //}
 //"), regression_6154, r#"
 //class Test {
@@ -3595,18 +2473,18 @@ for(let i=0; i<= 10; ++i) {
 //  }
 //}
 //
-//"#, r#"
+//"# r#"
 //function _typeof(obj) { if (typeof Symbol === "function" && typeof
 // Symbol.iterator === "symbol") { _typeof = function _typeof(obj) { return
 // typeof obj; }; } else { _typeof = function _typeof(obj) { return obj &&
 // typeof Symbol === "function" && obj.constructor === Symbol && obj !==
 // Symbol.prototype ? "symbol" : typeof obj; }; } return _typeof(obj); }
 //
-//function _possibleConstructorReturn(self, call) { if (call && (_typeof(call)
-// === "object" || typeof call === "function")) { return call; } return
-// _assertThisInitialized(self); }
+//function _possible_constructor_return(self, call) { if (call &&
+// (_typeof(call) === "object" || typeof call === "function")) { return call; }
+// return _assert_this_initialized(self); }
 //
-//function _assertThisInitialized(self) { if (self === void 0) { throw new
+//function _assert_this_initialized(self) { if (self === void 0) { throw new
 // ReferenceError("this hasn't been initialised - super() hasn't been called");
 // } return self; }
 //
@@ -3615,40 +2493,40 @@ for(let i=0; i<= 10; ++i) {
 // must either be null or a function"); } subClass.prototype =
 // Object.create(superClass && superClass.prototype, { constructor: { value:
 // subClass, writable: true, configurable: true } }); if (superClass)
-// _setPrototypeOf(subClass, superClass); }
+// _set_prototype_of(subClass, superClass); }
 //
-//function _setPrototypeOf(o, p) { _setPrototypeOf = Object.setPrototypeOf ||
-// function _setPrototypeOf(o, p) { o.__proto__ = p; return o; }; return
-// _setPrototypeOf(o, p); }
+//function _set_prototype_of(o, p) { _set_prototype_of = Object.setPrototypeOf
+// || function _set_prototype_of(o, p) { o.__proto__ = p; return o; }; return
+// _set_prototype_of(o, p); }
 //
 //function _get(target, property, receiver) { if (typeof Reflect !==
 // "undefined" && Reflect.get) { _get = Reflect.get; } else { _get = function
-// _get(target, property, receiver) { var base = _superPropBase(target,
+// _get(target, property, receiver) { var base = _super_prop_base(target,
 // property); if (!base) return; var desc =
 // Object.getOwnPropertyDescriptor(base, property); if (desc.get) { return
 // desc.get.call(receiver); } return desc.value; }; } return _get(target,
 // property, receiver || target); }
 //
-//function _superPropBase(object, property) { while
+//function _super_prop_base(object, property) { while
 // (!Object.prototype.hasOwnProperty.call(object, property)) { object =
-// _getPrototypeOf(object); if (object === null) break; } return object; }
+// _get_prototype_of(object); if (object === null) break; } return object; }
 //
-//function _getPrototypeOf(o) { _getPrototypeOf = Object.setPrototypeOf ?
-// Object.getPrototypeOf : function _getPrototypeOf(o) { return o.__proto__ ||
-// Object.getPrototypeOf(o); }; return _getPrototypeOf(o); }
+//function _get_prototype_of(o) { _get_prototype_of = Object.setPrototypeOf ?
+// Object.getPrototypeOf : function _get_prototype_of(o) { return o.__proto__ ||
+// Object.getPrototypeOf(o); }; return _get_prototype_of(o); }
 //
-//function _defineProperty(obj, key, value) { if (key in obj) {
+//function _define_property(obj, key, value) { if (key in obj) {
 // Object.defineProperty(obj, key, { value: value, enumerable: true,
 // configurable: true, writable: true }); } else { obj[key] = value; } return
 // obj; }
 //
-//function _classCallCheck(instance, Constructor) { if (!(instance instanceof
+//function _class_call_check(instance, Constructor) { if (!(instance instanceof
 // Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
 //
 //var Test = function Test() {
 //  "use strict";
 //
-//  _classCallCheck(this, Test);
+//  _class_call_check(this, Test);
 //
 //  var Other =
 //  /*#__PURE__*/
@@ -3656,22 +2534,23 @@ for(let i=0; i<= 10; ++i) {
 //    _inherits(Other, _Test);
 //
 //    function Other() {
-//      var _getPrototypeOf2;
+//      var _get_prototype_of2;
 //
 //      var _this;
 //
-//      _classCallCheck(this, Other);
+//      _class_call_check(this, Other);
 //
 //      for (var _len = arguments.length, args = new Array(_len), _key = 0; _key
 // < _len; _key++) {        args[_key] = arguments[_key];
 //      }
 //
-//      _this = _possibleConstructorReturn(this, (_getPrototypeOf2 =
-// _getPrototypeOf(Other)).call.apply(_getPrototypeOf2, [this].concat(args)));
+//      _this = _possible_constructor_return(this, (_get_prototype_of2 =
+// _get_prototype_of(Other)).call.apply(_get_prototype_of2,
+// [this].concat(args)));
 //
-//      _defineProperty(_assertThisInitialized(_this), "a", function () {
-//        return _get(_getPrototypeOf(Other.prototype), "test",
-// _assertThisInitialized(_this));      });
+//      _define_property(_assert_this_initialized(_this), "a" function () {
+//        return _get(_get_prototype_of(Other.prototype), "test"
+// _assert_this_initialized(_this));      });
 //
 //      return _this;
 //    }
@@ -3679,8 +2558,8 @@ for(let i=0; i<= 10; ++i) {
 //    return Other;
 //  }(Test);
 //
-//  _defineProperty(Other, "a", function () {
-//    return _get(_getPrototypeOf(Other), "test", Other);
+//  _define_property(Other, "a" function () {
+//    return _get(_get_prototype_of(Other), "test" Other);
 //  });
 //};
 //
@@ -3689,10 +2568,20 @@ for(let i=0; i<= 10; ++i) {
 // private_static_export
 test!(
     syntax(),
-    |_| chain!(
-        class_properties(class_properties::Config { loose: false }),
-        block_scoping()
-    ),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark
+            ),
+            block_scoping(Mark::new())
+        )
+    },
     private_static_export,
     r#"
 export class MyClass {
@@ -3703,60 +2592,76 @@ export default class MyClass2 {
   static #property = value;
 }
 
-"#,
-    r#"
-export class MyClass {}
-var _property = {
-  writable: true,
-  value: value
-};
-class MyClass2{
-}
-var _property1 = {
-  writable: true,
-  value: value
-};
-export { MyClass2 as default }
 "#
 );
 
 // static_property_tdz_edgest_case
 test!(
     syntax(),
-    |t| chain!(
-        class_properties(class_properties::Config { loose: false }),
-        classes(Some(t.comments.clone()))
-    ),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark
+            ),
+            classes(Some(t.comments.clone()), Default::default())
+        )
+    },
     static_property_tdz_edgest_case,
     r#"
 class A {
   static [{ x: A || 0 }.x];
 }
 
-"#,
+"#
+);
+
+test!(
+    syntax(),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark
+            ),
+            classes(Some(t.comments.clone()), Default::default())
+        )
+    },
+    static_property_tdz_false_alarm,
     r#"
-var _x = {
-  x: (_classNameTDZError("A"), A) || 0
-}.x;
-
-let A = function A() {
-  "use strict";
-
-  _classCallCheck(this, A);
-};
-
-_defineProperty(A, _x, void 0);
-
+class A {
+static A = 123;
+}
 "#
 );
 
 // regression_6153
 test!(
     syntax(),
-    |_| chain!(
-        class_properties(class_properties::Config { loose: false }),
-        arrow()
-    ),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark
+            ),
+            arrow(Mark::new())
+        )
+    },
     regression_6153,
     r#"
 () => {
@@ -3788,83 +2693,26 @@ var qux = function() {
   }
 }.bind(this)
 
-"#,
-    r#"
-(function () {
-  class Foo {
-    constructor() {
-      var _this = this;
-      _defineProperty(this, 'fn', function() {
-        return console.log(_this);
-      });
-    }
-
-  }
-
-  _defineProperty(Foo, "fn", function () {
-    return console.log(Foo);
-  });
-});
-
-(function () {
-  class Bar {
-    constructor() {
-      var _this = this;
-      _defineProperty(this, 'fn', function() {
-        return console.log(_this);
-      });
-    }
-
-  }
-  _defineProperty(Bar, "fn", function () {
-    return console.log(Bar);
-  });
-  return Bar;
-});
-
-(function () {
-  class Baz {
-    constructor(force){
-      var _this = this;
-      _defineProperty(this, 'fn', function() {
-        return console.log(_this);
-      });
-      _defineProperty(this, "force", force);
-    }
-
-  }
-
-  _defineProperty(Baz, "fn", function () {
-    return console.log(Baz);
-  });
-});
-
-var qux = (function () {
-  class Qux {
-    constructor() {
-      var _this = this;
-      _defineProperty(this, 'fn', function() {
-        return console.log(_this);
-      });
-    }
-
-  }
-
-  _defineProperty(Qux, "fn", function () {
-    return console.log(Qux);
-  });
-}).bind(this);
-
 "#
 );
 
 // regression_7371
 test!(
     syntax(),
-    |_| chain!(
-        class_properties(class_properties::Config { loose: false }),
-        arrow()
-    ),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark
+            ),
+            arrow(unresolved_mark),
+        )
+    },
     regression_7371,
     r#"
 "use strict";
@@ -3967,118 +2815,80 @@ class ComputedField extends Obj {
 
 new ComputedField();
 
-"#,
+"#
+);
+
+test!(
+    syntax(),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark,
+            )
+        )
+    },
+    private_optional_chain_call,
     r#"
-"use strict";
-
-class C {}
-
-class A extends C {
-  constructor() {
-    super();
-    _defineProperty(this, "field", 1);
-
-    class B extends C {
-      constructor() {
-        super();
-        expect(this.field).toBeUndefined();
-      }
-
+class A {
+    #fieldFunc;
+    x = 1;
+    test() {
+        this.#fieldFunc?.();
     }
-
-    expect(this.field).toBe(1);
-    new B();
-  }
-
 }
+"#
+);
 
-new A();
+test!(
+    syntax(),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
 
-class Obj {
-  constructor() {
-    return {};
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark,
+            )
+        )
+    },
+    private_optional_chain_member,
+    r#"
+class MyClass {
+  #a
+  foo(o) {
+    o?.#a
   }
-
-} // ensure superClass is still transformed
-
-
-class SuperClass extends Obj {
-  constructor() {
-    var _temp;
-
-    class B extends (_temp = super(), _defineProperty(this, 'field', 1), _temp, Obj) {
-      constructor() {
-        super();
-        expect(this.field).toBeUndefined();
-      }
-
-    }
-
-    expect(this.field).toBe(1);
-    new B();
-  }
-
 }
-
-new SuperClass(); // ensure ComputedKey Method is still transformed
-
-class ComputedMethod extends Obj {
-  constructor() {
-    var _temp;
-    var tmp = (_temp = super(), _defineProperty(this, "field", 1), _temp);
-    class B extends Obj {
-      [tmp]() {}
-
-      constructor() {
-        super();
-        expect(this.field).toBeUndefined();
-      }
-
-
-    }
-
-    expect(this.field).toBe(1);
-    new B();
-  }
-
-}
-
-new ComputedMethod(); // ensure ComputedKey Field is still transformed
-
-class ComputedField extends Obj {
-  constructor() {
-    var _temp;
-
-    var _ref = (_temp = super(), _defineProperty(this, "field", 1), _temp);
-
-    class B extends Obj {
-      constructor() {
-        super();
-        _defineProperty(this, _ref, 1);
-        expect(this.field).toBeUndefined();
-      }
-
-    }
-
-    expect(this.field).toBe(1);
-    new B();
-  }
-
-}
-
-new ComputedField();
-
 "#
 );
 
 // private_canonical
 test!(
     syntax(),
-    |t| chain!(
-        class_properties(class_properties::Config { loose: false }),
-        classes(Some(t.comments.clone())),
-        block_scoping()
-    ),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark
+            ),
+            classes(Some(t.comments.clone()), Default::default()),
+            block_scoping(Mark::new())
+        )
+    },
     private_canonical,
     r#"
 class Point {
@@ -4102,71 +2912,25 @@ class Point {
 
 }
 
-"#,
-    r#"
-var Point =
-/*#__PURE__*/
-function () {
-  "use strict";
-
-  function Point(x = 0, y = 0) {
-    _classCallCheck(this, Point);
-
-    _x.set(this, {
-      writable: true,
-      value: void 0
-    });
-
-    _y.set(this, {
-      writable: true,
-      value: void 0
-    });
-
-    _classPrivateFieldSet(this, _x, +x);
-    _classPrivateFieldSet(this, _y, +y);
-  }
-
-  _createClass(Point, [{
-    key: "x",
-    get: function () {
-      return _classPrivateFieldGet(this, _x);
-    },
-    set: function (value) {
-      _classPrivateFieldSet(this, _x, +value);
-    }
-  }, {
-    key: "y",
-    get: function () {
-      return _classPrivateFieldGet(this, _y);
-    },
-    set: function (value) {
-      _classPrivateFieldSet(this, _y, +value);
-    }
-  }, {
-    key: "equals",
-    value: function equals(p) {
-      return _classPrivateFieldGet(this, _x) === _classPrivateFieldGet(p, _x) && _classPrivateFieldGet(this, _y) === _classPrivateFieldGet(p, _y);
-    }
-  }, {
-    key: "toString",
-    value: function toString() {
-      return `Point<${_classPrivateFieldGet(this, _x)},${_classPrivateFieldGet(this, _y)}>`;
-    }
-  }]);
-  return Point;
-}();
-
-var _x = new WeakMap();
-
-var _y = new WeakMap();
-
 "#
 );
 
 // regression_8882
 test!(
     syntax(),
-    |_| class_properties(class_properties::Config { loose: false }),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark,
+            )
+        )
+    },
     regression_8882,
     r#"
 const classes = [];
@@ -4174,55 +2938,43 @@ for(let i = 0; i <= 10; ++i){
     classes.push(function() {
         class A{
              getBar() {
-                return _classPrivateFieldGet(this, _bar);
+                return _class_private_field_get(this, _bar);
             }
             constructor(){
-                _defineProperty(this, i, `computed field ${i}`);
+                _define_property(this, i, `computed field ${i}`);
                 _bar.set(this, {
                     writable: true,
                     value: `private field ${i}`
                 });
             }
         }
-        _defineProperty(A, 'foo', `static field ${i}`);
+        _define_property(A, 'foo', `static field ${i}`);
         var _bar = new WeakMap();
         return A;
     }());
 }
 
-"#,
-    r#"
-const classes = [];
-for(let i = 0; i <= 10; ++i){
-    classes.push(function() {
-        class A{
-             getBar() {
-                return _classPrivateFieldGet(this, _bar);
-            }
-            constructor(){
-                _defineProperty(this, i, `computed field ${i}`);
-                _bar.set(this, {
-                    writable: true,
-                    value: `private field ${i}`
-                });
-            }
-        }
-        _defineProperty(A, 'foo', `static field ${i}`);
-        var _bar = new WeakMap();
-        return A;
-    }());
-}
 "#
 );
 
 // private_destructuring_array_pattern_3
 test!(
     syntax(),
-    |t| chain!(
-        class_properties(class_properties::Config { loose: false }),
-        classes(Some(t.comments.clone())),
-        block_scoping()
-    ),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark
+            ),
+            classes(Some(t.comments.clone()), Default::default()),
+            block_scoping(Mark::new())
+        )
+    },
     private_destructuring_array_pattern_3,
     r#"
 class Foo {
@@ -4232,30 +2984,51 @@ class Foo {
     ([this.#client = 5] = props);
   }
 }
-"#,
+"#
+);
+
+test!(
+    syntax(),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark,
+            )
+        )
+    },
+    staic_private_destructuring_array_pattern,
     r#"
-var Foo = function Foo(props) {
-  "use strict";
-
-  _classCallCheck(this, Foo);
-
-  _client.set(this, {
-    writable: true,
-    value: void 0
-  });
-
-  [_classPrivateFieldDestructureSet(this, _client).value = 5] = props;
-};
-
-var _client = new WeakMap();
-
+class A {
+  #a = 123
+  foo() {
+    [a().#a] = []
+  }
+}
 "#
 );
 
 // public_static_super_exec
 test_exec!(
     syntax(),
-    |_| class_properties(class_properties::Config { loose: false }),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark,
+            )
+        )
+    },
     public_static_super_exec,
     r#"
 class A {
@@ -4280,11 +3053,21 @@ expect(getPropA()).toBe(1);
 // private_destructuring_array_pattern_2
 test!(
     syntax(),
-    |t| chain!(
-        class_properties(class_properties::Config { loose: false }),
-        classes(Some(t.comments.clone())),
-        block_scoping()
-    ),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark
+            ),
+            classes(Some(t.comments.clone()), Default::default()),
+            block_scoping(Mark::new())
+        )
+    },
     private_destructuring_array_pattern_2,
     r#"
 class Foo {
@@ -4294,33 +3077,26 @@ class Foo {
     ([x, ...this.#client] = props);
   }
 }
-"#,
-    r#"
-var Foo = function Foo(props) {
-  "use strict";
-
-  _classCallCheck(this, Foo);
-
-  _client.set(this, {
-    writable: true,
-    value: void 0
-  });
-
-  [x, ..._classPrivateFieldDestructureSet(this, _client).value] = props;
-};
-
-var _client = new WeakMap();
-
 "#
 );
 
 // private_non_block_arrow_func
 test!(
     syntax(),
-    |_| chain!(
-        class_properties(class_properties::Config { loose: false }),
-        block_scoping()
-    ),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark
+            ),
+            block_scoping(Mark::new())
+        )
+    },
     private_non_block_arrow_func,
     r#"
 export default param =>
@@ -4335,32 +3111,25 @@ export default param =>
     }
   }
 
-"#,
-    r#"
-export default ((param)=>{
-    class App{
-         getParam() {
-            return param;
-        }
-    }
-    var _props = {
-        writable: true,
-        value: {
-            prop1: 'prop1',
-            prop2: 'prop2'
-        }
-    };
-    return App;
-});
-
-
 "#
 );
 
 // regression_8110
 test!(
     syntax(),
-    |_| class_properties(class_properties::Config { loose: false }),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark,
+            )
+        )
+    },
     regression_8110,
     r#"
 const field = Symbol('field');
@@ -4369,24 +3138,25 @@ class A {
   [field] = 10;
 }
 
-"#,
-    r#"
-const field = Symbol('field');
-var _field = field;
-class A{
-    constructor(){
-        _defineProperty(this, _field, 10);
-    }
-}
-
-
 "#
 );
 
 // public_computed_without_block_exec
 test_exec!(
     syntax(),
-    |_| class_properties(class_properties::Config { loose: false }),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark,
+            )
+        )
+    },
     public_computed_without_block_exec,
     r#"
 const createClass = (k) => class { [k()] = 2 };
@@ -4400,32 +3170,27 @@ expect(instance.foo).toBe(2);
 // private_instance
 test!(
     syntax(),
-    |t| chain!(
-        class_properties(class_properties::Config { loose: false }),
-        exponentation(),
-        classes(Some(t.comments.clone())),
-        block_scoping(),
-    ),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark
+            ),
+            exponentiation(),
+            classes(Some(t.comments.clone()), Default::default()),
+            block_scoping(Mark::new()),
+        )
+    },
     private_instance,
     r#"
 class Foo {
   #bar = "foo";
 }
-
-"#,
-    r#"
-var Foo = function Foo() {
-  "use strict";
-
-  _classCallCheck(this, Foo);
-
-  _bar.set(this, {
-    writable: true,
-    value: "foo"
-  });
-};
-
-var _bar = new WeakMap();
 
 "#
 );
@@ -4433,27 +3198,25 @@ var _bar = new WeakMap();
 // static_property_tdz_general
 test!(
     syntax(),
-    |t| chain!(
-        class_properties(class_properties::Config { loose: false }),
-        classes(Some(t.comments.clone()))
-    ),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark
+            ),
+            classes(Some(t.comments.clone()), Default::default())
+        )
+    },
     static_property_tdz_general,
     r#"
 class C {
   static [C + 3] = 3;
 }
-
-"#,
-    r#"
-var _ref = (_classNameTDZError('C'), C) + 3;
-
-let C = function C() {
-  "use strict";
-
-  _classCallCheck(this, C);
-};
-
-_defineProperty(C, _ref, 3);
 
 "#
 );
@@ -4461,10 +3224,20 @@ _defineProperty(C, _ref, 3);
 // public_native_classes
 test!(
     syntax(),
-    |_| chain!(
-        class_properties(class_properties::Config { loose: false }),
-        block_scoping()
-    ),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark
+            ),
+            block_scoping(Mark::new())
+        )
+    },
     public_native_classes,
     r#"
 class Foo {
@@ -4472,40 +3245,18 @@ class Foo {
   bar = "bar";
 }
 
-"#,
-    r#"
-class Foo {
-  constructor() {
-    _defineProperty(this, "bar", "bar");
-  }
-
-}
-
-_defineProperty(Foo, "foo", "foo");
-
 "#
 );
 
 // public_arrow_static_this_without_transform
 test!(
     // Emitting class properties is not supported yet.
-    ignore,
     syntax(),
-    |_| arrow(),
+    |_| arrow(Mark::new()),
     public_arrow_static_this_without_transform,
     r#"
 class Foo {
   static fn = () => console.log(this);
-}
-
-"#,
-    r#"
-var _this = this;
-
-class Foo {
-  static fn = function () {
-    return console.log(_this);
-  };
 }
 
 "#
@@ -4516,24 +3267,25 @@ test!(
     // Seems useless, while being hard to implement.
     ignore,
     syntax(),
-    |_| chain!(
-        class_properties(class_properties::Config { loose: false }),
-        block_scoping()
-    ),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark
+            ),
+            block_scoping(Mark::new())
+        )
+    },
     private_static_infer_name,
     r#"
 var Foo = class {
   static #num = 0;
 }
-
-"#,
-    r#"
-var _class, _temp, _num;
-
-var Foo = (_temp = _class = class Foo {}, _num = {
-  writable: true,
-  value: 0
-}, _temp);
 
 "#
 );
@@ -4541,10 +3293,19 @@ var Foo = (_temp = _class = class Foo {}, _num = {
 // regression_7951
 test!(
     syntax(),
-    |_| chain!(
-        resolver(),
-        class_properties(class_properties::Config { loose: false })
-    ),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, false),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark
+            )
+        )
+    },
     regression_7951,
     r#"
 export class Foo extends Bar {
@@ -4553,27 +3314,26 @@ export class Foo extends Bar {
   test = args;
 }
 
-"#,
-    r#"
-export class Foo extends Bar {
-  constructor(...args1) {
-    super(...args1);
-    _defineProperty(this, "test", args);
-  }
-
-}
-_defineProperty(Foo, "foo", {});
-
 "#
 );
 
 // private_native_classes
 test!(
     syntax(),
-    |_| chain!(
-        class_properties(class_properties::Config { loose: false }),
-        block_scoping()
-    ),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark
+            ),
+            block_scoping(Mark::new())
+        )
+    },
     private_native_classes,
     r#"
 class Foo {
@@ -4589,58 +3349,30 @@ class Foo {
   }
 }
 
-"#,
-    r#"
-class Foo {
-
-  static test() {
-    return _classStaticPrivateFieldSpecGet(Foo, Foo, _foo);
-  }
-
-  test() {
-    return _classPrivateFieldGet(this, _bar);
-  }
-
-  constructor() {
-    _bar.set(this, {
-      writable: true,
-      value: "bar"
-    });
-  }
-}
-
-var _foo = {
-  writable: true,
-  value: "foo"
-};
-var _bar = new WeakMap();
-
 "#
 );
 
 // public_computed_without_block
 test!(
     syntax(),
-    |t| chain!(
-        class_properties(class_properties::Config { loose: false }),
-        classes(Some(t.comments.clone())),
-        block_scoping()
-    ),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark
+            ),
+            classes(Some(t.comments.clone()), Default::default()),
+            block_scoping(Mark::new())
+        )
+    },
     public_computed_without_block,
     r#"
 const createClass = (k) => class { [k()] = 2 };
-
-"#,
-    r#"
-var createClass = (k)=>{
-    var _ref = k();
-    var _class = function _class() {
-        'use strict';
-        _classCallCheck(this, _class);
-        _defineProperty(this, _ref, 2);
-    };
-    return _class;
-};
 
 "#
 );
@@ -4648,7 +3380,19 @@ var createClass = (k)=>{
 // private_destructuring_array_pattern_2_exec
 test_exec!(
     syntax(),
-    |_| class_properties(class_properties::Config { loose: false }),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark,
+            )
+        )
+    },
     private_destructuring_array_pattern_2_exec,
     r#"
 class Foo {
@@ -4673,11 +3417,21 @@ expect(foo.getClient()).toEqual(['bar', 'baz', 'quu']);
 // public_static_super
 test!(
     syntax(),
-    |t| chain!(
-        class_properties(class_properties::Config { loose: false }),
-        classes(Some(t.comments.clone())),
-        block_scoping()
-    ),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark
+            ),
+            classes(Some(t.comments.clone()), Default::default()),
+            block_scoping(Mark::new())
+        )
+    },
     public_static_super,
     r#"
 class A {
@@ -4690,42 +3444,25 @@ class B extends A {
   static getPropA = () => super.prop;
 }
 
-"#,
-    r#"
-var A = function A() {
-  "use strict";
-
-  _classCallCheck(this, A);
-};
-
-_defineProperty(A, "prop", 1);
-
-var B =
-/*#__PURE__*/
-function (A) {
-  "use strict";
-
-  _inherits(B, A);
-  var _super = _createSuper(B);
-  function B() {
-    _classCallCheck(this, B);
-    return _super.apply(this, arguments);
-  }
-
-  return B;
-}(A);
-
-_defineProperty(B, "prop", 2);
-_defineProperty(B, "propA", _get(_getPrototypeOf(B), "prop", B));
-_defineProperty(B, "getPropA", () => _get(_getPrototypeOf(B), "prop", B));
-
 "#
 );
 
 // private_destructuring_array_pattern_exec
 test_exec!(
     syntax(),
-    |_| class_properties(class_properties::Config { loose: false }),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark,
+            )
+        )
+    },
     private_destructuring_array_pattern_exec,
     r#"
 class Foo {
@@ -4749,7 +3486,19 @@ expect(foo.getClient()).toBe('bar');
 // private_destructuring_array_pattern_1_exec
 test_exec!(
     syntax(),
-    |_| class_properties(class_properties::Config { loose: false }),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark,
+            )
+        )
+    },
     private_destructuring_array_pattern_1_exec,
     r#"
 class Foo {
@@ -4774,41 +3523,20 @@ expect(foo.y).toBe('bar');
 );
 
 test!(
-    ts(),
-    |_| chain!(
-        resolver(),
-        class_properties(class_properties::Config { loose: false })
-    ),
-    issue_890_1,
-    "const DURATION = 1000
-
-export class HygieneTest {
-  private readonly duration: number = DURATION
-
-  constructor(duration?: number) {
-    this.duration = duration ?? DURATION
-  }
-
-  getDuration() {
-    return this.duration
-  }
-}",
-    "const DURATION = 1000;
-export class HygieneTest {
-    getDuration() {
-        return this.duration;
-    }
-    constructor(duration: number){
-        _defineProperty(this, 'duration', DURATION);
-        this.duration = duration ?? DURATION;
-    }
-}",
-    ok_if_code_eq
-);
-
-test!(
     syntax(),
-    |_| class_properties(class_properties::Config { loose: false }),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark,
+            )
+        )
+    },
     issue_1306_1,
     r#"
   class Animal {
@@ -4822,27 +3550,24 @@ test!(
       return this.#name
     }
   }
-"#,
-    "
-    class Animal {
-      noise() {
-          return _classPrivateFieldGet(this, _name);
-      }
-      constructor(name){
-          _name.set(this, {
-              writable: true,
-              value: void 0
-          });
-          _classPrivateFieldSet(this, _name, name);
-      }
-    }
-    var _name = new WeakMap();
-"
+"#
 );
 
 test!(
     syntax(),
-    |_| class_properties(class_properties::Config { loose: false }),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark,
+            )
+        )
+    },
     issue_1306_2,
     r#"
 class Animal {
@@ -4856,52 +3581,57 @@ class Animal {
     return this.#name.toUpperCase()
   }
 }
-"#,
-    "
-  class Animal {
-    noise() {
-        return _classPrivateFieldGet(this, _name).toUpperCase();
-    }
-    constructor(name){
-        _name.set(this, {
-            writable: true,
-            value: void 0
-        });
-        _classPrivateFieldSet(this, _name, name);
-    }
-}
-var _name = new WeakMap();
-"
+"#
 );
 
 test!(
     syntax(),
-    |_| class_properties(class_properties::Config { loose: false }),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark,
+            )
+        )
+    },
     issue_1333_1,
     "
   class Foo {
+    #ws;
+    #ws2;
     get connected() {
         return this.#ws2 && this.#ws.readyState === _ws1.default.OPEN;
     }
   }
-  ",
-    "
-    class Foo {
-      get connected() {
-          return _classPrivateFieldGet(this, _ws2) && _classPrivateFieldGet(this, _ws).readyState \
-     === _ws1.default.OPEN;
-      }
-    }
-    "
+  "
 );
 
 test!(
     syntax(),
-    |_| class_properties(class_properties::Config { loose: false }),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark,
+            )
+        )
+    },
     issue_1333_2,
     "
   class Test {
     #ws;
+    #serialization;
+    #seq;
 
     _packet(raw) {
         /** @type {DiscordPacket} */
@@ -4985,96 +3715,29 @@ test!(
         }
     }
   }
-  ",
-    "
-    class Test {
-      _packet(raw) {
-          let pak;
-          try {
-              pak = _classPrivateFieldGet(this, _serialization).decode(raw);
-              this.manager.emit(ClientEvent.RAW_PACKET, pak, this);
-          } catch (e) {
-              this.manager.client.emit(ClientEvent.SHARD_ERROR, e, this);
-              return;
-          }
-          switch(pak.t){
-              case 'READY':
-                  this.emit(ShardEvent.READY);
-                  this.session.id = pak.d.session_id;
-                  this.expectedGuilds = new Set(pak.d.guilds.map((g)=>g.id
-                  ));
-                  this.status = Status.WAITING_FOR_GUILDS;
-                  this.heartbeat.acked = true;
-                  this.heartbeat.new('ready');
-                  break;
-              case 'RESUMED':
-                  this.emit(ShardEvent.RESUMED);
-                  this.status = Status.READY;
-                  this.heartbeat.acked = true;
-                  this.heartbeat.new('resumed');
-                  break;
-          }
-          if (pak.s !== null) {
-              if (_classPrivateFieldGet(this, _seq) !== -1 && pak.s > _classPrivateFieldGet(this, \
-     _seq) + 1) {
-                  this._debug(`Non-consecutive sequence [${_classPrivateFieldGet(this, _seq)} => \
-     ${pak.s}]`);
-              }
-              _classPrivateFieldSet(this, _seq, pak.s);
-          }
-          switch(pak.op){
-              case GatewayOp.HELLO:
-                  this.heartbeat.delay = pak.d.heartbeat_interval;
-                  this.session.hello();
-                  break;
-              case GatewayOp.RECONNECT:
-                  this._debug('Gateway asked us to reconnect.');
-                  this.destroy({
-                      code: 4000
-                  });
-                  break;
-              case GatewayOp.INVALID_SESSION:
-                  this._debug(`Invalid Session: Resumable => ${pak.d}`);
-                  if (pak.d) {
-                      this.session.resume();
-                      break;
-                  }
-                  _classPrivateFieldSet(this, _seq, -1);
-                  this.session.reset();
-                  this.status = Status.RECONNECTING;
-                  this.emit(ShardEvent.INVALID_SESSION);
-                  break;
-              case GatewayOp.HEARTBEAT:
-                  this.heartbeat.new('requested');
-                  break;
-              case GatewayOp.HEARTBEAT_ACK:
-                  this.heartbeat.ack();
-                  break;
-              default:
-                  if (this.status === Status.WAITING_FOR_GUILDS && pak.t === 'GUILD_CREATE') {
-                      this.expectedGuilds.delete(pak.d.id);
-                      this._checkReady();
-                  }
-          }
-      }
-      constructor(){
-          _ws.set(this, {
-              writable: true,
-              value: void 0
-          });
-      }
-  }
-  var _ws = new WeakMap();
-    "
+  "
 );
 
 test!(
     syntax(),
-    |_| class_properties(class_properties::Config { loose: false }),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark,
+            )
+        )
+    },
     issue_1333_3,
     "
     class Test {
       #ws;
+      #serialization;
 
       _packet(raw) {
         /** @type {DiscordPacket} */
@@ -5093,42 +3756,29 @@ test!(
         }
       }
     }
-    ",
-    "
-    class Test {
-      _packet(raw) {
-          let pak;
-          try {
-              pak = _classPrivateFieldGet(this, _serialization).decode(raw);
-              this.manager.emit(ClientEvent.RAW_PACKET, pak, this);
-          } catch (e) {
-              this.manager.client.emit(ClientEvent.SHARD_ERROR, e, this);
-              return;
-          }
-          switch(pak.t){
-              case 'READY':
-              case 'RESUMED':
-          }
-      }
-      constructor(){
-          _ws.set(this, {
-              writable: true,
-              value: void 0
-          });
-      }
-  }
-  var _ws = new WeakMap();
-
     "
 );
 
 test!(
     syntax(),
-    |_| class_properties(class_properties::Config { loose: false }),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark,
+            )
+        )
+    },
     issue_1333_4,
     "
   class Test {
     #ws;
+    #serialization;
 
     _packet(raw) {
       /** @type {DiscordPacket} */
@@ -5140,89 +3790,156 @@ test!(
       }
     }
   }
-  ",
-    "
-    class Test {
-      _packet(raw) {
-          let pak;
-          try {
-              pak = _classPrivateFieldGet(this, _serialization).decode(raw);
-          } catch (e) {
-              return;
-          }
-      }
-      constructor(){
-          _ws.set(this, {
-              writable: true,
-              value: void 0
-          });
-      }
-    }
-    var _ws = new WeakMap();
-    "
+  "
 );
 
 test!(
     syntax(),
-    |_| class_properties(class_properties::Config { loose: false }),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark,
+            )
+        )
+    },
     issue_1333_5,
     "
     class Test {
+      #serialization;
       _packet(raw) {
         pak = this.#serialization.decode(raw);
       }
     }
-    ",
-    "
-    class Test {
-      _packet(raw) {
-          pak = _classPrivateFieldGet(this, _serialization).decode(raw);
-      }
-    }
     "
 );
 
 test!(
     syntax(),
-    |_| class_properties(class_properties::Config { loose: false }),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark,
+            )
+        )
+    },
     issue_1333_6,
     "
     class Test {
+      #serialization;
       _packet(raw) {
         this.#serialization.decode(raw);
       }
     }
-    ",
-    "
-    class Test {
-      _packet(raw) {
-          _classPrivateFieldGet(this, _serialization).decode(raw);
-      }
-    }
     "
 );
 
 test!(
     syntax(),
-    |_| { class_properties(class_properties::Config { loose: false }) },
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark,
+            )
+        )
+    },
     issue_1660_1,
     "
     console.log(class { run() { } });
-    ",
-    "
-    console.log(class _class {
-        run() {
-        }
-    });
     "
 );
 
 test!(
     syntax(),
-    |_| chain!(
-        class_properties(class_properties::Config { loose: false }),
-        async_to_generator()
-    ),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark,
+            )
+        )
+    },
+    issue_3055_1,
+    "
+export class Node {
+    foo() {
+        this.#bar(this);
+    }
+
+    #bar(parent) {
+        parent.#baz(this);
+        parent.baz.#baz(this);
+    }
+
+    #baz(child) { }
+}
+"
+);
+
+test!(
+    syntax(),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark,
+            )
+        )
+    },
+    issue_3618,
+    "
+class MyClass {
+  get #a() {}
+  set #a(x) {}
+  static get #b() {}
+  static set #b(x) {}
+}
+"
+);
+
+test!(
+    syntax(),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark
+            ),
+            async_to_generator(Default::default(), Some(t.comments.clone()), Mark::new())
+        )
+    },
     issue_1694_1,
     "
     class MyClass {
@@ -5233,27 +3950,25 @@ test!(
             this.#get(foo);
         }
     }
-    ",
-    "
-    var _get = new WeakSet();
-    class MyClass {
-        constructor(){
-            _get.add(this);
-            _classPrivateMethodGet(this, _get, get).call(this, foo);
-        }
-    }
-    function get() {
-        return 1;
-    }
     "
 );
 
 test!(
     syntax(),
-    |_| chain!(
-        class_properties(class_properties::Config { loose: false }),
-        async_to_generator()
-    ),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, false),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark
+            ),
+            async_to_generator(Default::default(), Some(t.comments.clone()), Mark::new())
+        )
+    },
     issue_1694_2,
     "
 class MyClass {
@@ -5264,25 +3979,25 @@ class MyClass {
         MyClass.#get(foo);
     }
 }
-",
-    "
-  class MyClass {
-      constructor(){
-          _classStaticPrivateMethodGet(MyClass, MyClass, get).call(MyClass, foo);
-      }
-  }
-  function get() {
-      return 1;
-  }
-  "
+"
 );
 
 test!(
     syntax(),
-    |_| chain!(
-        class_properties(class_properties::Config { loose: false }),
-        async_to_generator()
-    ),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark
+            ),
+            async_to_generator(Default::default(), Some(t.comments.clone()), Mark::new())
+        )
+    },
     issue_1702_1,
     "
     class Foo {
@@ -5301,37 +4016,24 @@ test!(
     }
 
     const instance = new Foo();
-    ",
-    "
-    var _sssss = new WeakSet();
-    class Foo {
-        constructor(){
-            _y.set(this, {
-                writable: true,
-                value: void 0
-            });
-            _sssss.add(this);
-            this.x = 1;
-            _classPrivateFieldSet(this, _y, 2);
-            _classPrivateMethodGet(this, _sssss, sssss).call(this);
-        }
-    }
-    var _y = new WeakMap();
-    var _z = {
-        writable: true,
-        value: 3
-    };
-    function sssss() {
-        console.log(this.x, _classPrivateFieldGet(this, _y), _classStaticPrivateFieldSpecGet(Foo, \
-     Foo, _z));
-    }
-    const instance = new Foo();
     "
 );
 
 test!(
     syntax(),
-    |_| class_properties(class_properties::Config { loose: false }),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark,
+            )
+        )
+    },
     issue_1711_1,
     "
     class Foo {
@@ -5344,26 +4046,24 @@ test!(
         return target.#value;
       }
     }
-    ",
-    "
-    var _value = new WeakSet();
-    class Foo {
-        get(target) {
-            return _classPrivateMethodGet(target, _value, value);
-        }
-        constructor(){
-            _value.add(this);
-        }
-    }
-    function value() {
-        return 1;
-    }
     "
 );
 
 test_exec!(
     syntax(),
-    |_| class_properties(class_properties::Config { loose: false }),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark,
+            )
+        )
+    },
     issue_1742_1,
     "
     class Foo {
@@ -5387,10 +4087,20 @@ test_exec!(
 
 test_exec!(
     syntax(),
-    |_| chain!(
-        class_properties(class_properties::Config { loose: false }),
-        template_literal(Default::default())
-    ),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, false),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark
+            ),
+            template_literal(Default::default())
+        )
+    },
     issue_1742_2,
     "
   class Foo {
@@ -5412,9 +4122,79 @@ test_exec!(
   "
 );
 
+test_exec!(
+    syntax(),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark,
+            )
+        )
+    },
+    new_target_in_class_prop,
+    "
+class Foo {
+    bar = new.target;
+    ['baz'] = new.target;
+}
+
+const foo = new Foo();
+
+expect(foo.bar).toBe(undefined);
+expect(foo.baz).toBe(undefined);
+"
+);
+
+test_exec!(
+    syntax(),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark,
+            )
+        )
+    },
+    class_field_evalutaion_order,
+    "
+class Foo {
+  a = this.#b;
+  get #b() {
+    return 1
+  }
+  static #c = this.#d();
+  static #d() {}
+}
+expect(() => new Foo()).not.toThrow();
+"
+);
+
 test!(
     syntax(),
-    |_| class_properties(class_properties::Config { loose: false }),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark,
+            )
+        )
+    },
     issue_1742_3,
     "
     class Foo {
@@ -5433,33 +4213,24 @@ test!(
       }
     }
     new Foo();
-    ",
-    "
-    var _tag = new WeakSet();
-    class Foo {
-        constructor(){
-            _tag.add(this);
-            _tag2.set(this, {
-                writable: true,
-                value: _classPrivateMethodGet(this, _tag, tag)
-            });
-            const receiver = _classPrivateMethodGet(this, _tag, tag).bind(this)`tagged template`;
-            expect(receiver).toBe(this);
-            const receiver2 = _classPrivateFieldGet(this, _tag2).bind(this)`tagged template`;
-            expect(receiver2).toBe(this);
-        }
-    }
-    var _tag2 = new WeakMap();
-    function tag() {
-        return this;
-    }
-    new Foo();
     "
 );
 
 test!(
     syntax(),
-    |_| class_properties(class_properties::Config { loose: false }),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark,
+            )
+        )
+    },
     issue_1869_1,
     "
     class TestClass {
@@ -5473,23 +4244,24 @@ test!(
     function someClassDecorator(c) {
         return c;
     }
-    ",
-    "
-    class TestClass {
-    }
-    _defineProperty(TestClass, 'Something', 'hello');
-    _defineProperty(TestClass, 'SomeProperties', {
-        firstProp: TestClass.Something
-    });
-    function someClassDecorator(c) {
-        return c;
-    }
     "
 );
 
 test!(
     syntax(),
-    |_| class_properties(class_properties::Config { loose: false }),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark,
+            )
+        )
+    },
     issue_1869_2,
     "
     var _class;
@@ -5502,27 +4274,24 @@ test!(
     function someClassDecorator(c) {
         return c;
     }
-    ",
-    "
-    var _class;
-    let TestClass = _class = someClassDecorator((_class = function() {
-        class TestClass {
-        }
-        _defineProperty(TestClass, 'Something', 'hello');
-        _defineProperty(TestClass, 'SomeProperties', {
-            firstProp: TestClass.Something
-        });
-        return TestClass;
-    }()) || _class) || _class;
-    function someClassDecorator(c) {
-        return c;
-    }
     "
 );
 
 test!(
     syntax(),
-    |_| class_properties(class_properties::Config { loose: false }),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark,
+            )
+        )
+    },
     issue_2021_1,
     "
     class Item extends Component {
@@ -5532,23 +4301,772 @@ test!(
 
       input = this.props.item;
     }
-    ",
-    "
-    class Item extends Component {
-        constructor(props){
-            super(props);
-            _defineProperty(this, 'input', this.props.item);
-        }
-    }
     "
 );
 
-#[testing::fixture("tests/fixture/classes/**/exec.js")]
+test!(
+    syntax(),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark,
+            )
+        )
+    },
+    issue_3229_1,
+    "
+class A {
+  #D;
+  B() {
+    1;
+    C.#D++;
+    E(function() {});
+  }
+}
+  "
+);
+
+test!(
+    syntax(),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark,
+            )
+        )
+    },
+    issue_3229_2,
+    "
+class A {
+    #b;
+    foo() {
+        A.#b += 123
+        class B {
+            foo() {}
+        }
+    }
+}
+"
+);
+
+test!(
+    syntax(),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark,
+            )
+        )
+    },
+    issue_3368,
+    "
+class A {
+  #a = 'fff'
+  static #b = 123
+  foo() {
+    return class B {
+      bar() {
+        console.log(this.#a, this.#b, this.#bar)
+      }
+    }
+  }
+  #bar() {}
+}
+"
+);
+
+test!(
+    syntax(),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark,
+            )
+        )
+    },
+    nested_class_in_arrow,
+    "
+const a = () => class {
+  a = 123
+  foo() {
+    return class B {
+      b = 456
+    }
+  }
+}
+"
+);
+
+test!(
+    syntax(),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark,
+            )
+        )
+    },
+    issue_2481,
+    "
+class Foo {
+    static #prop1 = 42;
+    static #prop2 = (() => {
+        console.log(this.#prop1);
+    })();
+}
+"
+);
+
+test!(
+    syntax(),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark,
+            )
+        )
+    },
+    issue_4473,
+    "
+var test1 = class X {
+  [Symbol.toStringTag]() {}
+}
+
+function a() {
+  const b = class Y {
+    x() {
+    }
+  }
+}
+"
+);
+
+test!(
+    syntax(),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, false),
+            class_properties(
+                Some(t.comments.clone()),
+                class_properties::Config {
+                    constant_super: true,
+                    ..Default::default()
+                },
+                unresolved_mark,
+            )
+        )
+    },
+    constant_super_complex_super,
+    "
+class A extends class B {} {
+  static x = super.x;
+}
+"
+);
+
+test!(
+    syntax(),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, false),
+            class_properties(
+                Some(t.comments.clone()),
+                class_properties::Config {
+                    constant_super: true,
+                    ..Default::default()
+                },
+                unresolved_mark,
+            )
+        )
+    },
+    constant_super_field,
+    "
+class A extends B {
+  foo = super.bar;
+  static foo = super.bar;
+}
+"
+);
+
+test!(
+    syntax(),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, false),
+            class_properties(
+                Some(t.comments.clone()),
+                class_properties::Config {
+                    no_document_all: true,
+                    ..Default::default()
+                },
+                unresolved_mark,
+            )
+        )
+    },
+    private_optional_chain_member_loose,
+    r#"
+class MyClass {
+  #a
+  foo(o) {
+    o?.#a
+  }
+}
+"#
+);
+
+test_exec!(
+    syntax(),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, false),
+            class_properties(
+                Some(t.comments.clone()),
+                class_properties::Config {
+                    set_public_fields: true,
+                    ..Default::default()
+                },
+                unresolved_mark,
+            )
+        )
+    },
+    set_public_fields_initialization_order,
+    r#"
+const actualOrder = [];
+
+const track = i => {
+  actualOrder.push(i);
+  return i;
+};
+
+class MyClass {
+  static [track(1)] = track(10);
+  [track(2)] = track(13);
+  get [track(3)]() {
+    return "foo";
+  }
+  set [track(4)](value) {
+    this.bar = value;
+  }
+  [track(5)] = track(14);
+  static [track(6)] = track(11);
+  static [track(7)] = track(12);
+  [track(8)]() {}
+  [track(9)] = track(15);
+}
+
+const inst = new MyClass();
+
+const expectedOrder = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+expect(actualOrder).toEqual(expectedOrder);
+
+expect(MyClass[1]).toBe(10);
+expect(inst[2]).toBe(13);
+expect(inst[3]).toBe("foo");
+inst[4] = "baz";
+expect(inst.bar).toBe("baz");
+expect(inst[5]).toBe(14);
+expect(MyClass[6]).toBe(11);
+expect(MyClass[7]).toBe(12);
+expect(typeof inst[8]).toBe("function");
+expect(inst[9]).toBe(15);
+"#
+);
+
+test!(
+    syntax(),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, false),
+            class_properties(
+                Some(t.comments.clone()),
+                class_properties::Config {
+                    set_public_fields: true,
+                    ..Default::default()
+                },
+                unresolved_mark,
+            )
+        )
+    },
+    set_public_fields_computed,
+    r#"
+const foo = "foo";
+const bar = () => {};
+const four = 4;
+
+class MyClass {
+  static [one()] = "test";
+  static [2 * 4 + 7] = "247";
+  static [2 * four + 7] = "247";
+  static [2 * four + seven] = "247";
+  [null] = "null";
+  [undefined] = "undefined";
+  [void 0] = "void 0";
+  get ["whatever"]() {}
+  set ["whatever"](value) {}
+  get [computed()]() {}
+  set [computed()](value) {}
+  ["test" + one]() {}
+  static [10]() {}
+  [/regex/] = "regex";
+  [foo] = "foo";
+  [bar] = "bar";
+  [baz] = "baz";
+  [`template`] = "template";
+  [`template${expression}`] = "template-with-expression";
+}
+"#
+);
+
+test!(
+    syntax(),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, false),
+            class_properties(
+                Some(t.comments.clone()),
+                class_properties::Config {
+                    set_public_fields: true,
+                    ..Default::default()
+                },
+                unresolved_mark
+            )
+        )
+    },
+    set_public_constructor_collision,
+    r#"
+var foo = "bar";
+
+class Foo {
+  bar = foo;
+  static bar = baz;
+
+  constructor() {
+    var foo = "foo";
+    var baz = "baz";
+  }
+}
+"#
+);
+
+test!(
+    syntax(),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, false),
+            class_properties(
+                Some(t.comments.clone()),
+                class_properties::Config {
+                    set_public_fields: true,
+                    ..Default::default()
+                },
+                unresolved_mark,
+            )
+        )
+    },
+    set_public_static_undefined,
+    r#"
+class Foo {
+  static bar;
+}
+"#
+);
+
+test!(
+    syntax(),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, false),
+            class_properties(
+                Some(t.comments.clone()),
+                class_properties::Config {
+                    private_as_properties: true,
+                    ..Default::default()
+                },
+                unresolved_mark,
+            )
+        )
+    },
+    private_as_properties_basic,
+    r#"
+class Cl {
+  #privateField = "top secret string";
+
+  constructor() {
+    this.publicField = "not secret string";
+  }
+
+  get #privateFieldValue() {
+    return this.#privateField;
+  }
+
+  set #privateFieldValue(newValue) {
+    this.#privateField = newValue;
+  }
+
+  publicGetPrivateField() {
+    return this.#privateFieldValue;
+  }
+
+  publicSetPrivateField(newValue) {
+    this.#privateFieldValue = newValue;
+  }
+}
+"#
+);
+
+test!(
+    syntax(),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, false),
+            class_properties(
+                Some(t.comments.clone()),
+                class_properties::Config {
+                    private_as_properties: true,
+                    ..Default::default()
+                },
+                unresolved_mark,
+            )
+        )
+    },
+    private_as_properties_static,
+    r#"
+class Cl {
+  static #foo() {};
+  static #f = 123;
+  static get #bar() {};
+}
+"#
+);
+
+test!(
+    syntax(),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, false),
+            class_properties(
+                Some(t.comments.clone()),
+                class_properties::Config {
+                    private_as_properties: true,
+                    ..Default::default()
+                },
+                unresolved_mark,
+            )
+        )
+    },
+    private_as_properties_getter_only,
+    r#"
+class Cl {
+  #privateField = 0;
+
+  get #privateFieldValue() {
+    return this.#privateField;
+  }
+
+  constructor() {
+    this.#privateFieldValue = 1;
+    ([this.#privateFieldValue] = [1]);
+  }
+}
+"#
+);
+
+test!(
+    syntax(),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, false),
+            class_properties(
+                Some(t.comments.clone()),
+                class_properties::Config {
+                    private_as_properties: true,
+                    set_public_fields: true,
+                    ..Default::default()
+                },
+                unresolved_mark,
+            )
+        )
+    },
+    loose_update,
+    r#"
+class Cl {
+  #privateField = "top secret string";
+
+  constructor() {
+    this.publicField = "not secret string";
+  }
+
+  get #privateFieldValue() {
+    return this.#privateField;
+  }
+
+  set #privateFieldValue(newValue) {
+    this.#privateField = newValue;
+  }
+
+  publicGetPrivateField() {
+    return this.#privateFieldValue;
+  }
+
+  publicSetPrivateField(newValue) {
+    this.#privateFieldValue = newValue;
+  }
+
+  get publicFieldValue() {
+    return this.publicField;
+  }
+
+  set publicFieldValue(newValue) {
+    this.publicField = newValue;
+  }
+
+  testUpdates() {
+    this.#privateField = 0;
+    this.publicField = 0;
+    this.#privateFieldValue = this.#privateFieldValue++;
+    this.publicFieldValue = this.publicFieldValue++;
+
+    ++this.#privateFieldValue;
+    ++this.publicFieldValue;
+
+    this.#privateFieldValue += 1;
+    this.publicFieldValue += 1;
+
+    this.#privateFieldValue = -(this.#privateFieldValue ** this.#privateFieldValue);
+    this.publicFieldValue = -(this.publicFieldValue ** this.publicFieldValue);
+  }
+}
+"#
+);
+
+test!(
+    syntax(),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark,
+            )
+        )
+    },
+    set_only_getter,
+    r#"
+class Cl {
+  #privateField = 0;
+  counter = 0;
+
+  get #privateFieldValue() {
+    return this.#privateField;
+  }
+
+  get self() {
+    this.counter++;
+    return this;
+  }
+
+  constructor() {
+    this.self.#privateFieldValue = 1;
+    ([this.self.#privateFieldValue] = [1]);
+  }
+}
+
+const cl = new Cl();
+"#
+);
+
+test!(
+    syntax(),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark,
+            )
+        )
+    },
+    get_only_setter,
+    r#"
+class Cl {
+  #privateField = 0;
+
+  set #privateFieldValue(newValue) {
+    this.#privateField = newValue;
+  }
+
+  constructor() {
+    this.publicField = this.#privateFieldValue;
+  }
+}
+"#
+);
+
+#[testing::fixture("tests/classes/**/exec.js")]
 fn exec(input: PathBuf) {
-    let src = read_to_string(&input).unwrap();
+    let src = read_to_string(input).unwrap();
     compare_stdout(
         Default::default(),
-        |_| class_properties(class_properties::Config { loose: false }),
+        |t| {
+            let unresolved_mark = Mark::new();
+            let top_level_mark = Mark::new();
+
+            chain!(
+                resolver(unresolved_mark, top_level_mark, false),
+                class_properties(
+                    Some(t.comments.clone()),
+                    Default::default(),
+                    unresolved_mark,
+                )
+            )
+        },
         &src,
     );
 }
+
+#[testing::fixture("tests/class-properties/**/input.js")]
+fn fixture(input: PathBuf) {
+    test_fixture(
+        Default::default(),
+        &|t| {
+            let unresolved_mark = Mark::new();
+            let top_level_mark = Mark::new();
+
+            chain!(
+                resolver(unresolved_mark, top_level_mark, false),
+                class_properties(
+                    Some(t.comments.clone()),
+                    Default::default(),
+                    unresolved_mark
+                )
+            )
+        },
+        &input,
+        &input.with_file_name("output.js"),
+        Default::default(),
+    );
+}
+
+test!(
+    syntax(),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, true),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark,
+            )
+        )
+    },
+    issue_6305,
+    "class x { static #x = super.x = 0 }"
+);
+
+test!(
+    syntax(),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, false),
+            class_properties(
+                Some(t.comments.clone()),
+                Default::default(),
+                unresolved_mark
+            ),
+            optional_chaining(Default::default(), unresolved_mark)
+        )
+    },
+    issue_8003,
+    "
+class Foo {
+  #priv
+  search() {
+    this.#priv?.()
+  }
+}
+    
+console.log(new Foo().search())"
+);

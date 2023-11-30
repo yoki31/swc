@@ -1,13 +1,13 @@
-class C {
+class C__2 {
 }
-class A extends C {
+class A__2 extends C__2 {
     constructor(){
         super();
-        class B__2 extends C {
+        class B__3 extends C__2 {
             constructor(){
                 super();
             }
         }
-        new B__2();
+        new B__3();
     }
 }

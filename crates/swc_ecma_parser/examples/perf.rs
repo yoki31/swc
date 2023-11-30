@@ -1,8 +1,8 @@
-#![feature(bench_black_box)]
+extern crate swc_malloc;
 
-extern crate swc_node_base;
+use std::{collections::hash_map::DefaultHasher, hash::Hash};
 
-use std::{collections::hash_map::DefaultHasher, hash::Hash, hint::black_box};
+use criterion::black_box;
 use swc_common::{self, sync::Lrc, SourceMap};
 use swc_ecma_parser::{lexer::Lexer, Parser, StringInput, Syntax, TsConfig};
 

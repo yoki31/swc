@@ -1,10 +1,16 @@
-use crate::debug::dump;
 use std::fmt::Debug;
+
 use swc_common::Mark;
 use swc_ecma_ast::*;
-use swc_ecma_transforms::{fixer, hygiene};
+use swc_ecma_transforms_base::{fixer::fixer, hygiene::hygiene};
 use swc_ecma_utils::DropSpan;
+#[cfg(debug_assertions)]
+use swc_ecma_visit::VisitWith;
 use swc_ecma_visit::{as_folder, FoldWith, VisitMut, VisitMutWith};
+
+use crate::debug::dump;
+#[cfg(debug_assertions)]
+use crate::debug::AssertValid;
 
 /// Indicates a unit of minifaction.
 pub(crate) trait CompileUnit:
@@ -16,15 +22,24 @@ pub(crate) trait CompileUnit:
 {
     fn is_module() -> bool;
 
-    fn dump(&self) -> String;
+    fn dump(&self) -> String {
+        #[cfg(feature = "debug")]
+        {
+            self.force_dump()
+        }
+        #[cfg(not(feature = "debug"))]
+        {
+            String::new()
+        }
+    }
+
+    fn force_dump(&self) -> String;
 
     fn apply<V>(&mut self, visitor: &mut V)
     where
         V: VisitMut;
 
     fn remove_mark(&mut self) -> Mark;
-
-    fn invoke(&self);
 }
 
 impl CompileUnit for Module {
@@ -32,10 +47,9 @@ impl CompileUnit for Module {
         true
     }
 
-    fn dump(&self) -> String {
-        if !cfg!(feature = "debug") {
-            return String::new();
-        }
+    fn force_dump(&self) -> String {
+        let _noop_sub =
+            tracing::subscriber::set_default(tracing::subscriber::NoSubscriber::default());
 
         dump(
             &self
@@ -45,6 +59,7 @@ impl CompileUnit for Module {
                 .fold_with(&mut as_folder(DropSpan {
                     preserve_ctxt: false,
                 })),
+            true,
         )
     }
 
@@ -52,15 +67,48 @@ impl CompileUnit for Module {
     where
         V: VisitMut,
     {
-        self.visit_mut_with(&mut *visitor)
+        self.visit_mut_with(&mut *visitor);
+
+        crate::debug::invoke_module(self);
     }
 
     fn remove_mark(&mut self) -> Mark {
         Mark::root()
     }
+}
 
-    fn invoke(&self) {
-        crate::debug::invoke(self)
+impl CompileUnit for Script {
+    fn is_module() -> bool {
+        false
+    }
+
+    fn force_dump(&self) -> String {
+        let _noop_sub =
+            tracing::subscriber::set_default(tracing::subscriber::NoSubscriber::default());
+
+        dump(
+            &self
+                .clone()
+                .fold_with(&mut fixer(None))
+                .fold_with(&mut hygiene())
+                .fold_with(&mut as_folder(DropSpan {
+                    preserve_ctxt: false,
+                })),
+            true,
+        )
+    }
+
+    fn apply<V>(&mut self, visitor: &mut V)
+    where
+        V: VisitMut,
+    {
+        self.visit_mut_with(&mut *visitor);
+
+        crate::debug::invoke_script(self);
+    }
+
+    fn remove_mark(&mut self) -> Mark {
+        Mark::root()
     }
 }
 
@@ -69,10 +117,9 @@ impl CompileUnit for FnExpr {
         false
     }
 
-    fn dump(&self) -> String {
-        if !cfg!(feature = "debug") {
-            return String::new();
-        }
+    fn force_dump(&self) -> String {
+        let _noop_sub =
+            tracing::subscriber::set_default(tracing::subscriber::NoSubscriber::default());
 
         dump(
             &self
@@ -82,6 +129,7 @@ impl CompileUnit for FnExpr {
                 .fold_with(&mut as_folder(DropSpan {
                     preserve_ctxt: false,
                 })),
+            true,
         )
     }
 
@@ -89,12 +137,14 @@ impl CompileUnit for FnExpr {
     where
         V: VisitMut,
     {
-        self.visit_mut_with(&mut *visitor)
+        self.visit_mut_with(&mut *visitor);
+        #[cfg(debug_assertions)]
+        {
+            self.visit_with(&mut AssertValid);
+        }
     }
 
     fn remove_mark(&mut self) -> Mark {
         self.function.span.remove_mark()
     }
-
-    fn invoke(&self) {}
 }

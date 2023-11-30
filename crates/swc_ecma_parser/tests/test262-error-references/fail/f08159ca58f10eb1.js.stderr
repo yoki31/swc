@@ -1,6 +1,0 @@
-error: Expression expected
- --> $DIR/tests/test262-parser/fail/f08159ca58f10eb1.js:1:4
-  |
-1 | () + 42
-  |    ^
-

@@ -1,21 +1,22 @@
-let Foo = function() {
+var _foo = /*#__PURE__*/ new WeakMap();
+let Foo = /*#__PURE__*/ function() {
     "use strict";
     function Foo() {
-        _classCallCheck(this, Foo);
-        _foo1.set(this, {
+        _class_call_check(this, Foo);
+        _class_private_field_init(this, _foo, {
             writable: true,
             value: 1
         });
     }
-    _createClass(Foo, [
+    _create_class(Foo, [
         {
             key: "test",
             value: function test() {
-                let Nested = function() {
+                let Nested = /*#__PURE__*/ function() {
                     function Nested() {
-                        _classCallCheck(this, Nested);
+                        _class_call_check(this, Nested);
                     }
-                    _createClass(Nested, [
+                    _create_class(Nested, [
                         {
                             key: "test",
                             value: function test() {
@@ -25,10 +26,9 @@ let Foo = function() {
                     ]);
                     return Nested;
                 }();
-                _foo1.has(this);
+                _foo.has(this);
             }
         }
     ]);
     return Foo;
 }();
-var _foo1 = new WeakMap();

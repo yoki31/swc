@@ -1,26 +1,30 @@
-pub use self::output::{NormalizedOutput, StdErr, StdOut, TestOutput};
+use std::{
+    env, fmt,
+    fmt::{Debug, Display, Formatter},
+    fs::{create_dir_all, rename, File},
+    io::Write,
+    path::{Component, Path, PathBuf},
+    str::FromStr,
+    sync::RwLock,
+    thread,
+};
+
 use difference::Changeset;
 use once_cell::sync::Lazy;
 pub use pretty_assertions::{assert_eq, assert_ne};
 use regex::Regex;
-use std::{
-    env, fmt,
-    fmt::{Debug, Display, Formatter},
-    fs::{create_dir_all, File},
-    io::Write,
-    path::{Path, PathBuf},
-    sync::RwLock,
-    thread,
-};
 use swc_common::{
     collections::AHashMap,
-    errors::{Diagnostic, Handler},
+    errors::{Diagnostic, Handler, HANDLER},
     sync::Lrc,
     FilePathMapping, SourceMap,
 };
 pub use testing_macros::fixture;
 use tracing_subscriber::EnvFilter;
 
+pub use self::output::{NormalizedOutput, StdErr, StdOut, TestOutput};
+
+mod errors;
 pub mod json;
 #[macro_use]
 mod macros;
@@ -32,11 +36,13 @@ mod string_errors;
 /// Configures logger
 #[must_use]
 pub fn init() -> tracing::subscriber::DefaultGuard {
+    let log_env = env::var("RUST_LOG").unwrap_or_else(|_| "debug".to_string());
+
     let logger = tracing_subscriber::FmtSubscriber::builder()
         .without_time()
         .with_target(false)
         .with_ansi(true)
-        .with_env_filter(EnvFilter::from_default_env())
+        .with_env_filter(EnvFilter::from_str(&log_env).unwrap())
         .with_test_writer()
         .pretty()
         .finish();
@@ -45,7 +51,7 @@ pub fn init() -> tracing::subscriber::DefaultGuard {
 }
 
 pub fn find_executable(name: &str) -> Option<PathBuf> {
-    static CACHE: Lazy<RwLock<AHashMap<String, PathBuf>>> = Lazy::new(|| Default::default());
+    static CACHE: Lazy<RwLock<AHashMap<String, PathBuf>>> = Lazy::new(Default::default);
 
     {
         let locked = CACHE.read().unwrap();
@@ -57,7 +63,7 @@ pub fn find_executable(name: &str) -> Option<PathBuf> {
     let path = env::var_os("PATH").and_then(|paths| {
         env::split_paths(&paths)
             .filter_map(|dir| {
-                let full_path = dir.join(&name);
+                let full_path = dir.join(name);
                 if full_path.is_file() {
                     Some(full_path)
                 } else {
@@ -84,7 +90,9 @@ where
 
     let cm = Lrc::new(SourceMap::new(FilePathMapping::empty()));
     let (handler, errors) = self::string_errors::new_handler(cm.clone(), treat_err_as_bug);
-    let result = swc_common::GLOBALS.set(&swc_common::Globals::new(), || op(cm, &handler));
+    let result = swc_common::GLOBALS.set(&swc_common::Globals::new(), || {
+        HANDLER.set(&handler, || op(cm, &handler))
+    });
 
     match result {
         Ok(res) => Ok(res),
@@ -116,9 +124,8 @@ pub struct Tester {
 }
 
 impl Tester {
+    #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
-        let _log = init();
-
         Tester {
             cm: Lrc::new(SourceMap::new(FilePathMapping::empty())),
             globals: swc_common::Globals::new(),
@@ -136,6 +143,8 @@ impl Tester {
     where
         F: FnOnce(Lrc<SourceMap>, Handler) -> Result<Ret, ()>,
     {
+        let _log = init();
+
         let (handler, errors) =
             self::string_errors::new_handler(self.cm.clone(), self.treat_err_as_bug);
         let result = swc_common::GLOBALS.set(&self.globals, || op(self.cm.clone(), handler));
@@ -151,6 +160,8 @@ impl Tester {
     where
         F: FnOnce(Lrc<SourceMap>, Handler) -> Result<Ret, ()>,
     {
+        let _log = init();
+
         let (handler, errors) =
             self::diag_errors::new_handler(self.cm.clone(), self.treat_err_as_bug);
         let result = swc_common::GLOBALS.set(&self.globals, || op(self.cm.clone(), handler));
@@ -271,3 +282,48 @@ impl<'a> Debug for DebugUsingDisplay<'a> {
         Display::fmt(self.0, f)
     }
 }
+
+/// Rename `foo/.bar/exec.js` => `foo/bar/exec.js`
+pub fn unignore_fixture(fixture_path: &Path) {
+    if fixture_path.components().all(|c| {
+        !matches!(c, Component::Normal(..)) || !c.as_os_str().to_string_lossy().starts_with('.')
+    }) {
+        return;
+    }
+    //
+
+    let mut new_path = PathBuf::new();
+
+    for c in fixture_path.components() {
+        if let Component::Normal(s) = c {
+            if let Some(s) = s.to_string_lossy().strip_prefix('.') {
+                new_path.push(s);
+
+                continue;
+            }
+        }
+        new_path.push(c);
+    }
+
+    create_dir_all(new_path.parent().unwrap()).expect("failed to create parent dir");
+
+    rename(fixture_path, &new_path).expect("failed to rename");
+}
+
+pub static CARGO_TARGET_DIR: Lazy<PathBuf> = Lazy::new(|| {
+    cargo_metadata::MetadataCommand::new()
+        .no_deps()
+        .exec()
+        .unwrap()
+        .target_directory
+        .into()
+});
+
+pub static CARGO_WORKSPACE_ROOT: Lazy<PathBuf> = Lazy::new(|| {
+    cargo_metadata::MetadataCommand::new()
+        .no_deps()
+        .exec()
+        .unwrap()
+        .workspace_root
+        .into()
+});

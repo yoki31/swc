@@ -2,48 +2,48 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                0,
+                1,
             ),
             hi: BytePos(
-                0,
+                1,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    0,
+                    1,
                 ),
                 hi: BytePos(
-                    16,
+                    17,
                 ),
                 ctxt: #0,
             },
-            value: Atom('Inline Comment 1' type=dynamic),
+            value: "Inline Comment 1",
         },
         tags: [],
     },
     JsDoc {
         span: Span {
             lo: BytePos(
-                49,
+                50,
             ),
             hi: BytePos(
-                49,
+                50,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    49,
+                    50,
                 ),
                 hi: BytePos(
-                    65,
+                    66,
                 ),
                 ctxt: #0,
             },
-            value: Atom('Inline Comment 2' type=dynamic),
+            value: "Inline Comment 2",
         },
         tags: [],
     },

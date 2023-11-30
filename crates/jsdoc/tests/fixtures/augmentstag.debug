@@ -2,56 +2,56 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                0,
+                1,
             ),
             hi: BytePos(
-                0,
+                1,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    0,
+                    1,
                 ),
                 hi: BytePos(
-                    0,
+                    1,
                 ),
                 ctxt: #0,
             },
-            value: Atom('' type=static),
+            value: "",
         },
         tags: [
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        0,
+                        1,
                     ),
                     hi: BytePos(
-                        11,
+                        12,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            0,
+                            1,
                         ),
                         hi: BytePos(
-                            11,
+                            12,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('constructor' type=static),
+                    value: "constructor",
                 },
                 tag: Class(
                     ClassTag {
                         span: Span {
                             lo: BytePos(
-                                0,
+                                1,
                             ),
                             hi: BytePos(
-                                11,
+                                12,
                             ),
                             ctxt: #0,
                         },
@@ -65,95 +65,94 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                45,
+                46,
             ),
             hi: BytePos(
-                45,
+                46,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    45,
+                    46,
                 ),
                 hi: BytePos(
-                    59,
+                    60,
                 ),
                 ctxt: #0,
             },
-            value: Atom('First property' type=dynamic),
+            value: "First property",
         },
         tags: [],
     },
     JsDoc {
         span: Span {
             lo: BytePos(
-                93,
+                94,
             ),
             hi: BytePos(
-                93,
+                94,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    93,
+                    94,
                 ),
                 hi: BytePos(
-                    111,
+                    112,
                 ),
                 ctxt: #0,
             },
-            value: Atom('Second property
-             *' type=dynamic),
+            value: "Second property\n *",
         },
         tags: [
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        93,
+                        94,
                     ),
                     hi: BytePos(
-                        97,
+                        98,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            93,
+                            94,
                         ),
                         hi: BytePos(
-                            97,
+                            98,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('type' type=static),
+                    value: "type",
                 },
                 tag: Type(
                     TypeTag {
                         span: Span {
                             lo: BytePos(
-                                93,
+                                94,
                             ),
                             hi: BytePos(
-                                97,
+                                98,
                             ),
                             ctxt: #0,
                         },
                         name: Text {
                             span: Span {
                                 lo: BytePos(
-                                    93,
+                                    94,
                                 ),
                                 hi: BytePos(
-                                    101,
+                                    102,
                                 ),
                                 ctxt: #0,
                             },
-                            value: Atom('{String}' type=dynamic),
+                            value: "{String}",
                         },
                     },
                 ),
@@ -163,128 +162,128 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                177,
+                178,
             ),
             hi: BytePos(
-                177,
+                178,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    177,
+                    178,
                 ),
                 hi: BytePos(
-                    197,
+                    198,
                 ),
                 ctxt: #0,
             },
-            value: Atom('First parent method.' type=dynamic),
+            value: "First parent method.",
         },
         tags: [],
     },
     JsDoc {
         span: Span {
             lo: BytePos(
-                249,
+                250,
             ),
             hi: BytePos(
-                249,
+                250,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    249,
+                    250,
                 ),
                 hi: BytePos(
-                    270,
+                    271,
                 ),
                 ctxt: #0,
             },
-            value: Atom('Second parent method.' type=dynamic),
+            value: "Second parent method.",
         },
         tags: [],
     },
     JsDoc {
         span: Span {
             lo: BytePos(
-                322,
+                323,
             ),
             hi: BytePos(
-                322,
+                323,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    322,
+                    323,
                 ),
                 hi: BytePos(
-                    342,
+                    343,
                 ),
                 ctxt: #0,
             },
-            value: Atom('Third parent method.' type=dynamic),
+            value: "Third parent method.",
         },
         tags: [],
     },
     JsDoc {
         span: Span {
             lo: BytePos(
-                394,
+                395,
             ),
             hi: BytePos(
-                394,
+                395,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    394,
+                    395,
                 ),
                 hi: BytePos(
-                    394,
+                    395,
                 ),
                 ctxt: #0,
             },
-            value: Atom('' type=static),
+            value: "",
         },
         tags: [
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        394,
+                        395,
                     ),
                     hi: BytePos(
-                        405,
+                        406,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            394,
+                            395,
                         ),
                         hi: BytePos(
-                            405,
+                            406,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('constructor' type=static),
+                    value: "constructor",
                 },
                 tag: Class(
                     ClassTag {
                         span: Span {
                             lo: BytePos(
-                                394,
+                                395,
                             ),
                             hi: BytePos(
-                                405,
+                                406,
                             ),
                             ctxt: #0,
                         },
@@ -292,14 +291,14 @@
                             Text {
                                 span: Span {
                                     lo: BytePos(
-                                        394,
+                                        395,
                                     ),
                                     hi: BytePos(
-                                        408,
+                                        409,
                                     ),
                                     ctxt: #0,
                                 },
-                                value: Atom('* @extends Foo' type=dynamic),
+                                value: "* @extends Foo",
                             },
                         ),
                         name: None,
@@ -311,104 +310,104 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                455,
+                456,
             ),
             hi: BytePos(
-                455,
+                456,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    455,
+                    456,
                 ),
                 hi: BytePos(
-                    467,
+                    468,
                 ),
                 ctxt: #0,
             },
-            value: Atom('Third prop *' type=dynamic),
+            value: "Third prop *",
         },
         tags: [],
     },
     JsDoc {
         span: Span {
             lo: BytePos(
-                500,
+                501,
             ),
             hi: BytePos(
-                500,
+                501,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    500,
+                    501,
                 ),
                 hi: BytePos(
-                    520,
+                    521,
                 ),
                 ctxt: #0,
             },
-            value: Atom('Second child method.' type=dynamic),
+            value: "Second child method.",
         },
         tags: [],
     },
     JsDoc {
         span: Span {
             lo: BytePos(
-                572,
+                573,
             ),
             hi: BytePos(
-                572,
+                573,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    572,
+                    573,
                 ),
                 hi: BytePos(
-                    572,
+                    573,
                 ),
                 ctxt: #0,
             },
-            value: Atom('' type=static),
+            value: "",
         },
         tags: [
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        572,
+                        573,
                     ),
                     hi: BytePos(
-                        583,
+                        584,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            572,
+                            573,
                         ),
                         hi: BytePos(
-                            583,
+                            584,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('constructor' type=static),
+                    value: "constructor",
                 },
                 tag: Class(
                     ClassTag {
                         span: Span {
                             lo: BytePos(
-                                572,
+                                573,
                             ),
                             hi: BytePos(
-                                583,
+                                584,
                             ),
                             ctxt: #0,
                         },
@@ -416,14 +415,14 @@
                             Text {
                                 span: Span {
                                     lo: BytePos(
-                                        572,
+                                        573,
                                     ),
                                     hi: BytePos(
-                                        588,
+                                        589,
                                     ),
                                     ctxt: #0,
                                 },
-                                value: Atom('* @extends {Bar}' type=dynamic),
+                                value: "* @extends {Bar}",
                             },
                         ),
                         name: None,
@@ -435,48 +434,48 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                635,
+                636,
             ),
             hi: BytePos(
-                635,
+                636,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    635,
+                    636,
                 ),
                 hi: BytePos(
-                    649,
+                    650,
                 ),
                 ctxt: #0,
             },
-            value: Atom('Override prop1' type=dynamic),
+            value: "Override prop1",
         },
         tags: [],
     },
     JsDoc {
         span: Span {
             lo: BytePos(
-                684,
+                685,
             ),
             hi: BytePos(
-                684,
+                685,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    684,
+                    685,
                 ),
                 hi: BytePos(
-                    708,
+                    709,
                 ),
                 ctxt: #0,
             },
-            value: Atom('Third grandchild method.' type=dynamic),
+            value: "Third grandchild method.",
         },
         tags: [],
     },

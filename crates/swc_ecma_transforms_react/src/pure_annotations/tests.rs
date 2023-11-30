@@ -1,4 +1,3 @@
-use super::*;
 use swc_common::{comments::SingleThreadedComments, sync::Lrc, FileName, Mark, SourceMap};
 use swc_ecma_codegen::{text_writer::JsWriter, Emitter};
 use swc_ecma_parser::{Parser, StringInput};
@@ -6,13 +5,14 @@ use swc_ecma_transforms_base::resolver;
 use swc_ecma_transforms_testing::Tester;
 use swc_ecma_visit::FoldWith;
 
+use super::*;
+
 fn parse(
     tester: &mut Tester,
     src: &str,
 ) -> Result<(Module, Lrc<SourceMap>, Lrc<SingleThreadedComments>), ()> {
     let syntax = ::swc_ecma_parser::Syntax::Es(::swc_ecma_parser::EsConfig {
         jsx: true,
-        dynamic_import: true,
         ..Default::default()
     });
     let source_map = Lrc::new(SourceMap::default());
@@ -23,10 +23,10 @@ fn parse(
         let mut p = Parser::new(syntax, StringInput::from(&*source_file), Some(&comments));
         let res = p
             .parse_module()
-            .map_err(|e| e.into_diagnostic(&tester.handler).emit());
+            .map_err(|e| e.into_diagnostic(tester.handler).emit());
 
         for e in p.take_errors() {
-            e.into_diagnostic(&tester.handler).emit()
+            e.into_diagnostic(tester.handler).emit()
         }
 
         res?
@@ -52,27 +52,29 @@ fn emit(
         let mut emitter = Emitter {
             cfg: Default::default(),
             comments: Some(&comments),
-            cm: source_map.clone(),
+            cm: source_map,
             wr: writer,
         };
-        emitter.emit_module(&program).unwrap();
+        emitter.emit_module(program).unwrap();
     }
 
-    return String::from_utf8(buf).unwrap();
+    String::from_utf8(buf).unwrap()
 }
 
 fn run_test(input: &str, expected: &str) {
     Tester::run(|tester| {
-        let top_level_mark = Mark::fresh(Mark::root());
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
 
         let (actual, actual_sm, actual_comments) = parse(tester, input)?;
         let actual = actual
-            .fold_with(&mut resolver::resolver())
+            .fold_with(&mut resolver(unresolved_mark, top_level_mark, false))
             .fold_with(&mut crate::react(
                 actual_sm.clone(),
                 Some(&actual_comments),
                 Default::default(),
                 top_level_mark,
+                unresolved_mark,
             ));
 
         let actual_src = emit(actual_sm, actual_comments, &actual);

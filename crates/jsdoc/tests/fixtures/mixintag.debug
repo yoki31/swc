@@ -2,59 +2,56 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                0,
+                1,
             ),
             hi: BytePos(
-                0,
+                1,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    0,
+                    1,
                 ),
                 hi: BytePos(
-                    132,
+                    133,
                 ),
                 ctxt: #0,
             },
-            value: Atom('This provides methods used for event handling. It's not meant to
-             * be used directly, except as a provider of related methods.
-             *
-             *' type=dynamic),
+            value: "This provides methods used for event handling. It's not meant to\n * be used directly, except as a provider of related methods.\n *\n *",
         },
         tags: [
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        0,
+                        1,
                     ),
                     hi: BytePos(
-                        5,
+                        6,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            0,
+                            1,
                         ),
                         hi: BytePos(
-                            5,
+                            6,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('mixin' type=inline),
+                    value: "mixin",
                 },
                 tag: Mixin(
                     MixinTag {
                         span: Span {
                             lo: BytePos(
-                                0,
+                                1,
                             ),
                             hi: BytePos(
-                                5,
+                                6,
                             ),
                             ctxt: #0,
                         },
@@ -68,7 +65,7 @@
                                 ),
                                 ctxt: #0,
                             },
-                            value: Atom('' type=static),
+                            value: "",
                         },
                     },
                 ),
@@ -78,104 +75,104 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                172,
+                173,
             ),
             hi: BytePos(
-                172,
+                173,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    172,
+                    173,
                 ),
                 hi: BytePos(
-                    188,
+                    189,
                 ),
                 ctxt: #0,
             },
-            value: Atom('fires something.' type=dynamic),
+            value: "fires something.",
         },
         tags: [],
     },
     JsDoc {
         span: Span {
             lo: BytePos(
-                227,
+                228,
             ),
             hi: BytePos(
-                227,
+                228,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    227,
+                    228,
                 ),
                 hi: BytePos(
-                    244,
+                    245,
                 ),
                 ctxt: #0,
             },
-            value: Atom('handles a signal.' type=dynamic),
+            value: "handles a signal.",
         },
         tags: [],
     },
     JsDoc {
         span: Span {
             lo: BytePos(
-                279,
+                280,
             ),
             hi: BytePos(
-                279,
+                280,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    279,
+                    280,
                 ),
                 hi: BytePos(
-                    279,
+                    280,
                 ),
                 ctxt: #0,
             },
-            value: Atom('' type=static),
+            value: "",
         },
         tags: [
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        279,
+                        280,
                     ),
                     hi: BytePos(
-                        290,
+                        291,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            279,
+                            280,
                         ),
                         hi: BytePos(
-                            290,
+                            291,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('constructor' type=static),
+                    value: "constructor",
                 },
                 tag: Class(
                     ClassTag {
                         span: Span {
                             lo: BytePos(
-                                279,
+                                280,
                             ),
                             hi: BytePos(
-                                290,
+                                291,
                             ),
                             ctxt: #0,
                         },
@@ -183,14 +180,14 @@
                             Text {
                                 span: Span {
                                     lo: BytePos(
-                                        279,
+                                        280,
                                     ),
                                     hi: BytePos(
-                                        296,
+                                        297,
                                     ),
                                     ctxt: #0,
                                 },
-                                value: Atom('* @mixes Eventful' type=dynamic),
+                                value: "* @mixes Eventful",
                             },
                         ),
                         name: None,

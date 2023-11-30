@@ -1,12 +1,9 @@
 #![allow(dead_code)]
 
-use darling::FromField;
 use pmutil::{smart_quote, Quote, ToTokensExt};
 use swc_macros_common::prelude::*;
-use syn::*;
+use syn::{parse::Parse, *};
 
-#[derive(Debug, FromField)]
-#[darling(attributes(span))]
 struct MyField {
     /// Name of the field.
     pub ident: Option<Ident>,
@@ -14,11 +11,60 @@ struct MyField {
     pub ty: Type,
 
     /// `#[span(lo)]`
-    #[darling(default)]
     pub lo: bool,
     /// `#[span(hi)]`
-    #[darling(default)]
     pub hi: bool,
+}
+
+struct InputFieldAttr {
+    kinds: Punctuated<Ident, Token![,]>,
+}
+
+impl Parse for InputFieldAttr {
+    fn parse(input: parse::ParseStream) -> Result<Self> {
+        let kinds = input.call(Punctuated::parse_terminated)?;
+
+        Ok(Self { kinds })
+    }
+}
+
+impl MyField {
+    fn from_field(f: &Field) -> Self {
+        let mut lo = false;
+        let mut hi = false;
+
+        for attr in &f.attrs {
+            if !is_attr_name(attr, "span") {
+                continue;
+            }
+
+            match &attr.meta {
+                Meta::Path(..) => {}
+                Meta::List(list) => {
+                    let input = parse2::<InputFieldAttr>(list.tokens.clone())
+                        .expect("failed to parse as `InputFieldAttr`");
+
+                    for kind in input.kinds {
+                        if kind == "lo" {
+                            lo = true
+                        } else if kind == "hi" {
+                            hi = true
+                        } else {
+                            panic!("Unknown span attribute: {:?}", kind)
+                        }
+                    }
+                }
+                _ => panic!("Unknown span attribute"),
+            }
+        }
+
+        Self {
+            ident: f.ident.clone(),
+            ty: f.ty.clone(),
+            lo,
+            hi,
+        }
+    }
 }
 
 pub fn derive(input: DeriveInput) -> ItemImpl {
@@ -141,15 +187,15 @@ fn make_body_for_variant(v: &VariantBinder<'_>, bindings: Vec<BindedField<'_>>) 
 
     let fields: Vec<_> = bindings
         .iter()
-        .map(|b| (b, MyField::from_field(b.field()).unwrap()))
+        .map(|b| (b, MyField::from_field(b.field())))
         .collect();
 
     // TODO: Only one field should be `#[span(lo)]`.
-    let lo = fields.iter().find(|&&(_, ref f)| f.lo);
-    let hi = fields.iter().find(|&&(_, ref f)| f.hi);
+    let lo = fields.iter().find(|&(_, f)| f.lo);
+    let hi = fields.iter().find(|&(_, f)| f.hi);
 
     match (lo, hi) {
-        (Some(&(ref lo_field, _)), Some(&(ref hi_field, _))) => {
+        (Some((lo_field, _)), Some((hi_field, _))) => {
             // Create a new span from lo_field.lo(), hi_field.hi()
             Box::new(
                 Quote::new(def_site::<Span>())
@@ -171,6 +217,10 @@ fn has_empty_span_attr(attrs: &[Attribute]) -> bool {
             return false;
         }
 
-        attr.tokens.is_empty()
+        match &attr.meta {
+            Meta::Path(..) => true,
+            Meta::List(t) => t.tokens.is_empty(),
+            _ => false,
+        }
     })
 }

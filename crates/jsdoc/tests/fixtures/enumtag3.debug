@@ -2,70 +2,70 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                25,
+                26,
             ),
             hi: BytePos(
-                25,
+                26,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    25,
+                    26,
                 ),
                 hi: BytePos(
-                    25,
+                    26,
                 ),
                 ctxt: #0,
             },
-            value: Atom('' type=static),
+            value: "",
         },
         tags: [
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        25,
+                        26,
                     ),
                     hi: BytePos(
-                        32,
+                        33,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            25,
+                            26,
                         ),
                         hi: BytePos(
-                            32,
+                            33,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('exports' type=inline),
+                    value: "exports",
                 },
                 tag: Exports(
                     ExportsTag {
                         span: Span {
                             lo: BytePos(
-                                25,
+                                26,
                             ),
                             hi: BytePos(
-                                32,
+                                33,
                             ),
                             ctxt: #0,
                         },
                         module_name: Text {
                             span: Span {
                                 lo: BytePos(
-                                    25,
+                                    26,
                                 ),
                                 hi: BytePos(
-                                    33,
+                                    34,
                                 ),
                                 ctxt: #0,
                             },
-                            value: Atom('mymodule' type=dynamic),
+                            value: "mymodule",
                         },
                     },
                 ),
@@ -73,47 +73,47 @@
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        25,
+                        26,
                     ),
                     hi: BytePos(
-                        29,
+                        30,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            25,
+                            26,
                         ),
                         hi: BytePos(
-                            29,
+                            30,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('enum' type=static),
+                    value: "enum",
                 },
                 tag: Enum(
                     EnumTag {
                         span: Span {
                             lo: BytePos(
-                                25,
+                                26,
                             ),
                             hi: BytePos(
-                                29,
+                                30,
                             ),
                             ctxt: #0,
                         },
                         ty: Text {
                             span: Span {
                                 lo: BytePos(
-                                    25,
+                                    26,
                                 ),
                                 hi: BytePos(
-                                    33,
+                                    34,
                                 ),
                                 ctxt: #0,
                             },
-                            value: Atom('{string}' type=dynamic),
+                            value: "{string}",
                         },
                     },
                 ),

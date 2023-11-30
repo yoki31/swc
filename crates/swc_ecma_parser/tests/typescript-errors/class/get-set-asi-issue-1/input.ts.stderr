@@ -1,6 +1,0 @@
-error: Expected '(', got 'x'
- --> $DIR/tests/typescript-errors/class/get-set-asi-issue-1/input.ts:3:9
-  |
-3 |   async x() { return 0 }
-  |         ^
-

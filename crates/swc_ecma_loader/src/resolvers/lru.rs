@@ -1,8 +1,11 @@
-use crate::resolve::Resolve;
+use std::num::NonZeroUsize;
+
 use anyhow::Error;
 use lru::LruCache;
-use std::sync::Mutex;
+use parking_lot::Mutex;
 use swc_common::FileName;
+
+use crate::resolve::Resolve;
 
 #[derive(Debug)]
 pub struct CachingResolver<R>
@@ -28,7 +31,9 @@ where
 {
     pub fn new(cap: usize, inner: R) -> Self {
         Self {
-            cache: Mutex::new(LruCache::new(cap)),
+            cache: Mutex::new(LruCache::new(
+                NonZeroUsize::try_from(cap).expect("cap == 0"),
+            )),
             inner,
         }
     }
@@ -40,27 +45,17 @@ where
 {
     fn resolve(&self, base: &FileName, src: &str) -> Result<FileName, Error> {
         {
-            let lock = self.cache.lock();
-            match lock {
-                Ok(mut lock) => {
-                    //
-                    if let Some(v) = lock.get(&(base.clone(), src.to_string())) {
-                        return Ok(v.clone());
-                    }
-                }
-                Err(_) => {}
+            let mut lock = self.cache.lock();
+            //
+            if let Some(v) = lock.get(&(base.clone(), src.to_string())) {
+                return Ok(v.clone());
             }
         }
 
         let resolved = self.inner.resolve(base, src)?;
         {
-            let lock = self.cache.lock();
-            match lock {
-                Ok(mut lock) => {
-                    lock.put((base.clone(), src.to_string()), resolved.clone());
-                }
-                Err(_) => {}
-            }
+            let mut lock = self.cache.lock();
+            lock.put((base.clone(), src.to_string()), resolved.clone());
         }
 
         Ok(resolved)

@@ -86,6 +86,16 @@
 //! }
 //! ```
 //!
+//! ## Cargo features
+//!
+//! ### `typescript`
+//!
+//! Enables typescript parser.
+//!
+//! ### `verify`
+//!
+//! Verify more errors, using `swc_ecma_visit`.
+//!
 //! ## Known issues
 //!
 //! ### Null character after `\`
@@ -103,27 +113,39 @@
 //!
 //! [tc39/test262]:https://github.com/tc39/test262
 
-#![cfg_attr(test, feature(bench_black_box))]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(test, feature(test))]
+#![deny(clippy::all)]
 #![deny(unused)]
+#![allow(clippy::nonminimal_bool)]
+#![allow(clippy::too_many_arguments)]
+#![allow(clippy::unnecessary_unwrap)]
+#![allow(clippy::vec_box)]
+#![allow(clippy::wrong_self_convention)]
+#![allow(clippy::match_like_matches_macro)]
+
+use error::Error;
+use lexer::Lexer;
+use serde::{Deserialize, Serialize};
+use swc_common::{comments::Comments, input::SourceFileInput, SourceFile};
+use swc_ecma_ast::*;
 
 pub use self::{
     lexer::input::{Input, StringInput},
     parser::*,
 };
-use serde::{Deserialize, Serialize};
-use swc_ecma_ast::EsVersion;
 #[deprecated(note = "Use `EsVersion` instead")]
 pub type JscTarget = EsVersion;
 
 #[macro_use]
 mod macros;
+#[macro_use]
+pub mod token;
 pub mod error;
 pub mod lexer;
 mod parser;
-pub mod token;
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, tag = "syntax")]
 pub enum Syntax {
     /// Standard
@@ -131,6 +153,7 @@ pub enum Syntax {
     Es(EsConfig),
     /// This variant requires the cargo feature `typescript` to be enabled.
     #[cfg(feature = "typescript")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "typescript")))]
     #[serde(rename = "typescript")]
     Typescript(TsConfig),
 }
@@ -142,78 +165,53 @@ impl Default for Syntax {
 }
 
 impl Syntax {
-    pub fn import_assertions(self) -> bool {
+    fn auto_accessors(self) -> bool {
         match self {
             Syntax::Es(EsConfig {
-                import_assertions, ..
-            })
-            | Syntax::Typescript(TsConfig {
-                import_assertions, ..
-            }) => import_assertions,
+                auto_accessors: true,
+                ..
+            }) => true,
+            #[cfg(feature = "typescript")]
+            Syntax::Typescript(_) => true,
+            _ => false,
         }
     }
 
-    pub fn static_blocks(self) -> bool {
+    pub fn import_attributes(self) -> bool {
         match self {
             Syntax::Es(EsConfig {
-                static_blocks: true,
-                ..
-            })
-            | Syntax::Typescript(..) => true,
-            _ => false,
+                import_attributes, ..
+            }) => import_attributes,
+            #[cfg(feature = "typescript")]
+            Syntax::Typescript(_) => true,
         }
     }
 
     /// Should we parse jsx?
     pub fn jsx(self) -> bool {
         match self {
-            Syntax::Es(EsConfig { jsx: true, .. })
-            | Syntax::Typescript(TsConfig { tsx: true, .. }) => true,
+            Syntax::Es(EsConfig { jsx: true, .. }) => true,
+            #[cfg(feature = "typescript")]
+            Syntax::Typescript(TsConfig { tsx: true, .. }) => true,
             _ => false,
         }
-    }
-
-    pub const fn optional_chaining(self) -> bool {
-        true
-    }
-
-    pub const fn dynamic_import(self) -> bool {
-        true
     }
 
     pub fn fn_bind(self) -> bool {
-        match self {
-            Syntax::Es(EsConfig { fn_bind: true, .. }) => true,
-            _ => false,
-        }
-    }
-
-    pub const fn num_sep(self) -> bool {
-        true
+        matches!(self, Syntax::Es(EsConfig { fn_bind: true, .. }))
     }
 
     pub fn decorators(self) -> bool {
         match self {
             Syntax::Es(EsConfig {
                 decorators: true, ..
-            })
-            | Syntax::Typescript(TsConfig {
+            }) => true,
+            #[cfg(feature = "typescript")]
+            Syntax::Typescript(TsConfig {
                 decorators: true, ..
             }) => true,
             _ => false,
         }
-    }
-
-    pub const fn class_private_methods(self) -> bool {
-        true
-    }
-
-    pub const fn class_private_props(self) -> bool {
-        true
-    }
-
-    pub const fn class_props(self) -> bool {
-        true
     }
 
     pub fn decorators_before_export(self) -> bool {
@@ -221,90 +219,101 @@ impl Syntax {
             Syntax::Es(EsConfig {
                 decorators_before_export: true,
                 ..
-            })
-            | Syntax::Typescript(..) => true,
-            _ => false,
-        }
-    }
-
-    /// Should we pare typescript?
-    #[cfg(not(feature = "typescript"))]
-    pub const fn typescript(self) -> bool {
-        false
-    }
-
-    /// Should we pare typescript?
-    #[cfg(feature = "typescript")]
-    pub const fn typescript(self) -> bool {
-        match self {
+            }) => true,
+            #[cfg(feature = "typescript")]
             Syntax::Typescript(..) => true,
             _ => false,
         }
     }
 
+    /// Should we parse typescript?
+    #[cfg(not(feature = "typescript"))]
+    pub const fn typescript(self) -> bool {
+        false
+    }
+
+    /// Should we parse typescript?
+    #[cfg(feature = "typescript")]
+    pub const fn typescript(self) -> bool {
+        matches!(self, Syntax::Typescript(..))
+    }
+
     pub fn export_default_from(self) -> bool {
-        match self {
+        matches!(
+            self,
             Syntax::Es(EsConfig {
                 export_default_from: true,
                 ..
-            }) => true,
-            _ => false,
-        }
-    }
-
-    /// `true`
-    pub const fn export_namespace_from(self) -> bool {
-        true
-    }
-
-    /// `true`
-    pub const fn nullish_coalescing(self) -> bool {
-        true
-    }
-
-    pub const fn import_meta(self) -> bool {
-        true
-    }
-
-    pub const fn top_level_await(self) -> bool {
-        true
+            })
+        )
     }
 
     pub fn dts(self) -> bool {
         match self {
+            #[cfg(feature = "typescript")]
             Syntax::Typescript(t) => t.dts,
             _ => false,
         }
     }
 
-    pub fn private_in_object(self) -> bool {
+    pub(crate) fn allow_super_outside_method(self) -> bool {
         match self {
             Syntax::Es(EsConfig {
-                private_in_object, ..
-            }) => private_in_object,
+                allow_super_outside_method,
+                ..
+            }) => allow_super_outside_method,
+            #[cfg(feature = "typescript")]
             Syntax::Typescript(_) => true,
+        }
+    }
+
+    pub(crate) fn allow_return_outside_function(self) -> bool {
+        match self {
+            Syntax::Es(EsConfig {
+                allow_return_outside_function,
+                ..
+            }) => allow_return_outside_function,
+            #[cfg(feature = "typescript")]
+            Syntax::Typescript(_) => false,
         }
     }
 
     pub(crate) fn early_errors(self) -> bool {
         match self {
+            #[cfg(feature = "typescript")]
             Syntax::Typescript(t) => !t.no_early_errors,
             Syntax::Es(..) => true,
         }
     }
+
+    fn disallow_ambiguous_jsx_like(self) -> bool {
+        match self {
+            #[cfg(feature = "typescript")]
+            Syntax::Typescript(t) => t.disallow_ambiguous_jsx_like,
+            _ => false,
+        }
+    }
+
+    pub fn explicit_resource_management(&self) -> bool {
+        match self {
+            Syntax::Es(EsConfig {
+                explicit_resource_management: using_decl,
+                ..
+            }) => *using_decl,
+            #[cfg(feature = "typescript")]
+            Syntax::Typescript(_) => true,
+        }
+    }
 }
 
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TsConfig {
     #[serde(default)]
     pub tsx: bool,
 
     #[serde(default)]
     pub decorators: bool,
-
-    #[serde(default)]
-    pub dynamic_import: bool,
 
     /// `.d.ts`
     #[serde(skip, default)]
@@ -313,33 +322,20 @@ pub struct TsConfig {
     #[serde(skip, default)]
     pub no_early_errors: bool,
 
-    /// Stage 3.
-    #[serde(default)]
-    pub import_assertions: bool,
+    /// babel: `disallowAmbiguousJSXLike`
+    /// Even when JSX parsing is not enabled, this option disallows using syntax
+    /// that would be ambiguous with JSX (`<X> y` type assertions and
+    /// `<X>()=>{}` type arguments)
+    /// see: https://babeljs.io/docs/en/babel-plugin-transform-typescript#disallowambiguousjsxlike
+    #[serde(skip, default)]
+    pub disallow_ambiguous_jsx_like: bool,
 }
 
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct EsConfig {
     #[serde(default)]
     pub jsx: bool,
-    /// Support numeric separator.
-    /// Stage 3.
-    #[serde(rename = "numericSeparator")]
-    #[serde(default)]
-    pub num_sep: bool,
-
-    #[serde(rename = "classPrivateProperty")]
-    #[serde(default)]
-    pub class_private_props: bool,
-
-    #[serde(rename = "privateMethod")]
-    #[serde(default)]
-    pub class_private_methods: bool,
-
-    #[serde(rename = "classProperty")]
-    #[serde(default)]
-    pub class_props: bool,
 
     /// Support function bind expression.
     #[serde(rename = "functionBind")]
@@ -360,45 +356,36 @@ pub struct EsConfig {
     #[serde(default)]
     pub export_default_from: bool,
 
-    #[serde(default)]
-    pub export_namespace_from: bool,
-
-    #[serde(default)]
-    pub dynamic_import: bool,
-
     /// Stage 3.
-    #[serde(default)]
-    pub nullish_coalescing: bool,
+    #[serde(default, alias = "importAssertions")]
+    pub import_attributes: bool,
+
+    #[serde(default, rename = "allowSuperOutsideMethod")]
+    pub allow_super_outside_method: bool,
+
+    #[serde(default, rename = "allowReturnOutsideFunction")]
+    pub allow_return_outside_function: bool,
 
     #[serde(default)]
-    pub optional_chaining: bool,
+    pub auto_accessors: bool,
 
-    /// Stage 3.
     #[serde(default)]
-    pub import_meta: bool,
-
-    /// Stage 3.
-    #[serde(default)]
-    pub top_level_await: bool,
-
-    /// Stage 3.
-    #[serde(default)]
-    pub import_assertions: bool,
-
-    #[serde(default, rename = "staticBlocks")]
-    pub static_blocks: bool,
-
-    #[serde(default, rename = "privateInObject")]
-    pub private_in_object: bool,
+    pub explicit_resource_management: bool,
 }
 
 /// Syntactic context.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Context {
+    /// `true` while backtracking
+    ignore_error: bool,
+
     /// Is in module code?
     module: bool,
     can_be_module: bool,
     strict: bool,
+
+    expr_ctx: ExpressionContext,
+
     include_in_expr: bool,
     /// If true, await expression is parsed, and "await" is treated as a
     /// keyword.
@@ -412,13 +399,23 @@ pub struct Context {
 
     in_type: bool,
     /// Typescript extension.
+    should_not_lex_lt_or_gt_as_type: bool,
+    /// Typescript extension.
     in_declare: bool,
 
     /// If true, `:` should not be treated as a type annotation.
     in_cond_expr: bool,
-    is_direct_child_of_cond: bool,
+    will_expect_colon_for_cond: bool,
+
+    in_class: bool,
+
+    in_class_field: bool,
 
     in_function: bool,
+
+    /// This indicates current scope or the scope out of arrow function is
+    /// function declaration or function expression or not.
+    inside_non_arrow_function_scope: bool,
 
     in_parameters: bool,
 
@@ -428,8 +425,22 @@ pub struct Context {
 
     in_forced_jsx_context: bool,
 
-    /// If true, `:` should not be treated as a type annotation.
-    dont_parse_colon_as_type_ann: bool,
+    // If true, allow super.x and super[x]
+    allow_direct_super: bool,
+
+    ignore_else_clause: bool,
+
+    disallow_conditional_types: bool,
+
+    allow_using_decl: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct ExpressionContext {
+    // TODO:
+    // - include_in
+    for_loop_init: bool,
+    for_await_loop_init: bool,
 }
 
 #[cfg(test)]
@@ -444,4 +455,67 @@ where
 
         f(handler, (&*fm).into())
     })
+}
+
+pub fn with_file_parser<T>(
+    fm: &SourceFile,
+    syntax: Syntax,
+    target: EsVersion,
+    comments: Option<&dyn Comments>,
+    recovered_errors: &mut Vec<Error>,
+    op: impl for<'aa> FnOnce(&mut Parser<Lexer>) -> PResult<T>,
+) -> PResult<T> {
+    let lexer = Lexer::new(syntax, target, SourceFileInput::from(fm), comments);
+    let mut p = Parser::new_from(lexer);
+    let ret = op(&mut p);
+
+    recovered_errors.append(&mut p.take_errors());
+
+    ret
+}
+
+macro_rules! expose {
+    (
+        $name:ident,
+        $T:ty,
+        $($t:tt)*
+    ) => {
+        /// Note: This is recommended way to parse a file.
+        ///
+        /// This is an alias for [Parser], [Lexer] and [SourceFileInput], but
+        /// instantiation of generics occur in `swc_ecma_parser` crate.
+        pub fn $name(
+            fm: &SourceFile,
+            syntax: Syntax,
+            target: EsVersion,
+            comments: Option<&dyn Comments>,
+            recovered_errors: &mut Vec<Error>,
+        ) -> PResult<$T> {
+            with_file_parser(fm, syntax, target, comments, recovered_errors, $($t)*)
+        }
+    };
+}
+
+expose!(parse_file_as_expr, Box<Expr>, |p| {
+    // This allow to parse `import.meta`
+    p.input().ctx.can_be_module = true;
+    p.parse_expr()
+});
+expose!(parse_file_as_module, Module, |p| { p.parse_module() });
+expose!(parse_file_as_script, Script, |p| { p.parse_script() });
+expose!(parse_file_as_program, Program, |p| { p.parse_program() });
+
+#[inline(always)]
+#[cfg(any(target_arch = "wasm32", target_arch = "arm", not(feature = "stacker")))]
+fn maybe_grow<R, F: FnOnce() -> R>(_red_zone: usize, _stack_size: usize, callback: F) -> R {
+    callback()
+}
+
+#[inline(always)]
+#[cfg(all(
+    not(any(target_arch = "wasm32", target_arch = "arm")),
+    feature = "stacker"
+))]
+fn maybe_grow<R, F: FnOnce() -> R>(red_zone: usize, stack_size: usize, callback: F) -> R {
+    stacker::maybe_grow(red_zone, stack_size, callback)
 }

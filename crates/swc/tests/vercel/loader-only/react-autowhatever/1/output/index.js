@@ -1,141 +1,35 @@
+import { _ as _assert_this_initialized } from "@swc/helpers/_/_assert_this_initialized";
+import { _ as _class_call_check } from "@swc/helpers/_/_class_call_check";
+import { _ as _create_class } from "@swc/helpers/_/_create_class";
+import { _ as _define_property } from "@swc/helpers/_/_define_property";
+import { _ as _inherits } from "@swc/helpers/_/_inherits";
+import { _ as _object_spread } from "@swc/helpers/_/_object_spread";
+import { _ as _object_spread_props } from "@swc/helpers/_/_object_spread_props";
+import { _ as _create_super } from "@swc/helpers/_/_create_super";
 import { jsx as _jsx } from "react/jsx-runtime";
-import React, { Component as Component1 } from 'react';
-import PropTypes from 'prop-types';
-import Item from './Item';
-import compareObjects from './compareObjects';
-function _assertThisInitialized(self) {
-    if (self === void 0) {
-        throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
-    }
-    return self;
-}
-function _classCallCheck(instance, Constructor) {
-    if (!(instance instanceof Constructor)) {
-        throw new TypeError("Cannot call a class as a function");
-    }
-}
-function _defineProperties(target, props) {
-    for(var i = 0; i < props.length; i++){
-        var descriptor = props[i];
-        descriptor.enumerable = descriptor.enumerable || false;
-        descriptor.configurable = true;
-        if ("value" in descriptor) descriptor.writable = true;
-        Object.defineProperty(target, descriptor.key, descriptor);
-    }
-}
-function _createClass(Constructor, protoProps, staticProps) {
-    if (protoProps) _defineProperties(Constructor.prototype, protoProps);
-    if (staticProps) _defineProperties(Constructor, staticProps);
-    return Constructor;
-}
-function _defineProperty(obj, key, value) {
-    if (key in obj) {
-        Object.defineProperty(obj, key, {
-            value: value,
-            enumerable: true,
-            configurable: true,
-            writable: true
-        });
-    } else {
-        obj[key] = value;
-    }
-    return obj;
-}
-function _getPrototypeOf(o) {
-    _getPrototypeOf = Object.setPrototypeOf ? Object.getPrototypeOf : function _getPrototypeOf(o) {
-        return o.__proto__ || Object.getPrototypeOf(o);
-    };
-    return _getPrototypeOf(o);
-}
-function _inherits(subClass, superClass) {
-    if (typeof superClass !== "function" && superClass !== null) {
-        throw new TypeError("Super expression must either be null or a function");
-    }
-    subClass.prototype = Object.create(superClass && superClass.prototype, {
-        constructor: {
-            value: subClass,
-            writable: true,
-            configurable: true
-        }
-    });
-    if (superClass) _setPrototypeOf(subClass, superClass);
-}
-function _objectSpread(target) {
-    for(var i = 1; i < arguments.length; i++){
-        var source = arguments[i] != null ? arguments[i] : {
-        };
-        var ownKeys = Object.keys(source);
-        if (typeof Object.getOwnPropertySymbols === "function") {
-            ownKeys = ownKeys.concat(Object.getOwnPropertySymbols(source).filter(function(sym) {
-                return Object.getOwnPropertyDescriptor(source, sym).enumerable;
-            }));
-        }
-        ownKeys.forEach(function(key) {
-            _defineProperty(target, key, source[key]);
-        });
-    }
-    return target;
-}
-function _possibleConstructorReturn(self, call) {
-    if (call && (_typeof(call) === "object" || typeof call === "function")) {
-        return call;
-    }
-    return _assertThisInitialized(self);
-}
-function _setPrototypeOf(o, p) {
-    _setPrototypeOf = Object.setPrototypeOf || function _setPrototypeOf(o, p) {
-        o.__proto__ = p;
-        return o;
-    };
-    return _setPrototypeOf(o, p);
-}
-var _typeof = function(obj) {
-    return obj && typeof Symbol !== "undefined" && obj.constructor === Symbol ? "symbol" : typeof obj;
-};
-function _isNativeReflectConstruct() {
-    if (typeof Reflect === "undefined" || !Reflect.construct) return false;
-    if (Reflect.construct.sham) return false;
-    if (typeof Proxy === "function") return true;
-    try {
-        Boolean.prototype.valueOf.call(Reflect.construct(Boolean, [], function() {
-        }));
-        return true;
-    } catch (e) {
-        return false;
-    }
-}
-function _createSuper(Derived) {
-    var hasNativeReflectConstruct = _isNativeReflectConstruct();
-    return function _createSuperInternal() {
-        var Super = _getPrototypeOf(Derived), result;
-        if (hasNativeReflectConstruct) {
-            var NewTarget = _getPrototypeOf(this).constructor;
-            result = Reflect.construct(Super, arguments, NewTarget);
-        } else {
-            result = Super.apply(this, arguments);
-        }
-        return _possibleConstructorReturn(this, result);
-    };
-}
+import React, { Component } from "react";
+import PropTypes from "prop-types";
+import Item from "./Item";
+import compareObjects from "./compareObjects";
 var ItemsList = /*#__PURE__*/ function(Component) {
     "use strict";
     _inherits(ItemsList, Component);
-    var _super = _createSuper(ItemsList);
+    var _super = _create_super(ItemsList);
     function ItemsList() {
-        _classCallCheck(this, ItemsList);
+        _class_call_check(this, ItemsList);
         var _this;
         _this = _super.apply(this, arguments);
-        _this.storeHighlightedItemReference = function(highlightedItem) {
+        _define_property(_assert_this_initialized(_this), "storeHighlightedItemReference", function(highlightedItem) {
             _this.props.onHighlightedItemChange(highlightedItem === null ? null : highlightedItem.item);
-        };
+        });
         return _this;
     }
-    _createClass(ItemsList, [
+    _create_class(ItemsList, [
         {
             key: "shouldComponentUpdate",
             value: function shouldComponentUpdate(nextProps) {
                 return compareObjects(nextProps, this.props, [
-                    'itemProps'
+                    "itemProps"
                 ]);
             }
         },
@@ -143,12 +37,12 @@ var ItemsList = /*#__PURE__*/ function(Component) {
             key: "render",
             value: function render() {
                 var _this = this;
-                var _props = this.props, items = _props.items, itemProps = _props.itemProps, renderItem = _props.renderItem, renderItemData = _props.renderItemData, sectionIndex = _props.sectionIndex, highlightedItemIndex = _props.highlightedItemIndex, getItemId = _props.getItemId, theme = _props.theme, keyPrefix = _props.keyPrefix;
+                var _this_props = this.props, items = _this_props.items, itemProps = _this_props.itemProps, renderItem = _this_props.renderItem, renderItemData = _this_props.renderItemData, sectionIndex = _this_props.sectionIndex, highlightedItemIndex = _this_props.highlightedItemIndex, getItemId = _this_props.getItemId, theme = _this_props.theme, keyPrefix = _this_props.keyPrefix;
                 var sectionPrefix = sectionIndex === null ? keyPrefix : "".concat(keyPrefix, "section-").concat(sectionIndex, "-");
-                var isItemPropsFunction = typeof itemProps === 'function';
-                return(/*#__PURE__*/ _jsx("ul", _objectSpread({
+                var isItemPropsFunction = typeof itemProps === "function";
+                return /*#__PURE__*/ _jsx("ul", _object_spread_props(_object_spread({
                     role: "listbox"
-                }, theme("".concat(sectionPrefix, "items-list"), 'itemsList'), {
+                }, theme("".concat(sectionPrefix, "items-list"), "itemsList")), {
                     children: items.map(function(item, itemIndex) {
                         var isFirst = itemIndex === 0;
                         var isHighlighted = itemIndex === highlightedItemIndex;
@@ -157,31 +51,30 @@ var ItemsList = /*#__PURE__*/ function(Component) {
                             sectionIndex: sectionIndex,
                             itemIndex: itemIndex
                         }) : itemProps;
-                        var allItemProps = _objectSpread({
+                        var allItemProps = _object_spread({
                             id: getItemId(sectionIndex, itemIndex),
-                            'aria-selected': isHighlighted
-                        }, theme(itemKey, 'item', isFirst && 'itemFirst', isHighlighted && 'itemHighlighted'), itemPropsObj);
+                            "aria-selected": isHighlighted
+                        }, theme(itemKey, "item", isFirst && "itemFirst", isHighlighted && "itemHighlighted"), itemPropsObj);
                         if (isHighlighted) {
                             allItemProps.ref = _this.storeHighlightedItemReference;
                         }
                         // `key` is provided by theme()
-                        /* eslint-disable react/jsx-key */ return(/*#__PURE__*/ _jsx(Item, _objectSpread({
-                        }, allItemProps, {
+                        /* eslint-disable react/jsx-key */ return /*#__PURE__*/ _jsx(Item, _object_spread_props(_object_spread({}, allItemProps), {
                             sectionIndex: sectionIndex,
                             isHighlighted: isHighlighted,
                             itemIndex: itemIndex,
                             item: item,
                             renderItem: renderItem,
                             renderItemData: renderItemData
-                        })));
+                        }));
                     /* eslint-enable react/jsx-key */ })
-                })));
+                }));
             }
         }
     ]);
     return ItemsList;
-}(Component1);
-ItemsList.propTypes = {
+}(Component);
+_define_property(ItemsList, "propTypes", {
     items: PropTypes.array.isRequired,
     itemProps: PropTypes.oneOfType([
         PropTypes.object,
@@ -195,8 +88,8 @@ ItemsList.propTypes = {
     getItemId: PropTypes.func.isRequired,
     theme: PropTypes.func.isRequired,
     keyPrefix: PropTypes.string.isRequired
-};
-ItemsList.defaultProps = {
+});
+_define_property(ItemsList, "defaultProps", {
     sectionIndex: null
-};
+});
 export { ItemsList as default };

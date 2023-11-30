@@ -1,15 +1,17 @@
 extern crate test;
 
-use super::*;
-use crate::EsConfig;
 use std::hint::black_box;
-use swc_common::DUMMY_SP as span;
+
+use swc_common::{FileName, SourceMap, DUMMY_SP as span};
 use swc_ecma_visit::assert_eq_ignore_span;
 use test::Bencher;
 
+use super::*;
+use crate::{parse_file_as_expr, EsConfig};
+
 fn syntax() -> Syntax {
     Syntax::Es(EsConfig {
-        dynamic_import: true,
+        allow_super_outside_method: true,
         ..Default::default()
     })
 }
@@ -94,7 +96,7 @@ fn async_call() {
         expr("async()"),
         Box::new(Expr::Call(CallExpr {
             span,
-            callee: ExprOrSuper::Expr(expr("async")),
+            callee: Callee::Expr(expr("async")),
             args: vec![],
             type_args: None,
         }))
@@ -110,7 +112,7 @@ fn async_arrow() {
             is_async: true,
             is_generator: false,
             params: vec![],
-            body: BlockStmtOrExpr::Expr(expr("foo")),
+            body: Box::new(BlockStmtOrExpr::Expr(expr("foo"))),
             return_type: None,
             type_params: None,
         }))
@@ -136,10 +138,10 @@ fn object_rest_pat() {
                 })],
                 type_ann: None
             })],
-            body: BlockStmtOrExpr::BlockStmt(BlockStmt {
+            body: Box::new(BlockStmtOrExpr::BlockStmt(BlockStmt {
                 span,
                 stmts: vec![]
-            }),
+            })),
             return_type: None,
             type_params: None,
         }))
@@ -175,9 +177,8 @@ fn new_expr_should_not_eat_too_much() {
         new_expr("new Date().toString()"),
         Box::new(Expr::Member(MemberExpr {
             span,
-            obj: ExprOrSuper::Expr(member_expr("new Date()")),
-            prop: Box::new(Ident::new("toString".into(), span).into()),
-            computed: false,
+            obj: member_expr("new Date()"),
+            prop: MemberProp::Ident(Ident::new("toString".into(), span)),
         }))
     );
 }
@@ -200,7 +201,7 @@ fn lhs_expr_as_call() {
         lhs("new Date.toString()()"),
         Box::new(Expr::Call(CallExpr {
             span,
-            callee: ExprOrSuper::Expr(lhs("new Date.toString()")),
+            callee: Callee::Expr(lhs("new Date.toString()")),
             args: vec![],
             type_args: None,
         }))
@@ -216,7 +217,7 @@ fn arrow_fn_no_args() {
             is_async: false,
             is_generator: false,
             params: vec![],
-            body: BlockStmtOrExpr::Expr(expr("1")),
+            body: Box::new(BlockStmtOrExpr::Expr(expr("1"))),
             return_type: None,
             type_params: None,
         }))
@@ -231,7 +232,7 @@ fn arrow_fn() {
             is_async: false,
             is_generator: false,
             params: vec![Pat::Ident(Ident::new("a".into(), span).into())],
-            body: BlockStmtOrExpr::Expr(expr("1")),
+            body: Box::new(BlockStmtOrExpr::Expr(expr("1"))),
             return_type: None,
             type_params: None,
         }))
@@ -251,7 +252,7 @@ fn arrow_fn_rest() {
                 arg: Box::new(Pat::Ident(Ident::new("a".into(), span).into())),
                 type_ann: None
             })],
-            body: BlockStmtOrExpr::Expr(expr("1")),
+            body: Box::new(BlockStmtOrExpr::Expr(expr("1"))),
             return_type: None,
             type_params: None,
         }))
@@ -266,7 +267,7 @@ fn arrow_fn_no_paren() {
             is_async: false,
             is_generator: false,
             params: vec![Pat::Ident(Ident::new("a".into(), span).into())],
-            body: BlockStmtOrExpr::Expr(expr("1")),
+            body: Box::new(BlockStmtOrExpr::Expr(expr("1"))),
             type_params: None,
             return_type: None,
         }))
@@ -334,7 +335,8 @@ fn max_integer() {
         expr("1.7976931348623157e+308"),
         Box::new(Expr::Lit(Lit::Num(Number {
             span,
-            value: 1.797_693_134_862_315_7e308
+            value: 1.797_693_134_862_315_7e308,
+            raw: Some("1.7976931348623157e+308".into()),
         })))
     )
 }
@@ -345,7 +347,7 @@ fn iife() {
         expr("(function(){})()"),
         Box::new(Expr::Call(CallExpr {
             span,
-            callee: ExprOrSuper::Expr(expr("(function(){})")),
+            callee: Callee::Expr(expr("(function(){})")),
             args: vec![],
             type_args: Default::default(),
         }))
@@ -358,7 +360,7 @@ fn issue_319_1() {
         expr("obj(({ async f() { await g(); } }));"),
         Box::new(Expr::Call(CallExpr {
             span,
-            callee: ExprOrSuper::Expr(expr("obj")),
+            callee: Callee::Expr(expr("obj")),
             args: vec![ExprOrSpread {
                 spread: None,
                 expr: expr("({ async f() { await g(); } })"),
@@ -371,28 +373,20 @@ fn issue_319_1() {
 #[test]
 fn issue_328() {
     assert_eq_ignore_span!(
-        test_parser(
-            "import('test')",
-            Syntax::Es(EsConfig {
-                dynamic_import: true,
-                ..Default::default()
-            }),
-            |p| { p.parse_stmt(true) }
-        ),
+        test_parser("import('test')", Syntax::Es(Default::default()), |p| {
+            p.parse_stmt(true)
+        }),
         Stmt::Expr(ExprStmt {
             span,
             expr: Box::new(Expr::Call(CallExpr {
                 span,
-                callee: ExprOrSuper::Expr(Box::new(Expr::Ident(Ident::new("import".into(), span)))),
+                callee: Callee::Import(Import { span }),
                 args: vec![ExprOrSpread {
                     spread: None,
                     expr: Box::new(Expr::Lit(Lit::Str(Str {
                         span,
                         value: "test".into(),
-                        has_escape: false,
-                        kind: StrKind::Normal {
-                            contains_quote: true
-                        }
+                        raw: Some("'test'".into()),
                     }))),
                 }],
                 type_args: Default::default(),
@@ -421,10 +415,7 @@ hehe.";"#,
         Box::new(Expr::Lit(Lit::Str(Str {
             span,
             value: "okokhehe.".into(),
-            has_escape: true,
-            kind: StrKind::Normal {
-                contains_quote: true
-            }
+            raw: Some("\"ok\\\nok\\\nhehe.\"".into()),
         })))
     );
 }
@@ -434,7 +425,7 @@ fn issue_380() {
     expr(
         " import('../foo/bar')
     .then(bar => {
-        // bar should be {default: DEFAULT_EXPORTED_THING_IN_BAR} or atleast what it is supposed \
+        // bar should be {default: DEFAULT_EXPORTED_THING_IN_BAR} or at least what it is supposed \
          to be
     })
 }",
@@ -443,7 +434,101 @@ fn issue_380() {
 
 #[test]
 fn issue_675() {
-    expr("Object.setPrototypeOf(this, new.target.prototype)");
+    expr("fn = function () { Object.setPrototypeOf(this, new.target.prototype); }");
+}
+
+#[test]
+fn super_expr() {
+    assert_eq_ignore_span!(
+        expr("super.foo();"),
+        Box::new(Expr::Call(CallExpr {
+            span,
+            callee: Callee::Expr(Box::new(Expr::SuperProp(SuperPropExpr {
+                span,
+                obj: Super { span },
+                prop: SuperProp::Ident(Ident {
+                    span,
+                    sym: "foo".into(),
+                    optional: false
+                })
+            }))),
+            args: Vec::new(),
+            type_args: Default::default(),
+        }))
+    );
+}
+
+#[test]
+fn super_expr_computed() {
+    assert_eq_ignore_span!(
+        expr("super[a] ??= 123;"),
+        Box::new(Expr::Assign(AssignExpr {
+            span,
+            op: AssignOp::NullishAssign,
+            left: PatOrExpr::Expr(Box::new(Expr::SuperProp(SuperPropExpr {
+                span,
+                obj: Super { span },
+                prop: SuperProp::Computed(ComputedPropName {
+                    span,
+                    expr: Box::new(Expr::Ident(Ident {
+                        span,
+                        sym: "a".into(),
+                        optional: false
+                    })),
+                })
+            }))),
+            right: Box::new(Expr::Lit(Lit::Num(Number {
+                span,
+                value: 123f64,
+                raw: Some("123".into()),
+            })))
+        }))
+    );
+}
+
+#[test]
+fn issue_3672_1() {
+    test_parser(
+        "report({
+    fix: fixable ? null : (): RuleFix => {},
+});",
+        Syntax::Typescript(Default::default()),
+        |p| p.parse_module(),
+    );
+}
+
+#[test]
+fn issue_3672_2() {
+    test_parser(
+        "f(a ? (): void => { } : (): void => { })",
+        Syntax::Typescript(Default::default()),
+        |p| p.parse_module(),
+    );
+}
+
+#[test]
+fn issue_5947() {
+    test_parser(
+        "[a as number, b as number, c as string] = [1, 2, '3']",
+        Syntax::Typescript(Default::default()),
+        |p| p.parse_module(),
+    );
+}
+
+#[test]
+fn issue_6781() {
+    let cm = SourceMap::default();
+    let fm = cm.new_source_file(FileName::Anon, "import.meta.env".to_string());
+    let mut errors = vec![];
+    let expr = parse_file_as_expr(
+        &fm,
+        Default::default(),
+        Default::default(),
+        None,
+        &mut errors,
+    );
+    assert!(expr.is_ok());
+    assert!(errors.is_empty());
 }
 
 #[bench]

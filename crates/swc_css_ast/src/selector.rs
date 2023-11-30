@@ -1,23 +1,90 @@
-use crate::{Ident, Str, Tokens};
 use is_macro::Is;
 use string_enum::StringEnum;
-use swc_atoms::JsWord;
-use swc_common::{ast_node, EqIgnoreSpan, Span};
+use swc_atoms::{Atom, JsWord};
+use swc_common::{ast_node, util::take::Take, EqIgnoreSpan, Span};
+
+use crate::{Delimiter, Ident, ListOfComponentValues, Str, TokenAndSpan};
 
 #[ast_node("SelectorList")]
+#[derive(Eq, Hash, EqIgnoreSpan)]
 pub struct SelectorList {
     pub span: Span,
     pub children: Vec<ComplexSelector>,
 }
 
+impl Take for SelectorList {
+    fn dummy() -> Self {
+        Self {
+            span: Take::dummy(),
+            children: Take::dummy(),
+        }
+    }
+}
+
+#[ast_node("SelectorList")]
+#[derive(Eq, Hash, EqIgnoreSpan)]
+pub struct ForgivingSelectorList {
+    pub span: Span,
+    pub children: Vec<ForgivingComplexSelector>,
+}
+
+#[ast_node]
+#[derive(Eq, Hash, Is, EqIgnoreSpan)]
+pub enum ForgivingComplexSelector {
+    #[tag("ComplexSelector")]
+    ComplexSelector(ComplexSelector),
+    #[tag("ListOfComponentValues")]
+    ListOfComponentValues(ListOfComponentValues),
+}
+
+#[ast_node("CompoundSelectorList")]
+#[derive(Eq, Hash, EqIgnoreSpan)]
+pub struct CompoundSelectorList {
+    pub span: Span,
+    pub children: Vec<CompoundSelector>,
+}
+
+#[ast_node("RelativeSelectorList")]
+#[derive(Eq, Hash, EqIgnoreSpan)]
+pub struct RelativeSelectorList {
+    pub span: Span,
+    pub children: Vec<RelativeSelector>,
+}
+
+#[ast_node("ForgivingRelativeSelectorList")]
+#[derive(Eq, Hash, EqIgnoreSpan)]
+pub struct ForgivingRelativeSelectorList {
+    pub span: Span,
+    pub children: Vec<ForgivingRelativeSelector>,
+}
+
+#[ast_node]
+#[derive(Eq, Hash, Is, EqIgnoreSpan)]
+pub enum ForgivingRelativeSelector {
+    #[tag("RelativeSelector")]
+    RelativeSelector(RelativeSelector),
+    #[tag("ListOfComponentValues")]
+    ListOfComponentValues(ListOfComponentValues),
+}
+
 #[ast_node("ComplexSelector")]
+#[derive(Eq, Hash, EqIgnoreSpan)]
 pub struct ComplexSelector {
     pub span: Span,
     pub children: Vec<ComplexSelectorChildren>,
 }
 
+impl Take for ComplexSelector {
+    fn dummy() -> Self {
+        Self {
+            span: Take::dummy(),
+            children: Take::dummy(),
+        }
+    }
+}
+
 #[ast_node]
-#[derive(Is)]
+#[derive(Eq, Hash, Is, EqIgnoreSpan)]
 pub enum ComplexSelectorChildren {
     #[tag("CompoundSelector")]
     CompoundSelector(CompoundSelector),
@@ -25,23 +92,47 @@ pub enum ComplexSelectorChildren {
     Combinator(Combinator),
 }
 
+#[ast_node("RelativeSelector")]
+#[derive(Eq, Hash, EqIgnoreSpan)]
+pub struct RelativeSelector {
+    pub span: Span,
+    pub combinator: Option<Combinator>,
+    pub selector: ComplexSelector,
+}
+
 /// e.g. `foo.c1.c2`
 #[ast_node("CompoundSelector")]
+#[derive(Eq, Hash, EqIgnoreSpan)]
 pub struct CompoundSelector {
     pub span: Span,
     /// "&"
     pub nesting_selector: Option<NestingSelector>,
-    pub type_selector: Option<TypeSelector>,
+    pub type_selector: Option<Box<TypeSelector>>,
     pub subclass_selectors: Vec<SubclassSelector>,
 }
 
 #[ast_node("Combinator")]
+#[derive(Eq, Hash, EqIgnoreSpan)]
 pub struct Combinator {
     pub span: Span,
     pub value: CombinatorValue,
 }
 
-#[derive(StringEnum, Clone, Copy, Eq, PartialEq, PartialOrd, Ord, Hash, EqIgnoreSpan)]
+#[derive(StringEnum, Clone, Copy, Eq, PartialEq, PartialOrd, Ord, Hash, Is, EqIgnoreSpan)]
+#[cfg_attr(
+    feature = "rkyv",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
+#[cfg_attr(
+    feature = "rkyv",
+    archive(bound(
+        serialize = "__S: rkyv::ser::Serializer + rkyv::ser::ScratchSpace + \
+                     rkyv::ser::SharedSerializeRegistry",
+        deserialize = "__D: rkyv::de::SharedDeserializeRegistry"
+    ))
+)]
+#[cfg_attr(feature = "rkyv", archive(check_bytes))]
+#[cfg_attr(feature = "rkyv", archive_attr(repr(u32)))]
 pub enum CombinatorValue {
     /// ` `
     Descendant,
@@ -54,25 +145,79 @@ pub enum CombinatorValue {
 
     /// `~`
     LaterSibling,
+
+    /// `||`
+    Column,
 }
 
 #[ast_node("NestingSelector")]
+#[derive(Eq, Hash, EqIgnoreSpan)]
 pub struct NestingSelector {
     pub span: Span,
 }
 
-#[ast_node("TypeSelector")]
-pub struct TypeSelector {
+#[ast_node]
+#[derive(Eq, Hash, Is, EqIgnoreSpan)]
+pub enum TypeSelector {
+    #[tag("TagNameSelector")]
+    TagName(TagNameSelector),
+    #[tag("UniversalSelector")]
+    Universal(UniversalSelector),
+}
+
+#[ast_node("TagNameSelector")]
+#[derive(Eq, Hash, EqIgnoreSpan)]
+pub struct TagNameSelector {
     pub span: Span,
-    ///	If present, this is an identifier or "*" and is followed by a "|"
-    /// character
-    pub prefix: Option<Ident>,
-    ///	This is an identifier or "*".
-    pub name: Ident,
+    pub name: WqName,
+}
+
+#[ast_node("UniversalSelector")]
+#[derive(Eq, Hash, EqIgnoreSpan)]
+pub struct UniversalSelector {
+    pub span: Span,
+    pub prefix: Option<NamespacePrefix>,
+}
+
+#[ast_node("NamespacePrefix")]
+#[derive(Eq, Hash, EqIgnoreSpan)]
+pub struct NamespacePrefix {
+    pub span: Span,
+    pub namespace: Option<Namespace>,
 }
 
 #[ast_node]
-#[derive(Is)]
+#[derive(Eq, Hash, Is, EqIgnoreSpan)]
+pub enum Namespace {
+    #[tag("NamedNamespace")]
+    Named(NamedNamespace),
+    #[tag("AnyNamespace")]
+    Any(AnyNamespace),
+}
+
+#[ast_node("NamedNamespace")]
+#[derive(Eq, Hash, EqIgnoreSpan)]
+pub struct NamedNamespace {
+    pub span: Span,
+    pub name: Ident,
+}
+
+#[ast_node("AnyNamespace")]
+#[derive(Eq, Hash, EqIgnoreSpan)]
+pub struct AnyNamespace {
+    pub span: Span,
+}
+
+#[ast_node("WqName")]
+#[derive(Eq, Hash, EqIgnoreSpan)]
+pub struct WqName {
+    pub span: Span,
+    pub prefix: Option<NamespacePrefix>,
+    pub value: Ident,
+}
+
+#[ast_node]
+#[derive(Eq, Hash, Is, EqIgnoreSpan)]
 pub enum SubclassSelector {
     #[tag("IdSelector")]
     Id(IdSelector),
@@ -81,20 +226,57 @@ pub enum SubclassSelector {
     Class(ClassSelector),
 
     #[tag("AttributeSelector")]
-    Attr(AttrSelector),
+    Attribute(Box<AttributeSelector>),
 
     #[tag("PseudoClassSelector")]
     PseudoClass(PseudoClassSelector),
 
     #[tag("PseudoElementSelector")]
     PseudoElement(PseudoElementSelector),
-
-    #[tag("AtSelector")]
-    At(AtSelector),
 }
 
-#[derive(StringEnum, Clone, Copy, Eq, PartialEq, PartialOrd, Ord, Hash, EqIgnoreSpan)]
-pub enum AttrSelectorMatcher {
+#[ast_node("IdSelector")]
+#[derive(Eq, Hash, EqIgnoreSpan)]
+pub struct IdSelector {
+    pub span: Span,
+    /// Does not include `#`
+    pub text: Ident,
+}
+
+#[ast_node("ClassSelector")]
+#[derive(Eq, Hash, EqIgnoreSpan)]
+pub struct ClassSelector {
+    pub span: Span,
+    /// Does not include `.`
+    pub text: Ident,
+}
+
+#[ast_node("AttributeSelector")]
+#[derive(Eq, Hash, EqIgnoreSpan)]
+pub struct AttributeSelector {
+    pub span: Span,
+    pub name: WqName,
+    pub matcher: Option<AttributeSelectorMatcher>,
+    pub value: Option<AttributeSelectorValue>,
+    pub modifier: Option<AttributeSelectorModifier>,
+}
+
+#[derive(StringEnum, Clone, Copy, Eq, PartialEq, PartialOrd, Ord, Hash, Is, EqIgnoreSpan)]
+#[cfg_attr(
+    feature = "rkyv",
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
+#[cfg_attr(feature = "rkyv", archive(check_bytes))]
+#[cfg_attr(feature = "rkyv", archive_attr(repr(u32)))]
+#[cfg_attr(
+    feature = "rkyv",
+    archive(bound(
+        serialize = "__S: rkyv::ser::Serializer + rkyv::ser::ScratchSpace + \
+                     rkyv::ser::SharedSerializeRegistry",
+        deserialize = "__D: rkyv::de::SharedDeserializeRegistry"
+    ))
+)]
+pub enum AttributeSelectorMatcherValue {
     /// `=`
     Equals,
 
@@ -114,9 +296,16 @@ pub enum AttrSelectorMatcher {
     Asterisk,
 }
 
+#[ast_node("AttributeSelectorMatcher")]
+#[derive(Eq, Hash, EqIgnoreSpan)]
+pub struct AttributeSelectorMatcher {
+    pub span: Span,
+    pub value: AttributeSelectorMatcherValue,
+}
+
 #[ast_node]
-#[derive(Is)]
-pub enum AttrSelectorValue {
+#[derive(Eq, Hash, Is, EqIgnoreSpan)]
+pub enum AttributeSelectorValue {
     #[tag("String")]
     Str(Str),
 
@@ -124,89 +313,112 @@ pub enum AttrSelectorValue {
     Ident(Ident),
 }
 
-#[ast_node("AttributeSelector")]
-pub struct AttrSelector {
+#[ast_node("AttributeSelectorModifier")]
+#[derive(Eq, Hash, EqIgnoreSpan)]
+pub struct AttributeSelectorModifier {
     pub span: Span,
-    pub prefix: Option<Ident>,
+    pub value: Ident,
+}
+
+#[ast_node("PseudoClassSelector")]
+#[derive(Eq, Hash, EqIgnoreSpan)]
+pub struct PseudoClassSelector {
+    pub span: Span,
     pub name: Ident,
-    pub matcher: Option<AttrSelectorMatcher>,
-    pub value: Option<AttrSelectorValue>,
-    pub modifier: Option<char>,
+    pub children: Option<Vec<PseudoClassSelectorChildren>>,
 }
 
 #[ast_node]
-#[derive(Is)]
-pub enum PseudoSelectorChildren {
-    #[tag("Nth")]
-    Nth(Nth),
+#[derive(Eq, Hash, Is, EqIgnoreSpan)]
+pub enum PseudoClassSelectorChildren {
+    #[tag("TokenAndSpan")]
+    PreservedToken(TokenAndSpan),
 
-    #[tag("Tokens")]
-    Tokens(Tokens),
-}
-
-#[ast_node("Nth")]
-pub struct Nth {
-    pub span: Span,
-    pub nth: NthValue,
-    pub selector_list: Option<SelectorList>,
-}
-
-#[ast_node("AnPlusB")]
-pub struct AnPlusB {
-    pub span: Span,
-    pub a: Option<i32>,
-    pub a_raw: Option<JsWord>,
-    pub b: Option<i32>,
-    pub b_raw: Option<JsWord>,
-}
-
-#[ast_node]
-#[derive(Is)]
-pub enum NthValue {
     #[tag("AnPlusB")]
     AnPlusB(AnPlusB),
 
     #[tag("Ident")]
     Ident(Ident),
+
+    #[tag("Str")]
+    Str(Str),
+
+    #[tag("Delimiter")]
+    Delimiter(Delimiter),
+
+    #[tag("ComplexSelector")]
+    ComplexSelector(ComplexSelector),
+
+    #[tag("SelectorList")]
+    SelectorList(SelectorList),
+
+    #[tag("ForgivingSelectorList")]
+    ForgivingSelectorList(ForgivingSelectorList),
+
+    #[tag("CompoundSelectorList")]
+    CompoundSelectorList(CompoundSelectorList),
+
+    #[tag("RelativeSelectorList")]
+    RelativeSelectorList(RelativeSelectorList),
+
+    #[tag("ForgivingRelativeSelectorList")]
+    ForgivingRelativeSelectorList(ForgivingRelativeSelectorList),
+
+    #[tag("CompoundSelector")]
+    CompoundSelector(CompoundSelector),
 }
 
-#[ast_node("PseudoClassSelector")]
-pub struct PseudoClassSelector {
+#[ast_node]
+#[derive(Eq, Hash, Is, EqIgnoreSpan)]
+pub enum AnPlusB {
+    #[tag("Ident")]
+    Ident(Ident),
+    #[tag("AnPlusBNotation")]
+    AnPlusBNotation(AnPlusBNotation),
+}
+
+#[ast_node("AnPlusBNotation")]
+#[derive(Eq, Hash, EqIgnoreSpan)]
+pub struct AnPlusBNotation {
     pub span: Span,
-    pub name: Ident,
-    pub children: Option<PseudoSelectorChildren>,
+    pub a: Option<i32>,
+    pub a_raw: Option<Atom>,
+    pub b: Option<i32>,
+    pub b_raw: Option<Atom>,
 }
 
 #[ast_node("PseudoElementSelector")]
+#[derive(Eq, Hash, EqIgnoreSpan)]
 pub struct PseudoElementSelector {
     pub span: Span,
     pub name: Ident,
-    pub children: Option<Tokens>,
+    pub children: Option<Vec<PseudoElementSelectorChildren>>,
 }
 
-#[ast_node("IdSelector")]
-pub struct IdSelector {
-    pub span: Span,
-    /// Does not include `#`
-    pub text: Ident,
+#[ast_node]
+#[derive(Eq, Hash, Is, EqIgnoreSpan)]
+pub enum PseudoElementSelectorChildren {
+    #[tag("TokenAndSpan")]
+    PreservedToken(TokenAndSpan),
+    #[tag("Ident")]
+    Ident(Ident),
+    #[tag("CompoundSelector")]
+    CompoundSelector(CompoundSelector),
+    #[tag("CustomHighlightName")]
+    CustomHighlightName(CustomHighlightName),
 }
 
-#[ast_node("ClassSelector")]
-pub struct ClassSelector {
+#[ast_node("CustomHighlightName")]
+#[derive(Eq, Hash)]
+pub struct CustomHighlightName {
     pub span: Span,
-    /// Does not include `.`
-    pub text: Ident,
+
+    pub value: JsWord,
+    pub raw: Option<Atom>,
 }
 
-#[ast_node("TagSelector")]
-pub struct TagSelector {
-    pub span: Span,
-    pub text: Ident,
-}
-
-/// Type for `@top-center`. Allowwed in only some contexts.
-#[ast_node("AtSelector")]
-pub struct AtSelector {
-    pub span: Span,
-    pub text: Ident,
+impl EqIgnoreSpan for CustomHighlightName {
+    fn eq_ignore_span(&self, other: &Self) -> bool {
+        self.value == other.value
+    }
 }

@@ -1,18 +1,16 @@
-use swc_atoms::{js_word, JsWord};
+use swc_atoms::JsWord;
 use swc_common::{
     collections::{AHashMap, AHashSet},
     sync::Lrc,
-    EqIgnoreSpan,
 };
 use swc_ecma_ast::*;
-use swc_ecma_transforms_base::perf::Parallel;
-use swc_ecma_transforms_macros::parallel;
-use swc_ecma_utils::{collect_decls, ident::IdentLike, Id};
+use swc_ecma_transforms_base::perf::{ParVisitMut, Parallel};
+use swc_ecma_utils::{collect_decls, parallel::cpu_count, NodeIgnoringSpan};
 use swc_ecma_visit::{as_folder, noop_visit_mut_type, Fold, VisitMut, VisitMutWith};
 
 /// The key will be compared using [EqIgnoreSpan::eq_ignore_span], and matched
 /// expressions will be replaced with the value.
-pub type GlobalExprMap = Lrc<Vec<(Expr, Expr)>>;
+pub type GlobalExprMap = Lrc<AHashMap<NodeIgnoringSpan<'static, Expr>, Expr>>;
 
 /// Create a global inlining pass, which replaces expressions with the specified
 /// value.
@@ -49,7 +47,7 @@ pub fn inline_globals2(
 struct InlineGlobals {
     envs: Lrc<AHashMap<JsWord, Expr>>,
     globals: Lrc<AHashMap<JsWord, Expr>>,
-    global_exprs: GlobalExprMap,
+    global_exprs: Lrc<AHashMap<NodeIgnoringSpan<'static, Expr>, Expr>>,
 
     typeofs: Lrc<AHashMap<JsWord, JsWord>>,
 
@@ -64,7 +62,6 @@ impl Parallel for InlineGlobals {
     fn merge(&mut self, _: Self) {}
 }
 
-#[parallel]
 impl VisitMut for InlineGlobals {
     noop_visit_mut_type!();
 
@@ -73,11 +70,11 @@ impl VisitMut for InlineGlobals {
 
         match &mut n.left {
             PatOrExpr::Expr(l) => {
-                (&mut **l).visit_mut_children_with(self);
+                (**l).visit_mut_children_with(self);
             }
             PatOrExpr::Pat(l) => match &mut **l {
                 Pat::Expr(l) => {
-                    (&mut **l).visit_mut_children_with(self);
+                    (**l).visit_mut_children_with(self);
                 }
                 _ => {
                     l.visit_mut_with(self);
@@ -87,22 +84,18 @@ impl VisitMut for InlineGlobals {
     }
 
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
-        match expr {
-            Expr::Ident(Ident { ref sym, span, .. }) => {
-                if self.bindings.contains(&(sym.clone(), span.ctxt)) {
-                    return;
-                }
-            }
-
-            _ => {}
-        }
-
-        for (key, value) in self.global_exprs.iter() {
-            if key.eq_ignore_span(&*expr) {
-                *expr = value.clone();
-                expr.visit_mut_with(self);
+        if let Expr::Ident(Ident { ref sym, span, .. }) = expr {
+            if self.bindings.contains(&(sym.clone(), span.ctxt)) {
                 return;
             }
+        }
+
+        if let Some(value) =
+            Ident::within_ignored_ctxt(|| self.global_exprs.get(&NodeIgnoringSpan::borrowed(expr)))
+        {
+            *expr = value.clone();
+            expr.visit_mut_with(self);
+            return;
         }
 
         expr.visit_mut_children_with(self);
@@ -115,8 +108,6 @@ impl VisitMut for InlineGlobals {
                     value.visit_mut_with(self);
                     *expr = value;
                 }
-
-                return;
             }
 
             Expr::Unary(UnaryExpr {
@@ -125,81 +116,55 @@ impl VisitMut for InlineGlobals {
                 arg,
                 ..
             }) => {
-                match &**arg {
-                    Expr::Ident(Ident {
-                        ref sym,
-                        span: arg_span,
-                        ..
-                    }) => {
-                        if self.bindings.contains(&(sym.clone(), arg_span.ctxt)) {
-                            return;
-                        }
-
-                        // It's ok because we don't recurse into member expressions.
-                        if let Some(value) = self.typeofs.get(sym).cloned() {
-                            *expr = Expr::Lit(Lit::Str(Str {
-                                span: *span,
-                                value,
-                                has_escape: false,
-                                kind: Default::default(),
-                            }));
-                        }
-
+                if let Expr::Ident(Ident {
+                    ref sym,
+                    span: arg_span,
+                    ..
+                }) = &**arg
+                {
+                    if self.bindings.contains(&(sym.clone(), arg_span.ctxt)) {
                         return;
                     }
-                    _ => {}
+
+                    // It's ok because we don't recurse into member expressions.
+                    if let Some(value) = self.typeofs.get(sym).cloned() {
+                        *expr = Expr::Lit(Lit::Str(Str {
+                            span: *span,
+                            raw: None,
+                            value,
+                        }));
+                    }
                 }
             }
 
-            Expr::Member(MemberExpr {
-                obj: ExprOrSuper::Expr(ref obj),
-                ref prop,
-                computed,
-                ..
-            }) => match &**obj {
+            Expr::Member(MemberExpr { obj, prop, .. }) => match &**obj {
                 Expr::Member(MemberExpr {
-                    obj: ExprOrSuper::Expr(first_obj),
-                    prop: second_obj,
+                    obj: first_obj,
+                    prop: inner_prop,
                     ..
-                }) => match &**first_obj {
-                    Expr::Ident(Ident {
-                        sym: js_word!("process"),
-                        ..
-                    }) => match &**second_obj {
-                        Expr::Ident(Ident {
-                            sym: js_word!("env"),
-                            ..
-                        }) => match &**prop {
-                            Expr::Lit(Lit::Str(Str { value: ref sym, .. })) => {
-                                if let Some(env) = self.envs.get(sym) {
-                                    *expr = env.clone();
-                                    return;
+                }) if inner_prop.is_ident_with("env") => {
+                    if first_obj.is_ident_ref_to("process") {
+                        match prop {
+                            MemberProp::Computed(ComputedPropName { expr: c, .. }) => {
+                                if let Expr::Lit(Lit::Str(Str { value: sym, .. })) = &**c {
+                                    if let Some(env) = self.envs.get(sym) {
+                                        *expr = env.clone();
+                                    }
                                 }
                             }
 
-                            Expr::Ident(Ident { ref sym, .. }) if !*computed => {
+                            MemberProp::Ident(Ident { sym, .. }) => {
                                 if let Some(env) = self.envs.get(sym) {
                                     *expr = env.clone();
-                                    return;
                                 }
                             }
                             _ => {}
-                        },
-                        _ => {}
-                    },
-                    _ => {}
-                },
-                _ => {}
+                        }
+                    }
+                }
+                _ => (),
             },
             _ => {}
-        }
-    }
-
-    fn visit_mut_member_expr(&mut self, expr: &mut MemberExpr) {
-        expr.obj.visit_mut_with(self);
-
-        if expr.computed {
-            expr.prop.visit_mut_with(self);
         }
     }
 
@@ -212,24 +177,19 @@ impl VisitMut for InlineGlobals {
     fn visit_mut_prop(&mut self, p: &mut Prop) {
         p.visit_mut_children_with(self);
 
-        match p {
-            Prop::Shorthand(i) => {
-                if self.bindings.contains(&i.to_id()) {
-                    return;
-                }
-
-                // It's ok because we don't recurse into member expressions.
-                if let Some(mut value) = self.globals.get(&i.sym).cloned().map(Box::new) {
-                    value.visit_mut_with(self);
-                    *p = Prop::KeyValue(KeyValueProp {
-                        key: PropName::Ident(i.clone()),
-                        value,
-                    });
-                }
-
+        if let Prop::Shorthand(i) = p {
+            if self.bindings.contains(&i.to_id()) {
                 return;
             }
-            _ => {}
+
+            // It's ok because we don't recurse into member expressions.
+            if let Some(mut value) = self.globals.get(&i.sym).cloned().map(Box::new) {
+                value.visit_mut_with(self);
+                *p = Prop::KeyValue(KeyValueProp {
+                    key: PropName::Ident(i.clone()),
+                    value,
+                });
+            }
         }
     }
 
@@ -238,14 +198,31 @@ impl VisitMut for InlineGlobals {
 
         script.visit_mut_children_with(self);
     }
+
+    fn visit_mut_prop_or_spreads(&mut self, n: &mut Vec<PropOrSpread>) {
+        self.visit_mut_par(cpu_count() * 8, n);
+    }
+
+    fn visit_mut_expr_or_spreads(&mut self, n: &mut Vec<ExprOrSpread>) {
+        self.visit_mut_par(cpu_count() * 8, n);
+    }
+
+    fn visit_mut_opt_vec_expr_or_spreads(&mut self, n: &mut Vec<Option<ExprOrSpread>>) {
+        self.visit_mut_par(cpu_count() * 8, n);
+    }
+
+    fn visit_mut_exprs(&mut self, n: &mut Vec<Box<Expr>>) {
+        self.visit_mut_par(cpu_count() * 8, n);
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use swc_ecma_transforms_testing::{test, Tester};
     use swc_ecma_utils::DropSpan;
     use swc_ecma_visit::as_folder;
+
+    use super::*;
 
     fn mk_map(
         tester: &mut Tester<'_>,
@@ -295,7 +272,6 @@ mod tests {
         ::swc_ecma_parser::Syntax::default(),
         |tester| inline_globals(envs(tester, &[]), globals(tester, &[]), Default::default(),),
         issue_215,
-        r#"if (process.env.x === 'development') {}"#,
         r#"if (process.env.x === 'development') {}"#
     );
 
@@ -307,8 +283,7 @@ mod tests {
             Default::default(),
         ),
         node_env,
-        r#"if (process.env.NODE_ENV === 'development') {}"#,
-        r#"if ('development' === 'development') {}"#
+        r#"if (process.env.NODE_ENV === 'development') {}"#
     );
 
     test!(
@@ -319,8 +294,7 @@ mod tests {
             Default::default(),
         ),
         globals_simple,
-        r#"if (__DEBUG__) {}"#,
-        r#"if (true) {}"#
+        r#"if (__DEBUG__) {}"#
     );
 
     test!(
@@ -331,7 +305,6 @@ mod tests {
             Default::default(),
         ),
         non_global,
-        r#"if (foo.debug) {}"#,
         r#"if (foo.debug) {}"#
     );
 
@@ -339,7 +312,6 @@ mod tests {
         Default::default(),
         |tester| inline_globals(envs(tester, &[]), globals(tester, &[]), Default::default(),),
         issue_417_1,
-        "const test = process.env['x']",
         "const test = process.env['x']"
     );
 
@@ -351,8 +323,7 @@ mod tests {
             Default::default(),
         ),
         issue_417_2,
-        "const test = process.env['x']",
-        "const test = 'FOO'"
+        "const test = process.env['x']"
     );
 
     test!(
@@ -363,7 +334,6 @@ mod tests {
             Default::default(),
         ),
         issue_2499_1,
-        "process.env.x = 'foo'",
         "process.env.x = 'foo'"
     );
 }

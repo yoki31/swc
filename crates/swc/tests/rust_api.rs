@@ -1,13 +1,11 @@
 use swc::{
-    config::{
-        Config, InputSourceMap, IsModule, JscConfig, ModuleConfig, Options, SourceMapsConfig,
-    },
+    config::{Config, InputSourceMap, JscConfig, ModuleConfig, Options, SourceMapsConfig},
     Compiler,
 };
-use swc_common::FileName;
+use swc_common::{comments::SingleThreadedComments, FileName};
 use swc_ecma_ast::*;
 use swc_ecma_parser::{EsConfig, Syntax, TsConfig};
-use swc_ecma_transforms::{modules::common_js, pass::noop};
+use swc_ecma_transforms::pass::noop;
 use swc_ecma_visit::{as_folder, noop_visit_mut_type, VisitMut};
 
 struct PanicOnVisit;
@@ -50,6 +48,7 @@ fn test_visit_mut() {
 
                 ..Default::default()
             },
+            SingleThreadedComments::default(),
             |_| as_folder(PanicOnVisit),
             |_| noop(),
         );
@@ -93,15 +92,16 @@ fn shopify_1_check_filename() {
                         })),
                         ..Default::default()
                     },
-                    module: Some(ModuleConfig::CommonJs(common_js::Config {
-                        ..Default::default()
-                    })),
+                    module: Some(ModuleConfig::CommonJs(Default::default())),
                     ..Default::default()
                 },
-                is_module: IsModule::Bool(true),
                 ..Default::default()
             },
-            |_| noop(),
+            SingleThreadedComments::default(),
+            |_| {
+                // Ensure comment API
+                noop()
+            },
             |_| noop(),
         );
 
@@ -132,38 +132,35 @@ fn shopify_2_same_opt() {
                     syntax: Some(Syntax::Typescript(TsConfig {
                         tsx: true,
                         decorators: false,
-                        dynamic_import: true,
                         dts: false,
                         no_early_errors: false,
-                        import_assertions: false,
+                        disallow_ambiguous_jsx_like: false,
                     })),
-                    transform: None,
-                    external_helpers: false,
+                    transform: None.into(),
+                    external_helpers: false.into(),
                     target: Some(EsVersion::Es5),
-                    loose: false,
-                    keep_class_names: false,
-                    base_url: Default::default(),
-                    paths: Default::default(),
+                    loose: false.into(),
+                    keep_class_names: false.into(),
                     minify: None,
-                    experimental: Default::default(),
+                    preserve_all_comments: false.into(),
+                    ..Default::default()
                 },
                 module: None,
-                minify: false,
-                input_source_map: InputSourceMap::Bool(false),
+                minify: false.into(),
+                input_source_map: Some(InputSourceMap::Bool(false)),
                 source_maps: None,
-                inline_sources_content: false,
+                inline_sources_content: false.into(),
                 ..Default::default()
             },
             skip_helper_injection: false,
             disable_hygiene: false,
             disable_fixer: false,
-            global_mark: None,
+            top_level_mark: None,
             cwd: "/Users/kdy1/projects/example-swcify".into(),
             filename: "/Users/kdy1/projects/example-swcify/src/App/App.tsx".into(),
             env_name: "development".into(),
             source_maps: Some(SourceMapsConfig::Bool(false)),
             source_file_name: Some("/Users/kdy1/projects/example-swcify/src/App/App.tsx".into()),
-            is_module: IsModule::Bool(true),
             ..Default::default()
         };
 
@@ -181,7 +178,15 @@ fn shopify_2_same_opt() {
             .into(),
         );
 
-        let res = c.process_js_with_custom_pass(fm, None, &handler, &opts, |_| noop(), |_| noop());
+        let res = c.process_js_with_custom_pass(
+            fm,
+            None,
+            &handler,
+            &opts,
+            SingleThreadedComments::default(),
+            |_| noop(),
+            |_| noop(),
+        );
 
         if res.is_err() {
             return Err(());
@@ -208,16 +213,15 @@ fn shopify_3_reduce_defaults() {
                 jsc: JscConfig {
                     syntax: Some(Syntax::Typescript(TsConfig {
                         tsx: true,
-                        dynamic_import: true,
                         ..Default::default()
                     })),
                     ..Default::default()
                 },
                 module: None,
-                minify: false,
-                input_source_map: InputSourceMap::Bool(false),
+                minify: false.into(),
+                input_source_map: InputSourceMap::Bool(false).into(),
                 source_maps: None,
-                inline_sources_content: false,
+                inline_sources_content: false.into(),
                 ..Default::default()
             },
             cwd: "/Users/kdy1/projects/example-swcify".into(),
@@ -225,7 +229,6 @@ fn shopify_3_reduce_defaults() {
             env_name: "development".into(),
             source_maps: Some(SourceMapsConfig::Bool(false)),
             source_file_name: Some("/Users/kdy1/projects/example-swcify/src/App/App.tsx".into()),
-            is_module: IsModule::Bool(true),
             ..Default::default()
         };
 
@@ -243,7 +246,15 @@ fn shopify_3_reduce_defaults() {
             .into(),
         );
 
-        let res = c.process_js_with_custom_pass(fm, None, &handler, &opts, |_| noop(), |_| noop());
+        let res = c.process_js_with_custom_pass(
+            fm,
+            None,
+            &handler,
+            &opts,
+            SingleThreadedComments::default(),
+            |_| noop(),
+            |_| noop(),
+        );
 
         if res.is_err() {
             return Err(());
@@ -281,7 +292,6 @@ fn shopify_4_reduce_more() {
             env_name: "development".into(),
             source_maps: Some(SourceMapsConfig::Bool(false)),
             source_file_name: Some("/Users/kdy1/projects/example-swcify/src/App/App.tsx".into()),
-            is_module: IsModule::Bool(true),
             ..Default::default()
         };
 
@@ -299,7 +309,15 @@ fn shopify_4_reduce_more() {
             .into(),
         );
 
-        let res = c.process_js_with_custom_pass(fm, None, &handler, &opts, |_| noop(), |_| noop());
+        let res = c.process_js_with_custom_pass(
+            fm,
+            None,
+            &handler,
+            &opts,
+            SingleThreadedComments::default(),
+            |_| noop(),
+            |_| noop(),
+        );
 
         if res.is_err() {
             return Err(());

@@ -1,7 +1,6 @@
 (function() {
     try {
-        throw 'a';
-    } catch (b) {
-    }
+        throw "a";
+    } catch (b) {}
     c(); // This must not be removed.
 }());

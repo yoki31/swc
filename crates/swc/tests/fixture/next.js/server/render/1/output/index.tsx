@@ -24,38 +24,38 @@ import optimizeAmp from "./optimize-amp";
 import { allowedStatusCodes, getRedirectStatus } from "../lib/load-custom-routes";
 import RenderResult from "./render-result";
 import isError from "../lib/is-error";
-function _extends() {
-    _extends = Object.assign || function(target) {
-        for(var i = 1; i < arguments.length; i++){
-            var source = arguments[i];
-            for(var key in source){
-                if (Object.prototype.hasOwnProperty.call(source, key)) {
-                    target[key] = source[key];
-                }
-            }
-        }
-        return target;
-    };
-    return _extends.apply(this, arguments);
-}
 function noRouter() {
     const message = 'No router instance found. you should only use "next/router" inside the client side of your app. https://nextjs.org/docs/messages/no-router-instance';
     throw new Error(message);
 }
 class ServerRouter {
-    constructor(pathname1, query1, as, { isFallback: isFallback1  }, isReady, basePath1, locale1, locales1, defaultLocale1, domainLocales1, isPreview1, isLocaleDomain){
-        this.route = pathname1.replace(/\/$/, "") || "/";
-        this.pathname = pathname1;
-        this.query = query1;
+    route;
+    pathname;
+    query;
+    asPath;
+    basePath;
+    events;
+    isFallback;
+    locale;
+    isReady;
+    locales;
+    defaultLocale;
+    domainLocales;
+    isPreview;
+    isLocaleDomain;
+    constructor(pathname, query, as, { isFallback }, isReady, basePath, locale, locales, defaultLocale, domainLocales, isPreview, isLocaleDomain){
+        this.route = pathname.replace(/\/$/, "") || "/";
+        this.pathname = pathname;
+        this.query = query;
         this.asPath = as;
-        this.isFallback = isFallback1;
-        this.basePath = basePath1;
-        this.locale = locale1;
-        this.locales = locales1;
-        this.defaultLocale = defaultLocale1;
+        this.isFallback = isFallback;
+        this.basePath = basePath;
+        this.locale = locale;
+        this.locales = locales;
+        this.defaultLocale = defaultLocale;
         this.isReady = isReady;
-        this.domainLocales = domainLocales1;
-        this.isPreview = !!isPreview1;
+        this.domainLocales = domainLocales;
+        this.isPreview = !!isPreview;
         this.isLocaleDomain = !!isLocaleDomain;
     }
     push() {
@@ -94,7 +94,7 @@ const invalidKeysMsg = (methodName, invalidKeys)=>{
     return `Additional keys were returned from \`${methodName}\`. Properties intended for your component must be nested under the \`props\` key, e.g.:` + `\n\n\treturn { props: { title: 'My Title', content: '...' } }` + `\n\nKeys that need to be moved: ${invalidKeys.join(", ")}.` + `\nRead more: https://nextjs.org/docs/messages/invalid-getstaticprops-value`;
 };
 function checkRedirectValues(redirect, req, method) {
-    const { destination , permanent , statusCode , basePath  } = redirect;
+    const { destination, permanent, statusCode, basePath } = redirect;
     let errors = [];
     const hasStatusCode = typeof statusCode !== "undefined";
     const hasPermanent = typeof permanent !== "undefined";
@@ -104,7 +104,7 @@ function checkRedirectValues(redirect, req, method) {
         errors.push(`\`permanent\` must be \`true\` or \`false\``);
     } else if (hasStatusCode && !allowedStatusCodes.has(statusCode)) {
         errors.push(`\`statusCode\` must undefined or one of ${[
-            ...allowedStatusCodes, 
+            ...allowedStatusCodes
         ].join(", ")}`);
     }
     const destinationType = typeof destination;
@@ -125,10 +125,8 @@ export async function renderToHTML(req, res, pathname, query, renderOpts) {
     // TODO: remove this workaround when https://bugs.webkit.org/show_bug.cgi?id=187726 is fixed.
     renderOpts.devOnlyCacheBusterQueryString = renderOpts.dev ? renderOpts.devOnlyCacheBusterQueryString || `?ts=${Date.now()}` : "";
     // don't modify original query object
-    query = Object.assign({
-    }, query);
-    const { err , dev =false , ampPath ="" , App , Document , pageConfig ={
-    } , Component , buildManifest , fontManifest , reactLoadableManifest , ErrorDebug , getStaticProps , getStaticPaths , getServerSideProps , isDataReq , params , previewProps , basePath , devOnlyCacheBusterQueryString , supportsDynamicHTML , concurrentFeatures ,  } = renderOpts;
+    query = Object.assign({}, query);
+    const { err, dev = false, ampPath = "", App, Document, pageConfig = {}, Component, buildManifest, fontManifest, reactLoadableManifest, ErrorDebug, getStaticProps, getStaticPaths, getServerSideProps, isDataReq, params, previewProps, basePath, devOnlyCacheBusterQueryString, supportsDynamicHTML, concurrentFeatures } = renderOpts;
     const getFontDefinition = (url)=>{
         if (fontManifest) {
             return getFontDefinitionFromManifest(url, fontManifest);
@@ -136,8 +134,7 @@ export async function renderToHTML(req, res, pathname, query, renderOpts) {
         return "";
     };
     const callMiddleware = async (method, args, props = false)=>{
-        let results = props ? {
-        } : [];
+        let results = props ? {} : [];
         if (Document[`${method}Middleware`]) {
             let middlewareFunc = await Document[`${method}Middleware`];
             middlewareFunc = middlewareFunc.default || middlewareFunc;
@@ -155,8 +152,7 @@ export async function renderToHTML(req, res, pathname, query, renderOpts) {
         }
         return results;
     };
-    const headTags = (...args)=>callMiddleware("headTags", args)
-    ;
+    const headTags = (...args)=>callMiddleware("headTags", args);
     const isFallback = !!query.__nextFallback;
     delete query.__nextFallback;
     delete query.__nextLocale;
@@ -170,7 +166,7 @@ export async function renderToHTML(req, res, pathname, query, renderOpts) {
     for (const methodName of [
         "getStaticProps",
         "getServerSideProps",
-        "getStaticPaths", 
+        "getStaticPaths"
     ]){
         if (Component[methodName]) {
             throw new Error(`page ${pathname} ${methodName} ${GSSP_COMPONENT_MEMBER_ERROR}`);
@@ -196,7 +192,7 @@ export async function renderToHTML(req, res, pathname, query, renderOpts) {
     }
     let asPath = renderOpts.resolvedAsPath || req.url;
     if (dev) {
-        const { isValidElementType  } = require("react-is");
+        const { isValidElementType } = require("react-is");
         if (!isValidElementType(Component)) {
             throw new Error(`The default export is not a React Component in page: "${pathname}"`);
         }
@@ -211,8 +207,7 @@ export async function renderToHTML(req, res, pathname, query, renderOpts) {
             query = {
                 ...query.amp ? {
                     amp: query.amp
-                } : {
-                }
+                } : {}
             };
             asPath = `${pathname}${// ensure trailing slash is present for non-dynamic auto-export pages
             req.url.endsWith("/") && pathname !== "/" && !pageIsDynamic ? "/" : ""}`;
@@ -252,19 +247,17 @@ export async function renderToHTML(req, res, pathname, query, renderOpts) {
         locales: renderOpts.locales,
         defaultLocale: renderOpts.defaultLocale,
         AppTree: (props)=>{
-            return(/*#__PURE__*/ React.createElement(AppContainer, null, /*#__PURE__*/ React.createElement(App, _extends({
-            }, props, {
+            return /*#__PURE__*/ React.createElement(AppContainer, null, /*#__PURE__*/ React.createElement(App, {
+                ...props,
                 Component: Component,
                 router: router
-            }))));
+            }));
         },
         defaultGetInitialProps: async (docCtx)=>{
             const enhanceApp = (AppComp)=>{
-                return (props)=>/*#__PURE__*/ React.createElement(AppComp, _extends({
-                    }, props))
-                ;
+                return (props)=>/*#__PURE__*/ React.createElement(AppComp, props);
             };
-            const { html , head  } = await docCtx.renderPage({
+            const { html, head } = await docCtx.renderPage({
                 enhanceApp
             });
             const styles = jsxStyleRegistry.styles();
@@ -275,7 +268,7 @@ export async function renderToHTML(req, res, pathname, query, renderOpts) {
             };
         }
     };
-    let props1;
+    let props;
     const ampState = {
         ampFirst: pageConfig.amp === true,
         hasQuery: Boolean(query.amp),
@@ -283,43 +276,40 @@ export async function renderToHTML(req, res, pathname, query, renderOpts) {
     };
     const inAmpMode = isInAmpMode(ampState);
     const reactLoadableModules = [];
-    let head1 = defaultHead(inAmpMode);
-    let scriptLoader = {
-    };
+    let head = defaultHead(inAmpMode);
+    let scriptLoader = {};
     const nextExport = !isSSG && (renderOpts.nextExport || dev && (isAutoExport || isFallback));
-    const AppContainer = ({ children  })=>/*#__PURE__*/ React.createElement(RouterContext.Provider, {
+    const AppContainer = ({ children })=>/*#__PURE__*/ React.createElement(RouterContext.Provider, {
             value: router
         }, /*#__PURE__*/ React.createElement(AmpStateContext.Provider, {
             value: ampState
         }, /*#__PURE__*/ React.createElement(HeadManagerContext.Provider, {
             value: {
                 updateHead: (state)=>{
-                    head1 = state;
+                    head = state;
                 },
                 updateScripts: (scripts)=>{
                     scriptLoader = scripts;
                 },
-                scripts: {
-                },
+                scripts: {},
                 mountedInstances: new Set()
             }
         }, /*#__PURE__*/ React.createElement(LoadableContext.Provider, {
             value: (moduleName)=>reactLoadableModules.push(moduleName)
         }, /*#__PURE__*/ React.createElement(StyleRegistry, {
             registry: jsxStyleRegistry
-        }, children)))))
-    ;
-    props1 = await loadGetInitialProps(App, {
+        }, children)))));
+    props = await loadGetInitialProps(App, {
         AppTree: ctx.AppTree,
         Component,
         router,
         ctx
     });
     if ((isSSG || getServerSideProps) && isPreview) {
-        props1.__N_PREVIEW = true;
+        props.__N_PREVIEW = true;
     }
     if (isSSG) {
-        props1[STATIC_PROPS_ID] = true;
+        props[STATIC_PROPS_ID] = true;
     }
     if (isSSG && !isFallback) {
         let data;
@@ -347,8 +337,7 @@ export async function renderToHTML(req, res, pathname, query, renderOpts) {
         if (data == null) {
             throw new Error(GSP_NO_RETURNED_VALUE);
         }
-        const invalidKeys = Object.keys(data).filter((key)=>key !== "revalidate" && key !== "props" && key !== "redirect" && key !== "notFound"
-        );
+        const invalidKeys = Object.keys(data).filter((key)=>key !== "revalidate" && key !== "props" && key !== "redirect" && key !== "notFound");
         if (invalidKeys.includes("unstable_revalidate")) {
             throw new Error(UNSTABLE_REVALIDATE_RENAME_ERROR);
         }
@@ -407,21 +396,20 @@ export async function renderToHTML(req, res, pathname, query, renderOpts) {
             }
         } else {
             // By default, we never revalidate.
-            (data).revalidate = false;
+            data.revalidate = false;
         }
-        props1.pageProps = Object.assign({
-        }, props1.pageProps, "props" in data ? data.props : undefined);
+        props.pageProps = Object.assign({}, props.pageProps, "props" in data ? data.props : undefined);
         // pass up revalidate and props for export
         // TODO: change this to a different passing mechanism
-        (renderOpts).revalidate = "revalidate" in data ? data.revalidate : undefined;
-        renderOpts.pageData = props1;
+        renderOpts.revalidate = "revalidate" in data ? data.revalidate : undefined;
+        renderOpts.pageData = props;
         // this must come after revalidate is added to renderOpts
         if (renderOpts.isNotFound) {
             return null;
         }
     }
     if (getServerSideProps) {
-        props1[SERVER_PROPS_ID] = true;
+        props[SERVER_PROPS_ID] = true;
     }
     if (getServerSideProps && !isFallback) {
         let data;
@@ -466,8 +454,7 @@ export async function renderToHTML(req, res, pathname, query, renderOpts) {
         if (data == null) {
             throw new Error(GSSP_NO_RETURNED_VALUE);
         }
-        const invalidKeys = Object.keys(data).filter((key)=>key !== "props" && key !== "redirect" && key !== "notFound"
-        );
+        const invalidKeys = Object.keys(data).filter((key)=>key !== "props" && key !== "redirect" && key !== "notFound");
         if (data.unstable_notFound) {
             throw new Error(`unstable_notFound has been renamed to notFound, please update the field to continue. Page: ${pathname}`);
         }
@@ -502,24 +489,22 @@ export async function renderToHTML(req, res, pathname, query, renderOpts) {
             // this fn should throw an error instead of ever returning `false`
             throw new Error("invariant: getServerSideProps did not return valid props. Please report this.");
         }
-        props1.pageProps = Object.assign({
-        }, props1.pageProps, data.props);
-        renderOpts.pageData = props1;
+        props.pageProps = Object.assign({}, props.pageProps, data.props);
+        renderOpts.pageData = props;
     }
-    if (!isSSG && !getServerSideProps && process.env.NODE_ENV !== "production" && Object.keys(props1?.pageProps || {
-    }).includes("url")) {
+    if (!isSSG && // we only show this warning for legacy pages
+    !getServerSideProps && process.env.NODE_ENV !== "production" && Object.keys(props?.pageProps || {}).includes("url")) {
         console.warn(`The prop \`url\` is a reserved prop in Next.js for legacy reasons and will be overridden on page ${pathname}\n` + `See more info here: https://nextjs.org/docs/messages/reserved-page-prop`);
     }
     // Avoid rendering page un-necessarily for getServerSideProps data request
     // and getServerSideProps/getStaticProps redirects
     if (isDataReq && !isSSG || renderOpts.isRedirect) {
-        return RenderResult.fromStatic(JSON.stringify(props1));
+        return RenderResult.fromStatic(JSON.stringify(props));
     }
     // We don't call getStaticProps or getServerSideProps while generating
     // the fallback so make sure to set pageProps to an empty object
     if (isFallback) {
-        props1.pageProps = {
-        };
+        props.pageProps = {};
     }
     // the response might be finished on the getInitialProps call
     if (isResSent(res) && !isSSG) return null;
@@ -538,12 +523,10 @@ export async function renderToHTML(req, res, pathname, query, renderOpts) {
                     ...filteredBuildManifest.pages,
                     [page]: [
                         ...filteredBuildManifest.pages[page],
-                        ...filteredBuildManifest.lowPriorityFiles.filter((f)=>f.includes("_buildManifest")
-                        ), 
+                        ...filteredBuildManifest.lowPriorityFiles.filter((f)=>f.includes("_buildManifest"))
                     ]
                 },
-                lowPriorityFiles: filteredBuildManifest.lowPriorityFiles.filter((f)=>!f.includes("_buildManifest")
-                )
+                lowPriorityFiles: filteredBuildManifest.lowPriorityFiles.filter((f)=>!f.includes("_buildManifest"))
             };
         }
     }
@@ -562,28 +545,28 @@ export async function renderToHTML(req, res, pathname, query, renderOpts) {
      */ const generateStaticHTML = supportsDynamicHTML !== true;
     const renderDocument = async ()=>{
         if (Document.getInitialProps) {
-            const renderPage = (options = {
-            })=>{
+            const renderPage = (options = {})=>{
                 if (ctx.err && ErrorDebug) {
                     const html = ReactDOMServer.renderToString(/*#__PURE__*/ React.createElement(ErrorDebug, {
                         error: ctx.err
                     }));
                     return {
                         html,
-                        head: head1
+                        head
                     };
                 }
-                if (dev && (props1.router || props1.Component)) {
+                if (dev && (props.router || props.Component)) {
                     throw new Error(`'router' and 'Component' can not be returned in getInitialProps from _app.js https://nextjs.org/docs/messages/cant-override-next-props`);
                 }
-                const { App: EnhancedApp , Component: EnhancedComponent  } = enhanceComponents(options, App, Component);
-                const html = ReactDOMServer.renderToString(/*#__PURE__*/ React.createElement(AppContainer, null, /*#__PURE__*/ React.createElement(EnhancedApp, _extends({
+                const { App: EnhancedApp, Component: EnhancedComponent } = enhanceComponents(options, App, Component);
+                const html = ReactDOMServer.renderToString(/*#__PURE__*/ React.createElement(AppContainer, null, /*#__PURE__*/ React.createElement(EnhancedApp, {
                     Component: EnhancedComponent,
-                    router: router
-                }, props1))));
+                    router: router,
+                    ...props
+                })));
                 return {
                     html,
-                    head: head1
+                    head
                 };
             };
             const documentCtx = {
@@ -601,9 +584,10 @@ export async function renderToHTML(req, res, pathname, query, renderOpts) {
                 bodyResult: piperFromArray([
                     docProps.html
                 ]),
-                documentElement: (htmlProps)=>/*#__PURE__*/ React.createElement(Document, _extends({
-                    }, htmlProps, docProps))
-                ,
+                documentElement: (htmlProps)=>/*#__PURE__*/ React.createElement(Document, {
+                        ...htmlProps,
+                        ...docProps
+                    }),
                 head: docProps.head,
                 headTags: await headTags(documentCtx),
                 styles: docProps.styles
@@ -611,19 +595,18 @@ export async function renderToHTML(req, res, pathname, query, renderOpts) {
         } else {
             const content = ctx.err && ErrorDebug ? /*#__PURE__*/ React.createElement(ErrorDebug, {
                 error: ctx.err
-            }) : /*#__PURE__*/ React.createElement(AppContainer, null, /*#__PURE__*/ React.createElement(App, _extends({
-            }, props1, {
+            }) : /*#__PURE__*/ React.createElement(AppContainer, null, /*#__PURE__*/ React.createElement(App, {
+                ...props,
                 Component: Component,
                 router: router
-            })));
+            }));
             const bodyResult = concurrentFeatures ? await renderToStream(content, generateStaticHTML) : piperFromArray([
                 ReactDOMServer.renderToString(content)
             ]);
             return {
                 bodyResult,
-                documentElement: ()=>Document()
-                ,
-                head: head1,
+                documentElement: ()=>Document(),
+                head,
                 headTags: [],
                 styles: jsxStyleRegistry.styles()
             };
@@ -645,12 +628,11 @@ export async function renderToHTML(req, res, pathname, query, renderOpts) {
         }
     }
     const hybridAmp = ampState.hybrid;
-    const docComponentsRendered = {
-    };
-    const { assetPrefix , buildId , customServer , defaultLocale , disableOptimizedLoading , domainLocales , locale , locales , runtimeConfig ,  } = renderOpts;
-    const htmlProps1 = {
+    const docComponentsRendered = {};
+    const { assetPrefix, buildId, customServer, defaultLocale, disableOptimizedLoading, domainLocales, locale, locales, runtimeConfig } = renderOpts;
+    const htmlProps = {
         __NEXT_DATA__: {
-            props: props1,
+            props,
             page: pathname,
             query,
             buildId,
@@ -697,8 +679,8 @@ export async function renderToHTML(req, res, pathname, query, renderOpts) {
     const documentHTML = ReactDOMServer.renderToStaticMarkup(/*#__PURE__*/ React.createElement(AmpStateContext.Provider, {
         value: ampState
     }, /*#__PURE__*/ React.createElement(HtmlContext.Provider, {
-        value: htmlProps1
-    }, documentResult.documentElement(htmlProps1))));
+        value: htmlProps
+    }, documentResult.documentElement(htmlProps))));
     if (process.env.NODE_ENV !== "production") {
         const nonRenderedComponents = [];
         const expectedDocComponents = [
@@ -714,8 +696,7 @@ export async function renderToHTML(req, res, pathname, query, renderOpts) {
         }
         const plural = nonRenderedComponents.length !== 1 ? "s" : "";
         if (nonRenderedComponents.length) {
-            const missingComponentList = nonRenderedComponents.map((e)=>`<${e} />`
-            ).join(", ");
+            const missingComponentList = nonRenderedComponents.map((e)=>`<${e} />`).join(", ");
             warn(`Your custom Document (pages/_document) did not render all the required subcomponent${plural}.\n` + `Missing component${plural}: ${missingComponentList}\n` + "Read how to fix here: https://nextjs.org/docs/messages/missing-document-component");
         }
     }
@@ -730,8 +711,8 @@ export async function renderToHTML(req, res, pathname, query, renderOpts) {
         piperFromArray(prefix),
         documentResult.bodyResult,
         piperFromArray([
-            documentHTML.substring(renderTargetIdx + BODY_RENDER_TARGET.length), 
-        ]), 
+            documentHTML.substring(renderTargetIdx + BODY_RENDER_TARGET.length)
+        ])
     ];
     const postProcessors = (generateStaticHTML ? [
         inAmpMode ? async (html)=>{
@@ -765,7 +746,7 @@ export async function renderToHTML(req, res, pathname, query, renderOpts) {
         } : null,
         inAmpMode || hybridAmp ? async (html)=>{
             return html.replace(/&amp;amp=1/g, "&amp=1");
-        } : null, 
+        } : null
     ] : []).filter(Boolean);
     if (generateStaticHTML || postProcessors.length > 0) {
         let html = await piperToString(chainPipers(pipers));
@@ -779,7 +760,7 @@ export async function renderToHTML(req, res, pathname, query, renderOpts) {
     return new RenderResult(chainPipers(pipers));
 }
 function errorToJSON(err) {
-    const { name , message , stack  } = err;
+    const { name, message, stack } = err;
     return {
         name,
         message,
@@ -807,8 +788,7 @@ function renderToStream(element, generateStaticHTML) {
                     throw new Error("invariant: write called without an underlying stream. This is a bug in Next.js");
                 }
                 if (!underlyingStream.writable.write(chunk, encoding)) {
-                    underlyingStream.queuedCallbacks.push(()=>callback()
-                    );
+                    underlyingStream.queuedCallbacks.push(()=>callback());
                 } else {
                     callback();
                 }
@@ -848,8 +828,7 @@ function renderToStream(element, generateStaticHTML) {
                     const drainHandler = ()=>{
                         const prevCallbacks = underlyingStream.queuedCallbacks;
                         underlyingStream.queuedCallbacks = [];
-                        prevCallbacks.forEach((callback)=>callback()
-                        );
+                        prevCallbacks.forEach((callback)=>callback());
                     };
                     res.on("drain", drainHandler);
                     underlyingStream = {
@@ -865,7 +844,7 @@ function renderToStream(element, generateStaticHTML) {
                 });
             }
         };
-        const { abort , startWriting  } = ReactDOMServer.pipeToNodeWritable(element, stream, {
+        const { abort, startWriting } = ReactDOMServer.pipeToNodeWritable(element, stream, {
             onError (error) {
                 if (!resolved) {
                     resolved = true;
@@ -886,10 +865,8 @@ function renderToStream(element, generateStaticHTML) {
 }
 function chainPipers(pipers) {
     return pipers.reduceRight((lhs, rhs)=>(res, next)=>{
-            rhs(res, (err)=>err ? next(err) : lhs(res, next)
-            );
-        }
-    , (res, next)=>{
+            rhs(res, (err)=>err ? next(err) : lhs(res, next));
+        }, (res, next)=>{
         res.end();
         next();
     });
@@ -899,8 +876,7 @@ function piperFromArray(chunks) {
         if (typeof res.cork === "function") {
             res.cork();
         }
-        chunks.forEach((chunk)=>res.write(chunk)
-        );
+        chunks.forEach((chunk)=>res.write(chunk));
         if (typeof res.uncork === "function") {
             res.uncork();
         }
@@ -912,8 +888,7 @@ function piperToString(input) {
         const bufferedChunks = [];
         const stream = new Writable({
             writev (chunks, callback) {
-                chunks.forEach((chunk)=>bufferedChunks.push(chunk.chunk)
-                );
+                chunks.forEach((chunk)=>bufferedChunks.push(chunk.chunk));
                 callback();
             }
         });

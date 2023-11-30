@@ -1,11 +1,12 @@
+use anyhow::{bail, Error};
+use swc_common::collections::AHashMap;
+use swc_graph_analyzer::{DepGraph, GraphAnalyzer};
+
 use crate::{
     bundler::{load::TransformedModule, scope::Scope},
     dep_graph::ModuleGraph,
     BundleKind, Bundler, Load, ModuleId, Resolve,
 };
-use anyhow::{bail, Error};
-use swc_common::collections::AHashMap;
-use swc_graph_analyzer::{DepGraph, GraphAnalyzer};
 
 #[cfg(test)]
 mod tests;
@@ -51,9 +52,8 @@ where
         let mut analyzer = GraphAnalyzer::new(&self.scope);
 
         for (name, module) in entries {
-            match builder.kinds.insert(module.id, BundleKind::Named { name }) {
-                Some(v) => bail!("Multiple entries with same input path detected: {:?}", v),
-                None => {}
+            if let Some(v) = builder.kinds.insert(module.id, BundleKind::Named { name }) {
+                bail!("Multiple entries with same input path detected: {:?}", v)
             }
 
             analyzer.load(module.id);

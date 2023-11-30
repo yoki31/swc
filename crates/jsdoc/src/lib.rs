@@ -1,11 +1,12 @@
-pub use self::input::Input;
-use crate::ast::*;
 use nom::{
     bytes::complete::{tag, take_while},
     error::ErrorKind,
     IResult, InputIter, Slice,
 };
 use swc_common::{Span, Spanned, SyntaxContext};
+
+pub use self::input::Input;
+use crate::ast::*;
 
 pub mod ast;
 mod input;
@@ -52,10 +53,7 @@ pub fn parse_tag_item(i: Input) -> IResult<Input, TagItem> {
         "access" => {
             let (input, access) = parse_one_of(i, &["private", "protected", "package", "public"])?;
             i = input;
-            Tag::Access(AccessTag {
-                span,
-                access: access.into(),
-            })
+            Tag::Access(AccessTag { span, access })
         }
 
         "alias" => {
@@ -176,17 +174,14 @@ pub fn parse_tag_item(i: Input) -> IResult<Input, TagItem> {
             i = input;
             Tag::Exports(ExportsTag {
                 span,
-                module_name: text.into(),
+                module_name: text,
             })
         }
 
         "external" | "host" => {
             let (input, name) = parse_line(i)?;
             i = input;
-            Tag::External(ExternalTag {
-                span,
-                name: name.into(),
-            })
+            Tag::External(ExternalTag { span, name })
         }
 
         "file" | "fileoverview" | "overview" => {
@@ -481,7 +476,7 @@ pub fn parse_tag_item(i: Input) -> IResult<Input, TagItem> {
         i,
         TagItem {
             span,
-            tag_name: tag_name.into(),
+            tag_name,
             tag,
         },
     ))
@@ -546,7 +541,7 @@ fn parse_one_of<'i>(i: Input<'i>, list: &[&str]) -> IResult<Input<'i>, Text> {
         }
     }
 
-    Err(nom::Err::Error((i, ErrorKind::Tag)))
+    Err(nom::Err::Error(nom::error::Error::new(i, ErrorKind::Tag)))
 }
 
 fn parse_name_path(mut i: Input) -> IResult<Input, NamePath> {
@@ -668,8 +663,9 @@ fn skip(i: Input) -> Input {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use swc_common::BytePos;
+
+    use super::*;
 
     fn input(s: &str) -> Input {
         Input::new(BytePos(0), BytePos(s.as_bytes().len() as _), s)

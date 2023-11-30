@@ -1,34 +1,44 @@
 [workspace]
 members = [
+  "xtask",
+  "crates/swc_core",
+  "crates/swc_cli_impl",
+  "crates/dbg-swc",
   "crates/jsdoc",
-  "crates/node",
+  "crates/binding_macros",
   "crates/swc_css",
+  "crates/swc_css_lints",
+  "crates/swc_css_prefixer",
   "crates/swc_ecmascript",
-  "crates/swc_ecma_plugin_ast",
+  "crates/swc_ecma_lints",
+  "crates/swc_ecma_quote",
   "crates/swc_estree_compat",
+  "crates/swc_html",
   "crates/swc_plugin",
+  "crates/swc_plugin_macro",
   "crates/swc_plugin_runner",
   "crates/swc_plugin_testing",
-  "crates/swc_stylis",
+  "crates/swc_plugin_proxy",
   "crates/swc_timer",
-  "crates/swc_webpack_ast",
-  "crates/wasm",
+  "crates/swc_xml",
 ]
-
+resolver = "2"
 [profile.release]
-codegen-units = 1
-lto = "fat"
+# lto = true
+
+# We use CARGO_PROFILE_RELEASE_LTO for production builds
+# lto = "fat"
+
 # debug = true
 # opt-level = 'z'
 
 [profile.bench]
-codegen-units = 1
 debug = true
+# lto = true
 
-# Without this, printing diff consumes more than a minute.
-
-[profile.dev.package.pretty_assertions]
+# Optimize for iteration
+[profile.dev.build-override]
 opt-level = 3
 
-[profile.test.package.pretty_assertions]
+[profile.dev.package."*"]
 opt-level = 3

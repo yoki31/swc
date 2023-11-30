@@ -1,31 +1,30 @@
-use super::data::BUILTINS;
-use crate::{
-    corejs3::{
-        compat::DATA as CORE_JS_COMPAT_DATA,
-        data::{
-            COMMON_ITERATORS, INSTANCE_PROPERTIES, POSSIBLE_GLOBAL_OBJECTS, PROMISE_DEPENDENCIES,
-            STATIC_PROPERTIES,
-        },
-    },
-    util::DataMapExt,
-    version::should_enable,
-    Versions,
-};
 use indexmap::IndexSet;
+use preset_env_base::version::{should_enable, Version};
 use swc_atoms::{js_word, JsWord};
-use swc_common::DUMMY_SP;
+use swc_common::{collections::ARandomState, DUMMY_SP};
 use swc_ecma_ast::*;
-use swc_ecma_visit::{noop_visit_type, Node, Visit, VisitWith};
+use swc_ecma_visit::{noop_visit_type, Visit, VisitWith};
+
+use super::{
+    builtin::{
+        BUILT_INS, COMMON_ITERATORS, INSTANCE_PROPERTIES, PROMISE_DEPENDENCIES, STATIC_PROPERTIES,
+    },
+    data::{MODULES_BY_VERSION, POSSIBLE_GLOBAL_OBJECTS},
+};
+use crate::{
+    corejs3::compat::DATA as CORE_JS_COMPAT_DATA, util::CoreJSPolyfillDescriptor, Versions,
+};
 
 pub(crate) struct UsageVisitor {
     shipped_proposals: bool,
     is_any_target: bool,
     target: Versions,
-    pub required: IndexSet<&'static str, ahash::RandomState>,
+    corejs_version: Version,
+    pub required: IndexSet<&'static str, ARandomState>,
 }
 
 impl UsageVisitor {
-    pub fn new(target: Versions, shipped_proposals: bool) -> Self {
+    pub fn new(target: Versions, shipped_proposals: bool, corejs_version: Version) -> Self {
         //        let mut v = Self { required: vec![] };
         //
         //
@@ -49,50 +48,59 @@ impl UsageVisitor {
             shipped_proposals,
             is_any_target: target.is_any_target(),
             target,
+            corejs_version,
             required: Default::default(),
         }
     }
 
+    fn add(&mut self, desc: &CoreJSPolyfillDescriptor) {
+        let deps = desc.global;
+
+        // TODO: Exclude based on object
+
+        self.may_inject_global(deps)
+    }
+
     /// Add imports
-    fn add(&mut self, features: &[&'static str]) {
+    fn may_inject_global(&mut self, features: &[&'static str]) {
         let UsageVisitor {
             shipped_proposals,
             is_any_target,
             target,
+            corejs_version,
             ..
         } = self;
 
-        self.required.extend(features.iter().filter_map(|f| {
+        self.required.extend(features.iter().filter(|f| {
             if !*shipped_proposals && f.starts_with("esnext.") {
-                return None;
+                return false;
             }
 
-            let feature = CORE_JS_COMPAT_DATA.get(&**f);
+            let feature = CORE_JS_COMPAT_DATA.get(&***f);
 
             if !*is_any_target {
                 if let Some(feature) = feature {
                     if !should_enable(*target, *feature, true) {
-                        return None;
+                        return false;
                     }
                 }
             }
 
-            Some(f)
+            if let Some(version) = MODULES_BY_VERSION.get(**f) {
+                return version <= corejs_version;
+            }
+
+            true
         }));
     }
 
     fn add_builtin(&mut self, built_in: &str) {
-        if let Some(features) = BUILTINS.get_data(built_in) {
+        if let Some(features) = BUILT_INS.get(built_in) {
             self.add(features)
         }
     }
-    fn add_property_deps(&mut self, obj: &Expr, prop: &Expr) {
-        let prop = match prop {
-            Expr::Ident(i) => &i.sym,
-            Expr::Lit(Lit::Str(s)) => &s.value,
-            _ => return,
-        };
 
+    fn add_property_deps(&mut self, obj: &Expr, prop: &JsWord) {
         let obj = match obj {
             Expr::Ident(i) => &i.sym,
             _ => {
@@ -110,14 +118,15 @@ impl UsageVisitor {
                 self.add_builtin(prop);
             }
 
-            if let Some(map) = STATIC_PROPERTIES.get_data(&obj) {
-                if let Some(features) = map.get_data(&prop) {
+            if let Some(map) = STATIC_PROPERTIES.get(&**obj) {
+                if let Some(features) = map.get(&**prop) {
                     self.add(features);
+                    return;
                 }
             }
         }
 
-        if let Some(features) = INSTANCE_PROPERTIES.get_data(&prop) {
+        if let Some(features) = INSTANCE_PROPERTIES.get(&**prop) {
             self.add(features);
         }
     }
@@ -148,129 +157,115 @@ impl Visit for UsageVisitor {
     noop_visit_type!();
 
     /// `[a, b] = c`
-    fn visit_array_pat(&mut self, p: &ArrayPat, _: &dyn Node) {
+    fn visit_array_pat(&mut self, p: &ArrayPat) {
         p.visit_children_with(self);
 
-        self.add(COMMON_ITERATORS)
+        self.may_inject_global(COMMON_ITERATORS)
     }
 
-    fn visit_assign_expr(&mut self, e: &AssignExpr, _: &dyn Node) {
+    fn visit_assign_expr(&mut self, e: &AssignExpr) {
         e.visit_children_with(self);
 
-        match &e.left {
-            // ({ keys, values } = Object)
-            PatOrExpr::Pat(pat) => match &**pat {
-                Pat::Object(ref o) => self.visit_object_pat_props(&e.right, &o.props),
-                _ => {}
-            },
-            _ => {}
+        if let PatOrExpr::Pat(pat) = &e.left {
+            if let Pat::Object(ref o) = &**pat {
+                self.visit_object_pat_props(&e.right, &o.props)
+            }
         }
     }
 
-    fn visit_bin_expr(&mut self, e: &BinExpr, _: &dyn Node) {
+    fn visit_bin_expr(&mut self, e: &BinExpr) {
         e.visit_children_with(self);
 
-        match e.op {
-            op!("in") => {
-                // 'entries' in Object
-                // 'entries' in [1, 2, 3]
-                self.add_property_deps(&e.right, &e.left);
+        if e.op == op!("in") {
+            // 'entries' in Object
+            // 'entries' in [1, 2, 3]
+            if let Expr::Lit(Lit::Str(s)) = &*e.left {
+                self.add_property_deps(&e.right, &s.value);
             }
-            _ => {}
         }
     }
 
     /// import('something').then(...)
-    fn visit_call_expr(&mut self, e: &CallExpr, _: &dyn Node) {
+    /// RegExp(".", "us")
+    fn visit_call_expr(&mut self, e: &CallExpr) {
         e.visit_children_with(self);
 
-        if let ExprOrSuper::Expr(expr) = &e.callee {
-            match &**expr {
-                Expr::Ident(Ident {
-                    sym: js_word!("import"),
-                    ..
-                }) => self.add(PROMISE_DEPENDENCIES),
-                _ => {}
-            }
+        if let Callee::Import(_) = &e.callee {
+            self.may_inject_global(PROMISE_DEPENDENCIES)
         }
     }
 
-    fn visit_expr(&mut self, e: &Expr, _: &dyn Node) {
+    fn visit_expr(&mut self, e: &Expr) {
         e.visit_children_with(self);
 
-        match e {
-            Expr::Ident(i) => self.add_builtin(&i.sym),
-            _ => {}
+        if let Expr::Ident(i) = e {
+            self.add_builtin(&i.sym)
         }
     }
 
     /// `[...spread]`
-    fn visit_expr_or_spread(&mut self, e: &ExprOrSpread, _: &dyn Node) {
+    fn visit_expr_or_spread(&mut self, e: &ExprOrSpread) {
         e.visit_children_with(self);
         if e.spread.is_some() {
-            self.add(COMMON_ITERATORS)
+            self.may_inject_global(COMMON_ITERATORS)
         }
     }
 
     /// for-of
-    fn visit_for_of_stmt(&mut self, s: &ForOfStmt, _: &dyn Node) {
+    fn visit_for_of_stmt(&mut self, s: &ForOfStmt) {
         s.visit_children_with(self);
 
-        self.add(COMMON_ITERATORS)
+        self.may_inject_global(COMMON_ITERATORS)
     }
 
-    fn visit_function(&mut self, f: &Function, _: &dyn Node) {
+    fn visit_function(&mut self, f: &Function) {
         f.visit_children_with(self);
 
         if f.is_async {
-            self.add(PROMISE_DEPENDENCIES)
+            self.may_inject_global(PROMISE_DEPENDENCIES)
         }
     }
 
-    fn visit_member_expr(&mut self, e: &MemberExpr, _: &dyn Node) {
-        e.obj.visit_with(e as _, self);
-        if e.computed {
-            e.prop.visit_with(e as _, self);
+    fn visit_member_expr(&mut self, e: &MemberExpr) {
+        e.obj.visit_with(self);
+        if let MemberProp::Computed(c) = &e.prop {
+            if let Expr::Lit(Lit::Str(s)) = &*c.expr {
+                self.add_property_deps(&e.obj, &s.value);
+            }
+            c.visit_with(self);
         }
 
         // Object.entries
         // [1, 2, 3].entries
-
-        match e.obj {
-            ExprOrSuper::Expr(ref obj) => self.add_property_deps(&obj, &e.prop),
-            _ => {}
+        if let MemberProp::Ident(i) = &e.prop {
+            self.add_property_deps(&e.obj, &i.sym)
         }
     }
 
-    fn visit_var_declarator(&mut self, d: &VarDeclarator, _: &dyn Node) {
+    fn visit_super_prop_expr(&mut self, e: &SuperPropExpr) {
+        if let SuperProp::Computed(c) = &e.prop {
+            c.visit_with(self);
+        }
+    }
+
+    fn visit_var_declarator(&mut self, d: &VarDeclarator) {
         d.visit_children_with(self);
 
         if let Some(ref init) = d.init {
-            match d.name {
-                // const { keys, values } = Object
-                Pat::Object(ref o) => self.visit_object_pat_props(&init, &o.props),
-                _ => {}
+            if let Pat::Object(ref o) = d.name {
+                self.visit_object_pat_props(init, &o.props)
             }
-        } else {
-            match d.name {
-                // const { keys, values } = Object
-                Pat::Object(ref o) => self.visit_object_pat_props(
-                    &Expr::Ident(Ident::new(js_word!(""), DUMMY_SP)),
-                    &o.props,
-                ),
-                _ => {}
-            }
+        } else if let Pat::Object(ref o) = d.name {
+            self.visit_object_pat_props(&Expr::Ident(Ident::new(js_word!(""), DUMMY_SP)), &o.props)
         }
     }
 
-    // TODO: https://github.com/babel/babel/blob/00758308/packages/babel-preset-env/src/polyfills/corejs3/usage-plugin.js#L198-L206
-
     /// `yield*`
-    fn visit_yield_expr(&mut self, e: &YieldExpr, _: &dyn Node) {
+    fn visit_yield_expr(&mut self, e: &YieldExpr) {
         e.visit_children_with(self);
 
         if e.delegate {
-            self.add(COMMON_ITERATORS)
+            self.may_inject_global(COMMON_ITERATORS)
         }
     }
 }

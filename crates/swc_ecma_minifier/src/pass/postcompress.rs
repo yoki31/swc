@@ -1,80 +1,156 @@
-use crate::{option::CompressOptions, DISABLE_BUGGY_PASSES};
 use swc_common::util::take::Take;
 use swc_ecma_ast::*;
+use swc_ecma_transforms_base::perf::{Parallel, ParallelExt};
 use swc_ecma_visit::{noop_visit_mut_type, VisitMut, VisitMutWith};
 
-pub fn postcompress_optimizer<'a>(options: &'a CompressOptions) -> impl 'a + VisitMut {
-    PostcompressOptimizer { options }
+use crate::{maybe_par, option::CompressOptions, LIGHT_TASK_PARALLELS};
+
+pub fn postcompress_optimizer(options: &CompressOptions) -> impl '_ + VisitMut {
+    PostcompressOptimizer {
+        options,
+        ctx: Default::default(),
+    }
 }
 
 struct PostcompressOptimizer<'a> {
     options: &'a CompressOptions,
+
+    ctx: Ctx,
 }
 
-impl PostcompressOptimizer<'_> {
-    fn optimize_in_bool_ctx(&mut self, e: &mut Expr) {
-        if !self.options.bools {
-            return;
-        }
-        // This is buggy
-        if DISABLE_BUGGY_PASSES {
-            return;
-        }
+#[derive(Default, Clone, Copy)]
+struct Ctx {
+    is_module: bool,
+    is_top_level: bool,
+}
 
-        // Note: `||` is not handled because of precedence.
-        match e {
-            Expr::Bin(BinExpr {
-                op: op @ op!("&&"),
-                right,
-                left,
-                ..
-            }) => {
-                match &**left {
-                    Expr::Bin(BinExpr { op: op!("&&"), .. }) => return,
-                    _ => {}
-                }
-
-                match &mut **right {
-                    Expr::Unary(UnaryExpr {
-                        op: op!("!"), arg, ..
-                    }) if arg.is_ident() => {
-                        let new_op = if *op == op!("&&") {
-                            op!("||")
-                        } else {
-                            op!("&&")
-                        };
-
-                        tracing::debug!(
-                            "bools: `(a {} !b)` => `(a {} b)` (in bool context)",
-                            *op,
-                            new_op
-                        );
-                        *op = new_op;
-                        *right = arg.take();
-                        return;
-                    }
-
-                    _ => {}
-                }
-            }
-
-            _ => {}
+impl Parallel for PostcompressOptimizer<'_> {
+    fn create(&self) -> Self {
+        Self {
+            options: self.options,
+            ctx: self.ctx,
         }
     }
+
+    fn merge(&mut self, _: Self) {}
 }
 
 impl VisitMut for PostcompressOptimizer<'_> {
     noop_visit_mut_type!();
 
-    fn visit_mut_cond_expr(&mut self, e: &mut CondExpr) {
-        e.visit_mut_children_with(self);
-
-        self.optimize_in_bool_ctx(&mut *e.test);
+    fn visit_mut_export_decl(&mut self, export: &mut ExportDecl) {
+        match &mut export.decl {
+            Decl::Var(decl) => {
+                // Don't change constness of exported variables.
+                decl.visit_mut_children_with(self);
+            }
+            _ => {
+                export.decl.visit_mut_with(self);
+            }
+        }
     }
 
-    fn visit_mut_if_stmt(&mut self, s: &mut IfStmt) {
-        s.visit_mut_children_with(self);
+    fn visit_mut_module_decl(&mut self, m: &mut ModuleDecl) {
+        if let ModuleDecl::ExportDefaultExpr(e) = m {
+            match &mut *e.expr {
+                Expr::Fn(f) => {
+                    if f.ident.is_some() {
+                        if self.options.top_level() {
+                            *m = ModuleDecl::ExportDefaultDecl(ExportDefaultDecl {
+                                span: e.span,
+                                decl: DefaultDecl::Fn(f.take()),
+                            })
+                        }
+                    } else {
+                        *m = ModuleDecl::ExportDefaultDecl(ExportDefaultDecl {
+                            span: e.span,
+                            decl: DefaultDecl::Fn(f.take()),
+                        })
+                    }
+                }
+                Expr::Class(c) => {
+                    if c.ident.is_some() {
+                        if self.options.top_level() {
+                            *m = ModuleDecl::ExportDefaultDecl(ExportDefaultDecl {
+                                span: e.span,
+                                decl: DefaultDecl::Class(c.take()),
+                            })
+                        }
+                    } else {
+                        *m = ModuleDecl::ExportDefaultDecl(ExportDefaultDecl {
+                            span: e.span,
+                            decl: DefaultDecl::Class(c.take()),
+                        })
+                    }
+                }
+                _ => (),
+            }
+        }
 
-        self.optimize_in_bool_ctx(&mut *s.test);
+        m.visit_mut_children_with(self)
+    }
+
+    fn visit_mut_module_items(&mut self, nodes: &mut Vec<ModuleItem>) {
+        self.ctx.is_module = maybe_par!(
+            nodes
+                .iter()
+                .any(|s| matches!(s, ModuleItem::ModuleDecl(..))),
+            *crate::LIGHT_TASK_PARALLELS
+        );
+        self.ctx.is_top_level = true;
+
+        self.maybe_par(*crate::LIGHT_TASK_PARALLELS, nodes, |v, n| {
+            n.visit_mut_with(v);
+        });
+    }
+
+    fn visit_mut_stmts(&mut self, nodes: &mut Vec<Stmt>) {
+        let old = self.ctx;
+
+        self.ctx.is_top_level = false;
+
+        self.maybe_par(*crate::LIGHT_TASK_PARALLELS, nodes, |v, n| {
+            n.visit_mut_with(v);
+        });
+
+        self.ctx = old;
+    }
+
+    fn visit_mut_var_decl(&mut self, v: &mut VarDecl) {
+        v.visit_mut_children_with(self);
+
+        if self.options.const_to_let {
+            if self.ctx.is_module || !self.ctx.is_top_level {
+                // We don't change constness of top-level variables in a script
+
+                if let VarDeclKind::Const = v.kind {
+                    v.kind = VarDeclKind::Let;
+                }
+            }
+        }
+    }
+
+    fn visit_mut_exprs(&mut self, n: &mut Vec<Box<Expr>>) {
+        self.maybe_par(*LIGHT_TASK_PARALLELS, n, |v, n| {
+            n.visit_mut_with(v);
+        });
+    }
+
+    fn visit_mut_opt_vec_expr_or_spreads(&mut self, n: &mut Vec<Option<ExprOrSpread>>) {
+        self.maybe_par(*LIGHT_TASK_PARALLELS, n, |v, n| {
+            n.visit_mut_with(v);
+        });
+    }
+
+    fn visit_mut_expr_or_spreads(&mut self, n: &mut Vec<ExprOrSpread>) {
+        self.maybe_par(*LIGHT_TASK_PARALLELS, n, |v, n| {
+            n.visit_mut_with(v);
+        });
+    }
+
+    fn visit_mut_var_declarators(&mut self, n: &mut Vec<VarDeclarator>) {
+        self.maybe_par(*LIGHT_TASK_PARALLELS, n, |v, n| {
+            n.visit_mut_with(v);
+        });
     }
 }

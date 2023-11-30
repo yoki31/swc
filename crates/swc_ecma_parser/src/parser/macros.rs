@@ -19,7 +19,7 @@ macro_rules! is {
     ($p:expr, BindingIdent) => {{
         let ctx = $p.ctx();
         match cur!($p, false) {
-            Ok(&Word(ref w)) => !ctx.is_reserved_word(&w.cow()),
+            Ok(&Word(ref w)) => !ctx.is_reserved(w),
             _ => false,
         }
     }};
@@ -27,7 +27,7 @@ macro_rules! is {
     ($p:expr, IdentRef) => {{
         let ctx = $p.ctx();
         match cur!($p, false) {
-            Ok(&Word(ref w)) => !ctx.is_reserved_word(&w.cow()),
+            Ok(&Word(ref w)) => !ctx.is_reserved(w),
             _ => false,
         }
     }};
@@ -53,6 +53,20 @@ macro_rules! is {
         }
     }};
 
+    ($p:expr,Regex) => {{
+        match cur!($p, false) {
+            Ok(&Token::Regex { .. }) => true,
+            _ => false,
+        }
+    }};
+
+    ($p:expr,BigInt) => {{
+        match cur!($p, false) {
+            Ok(&Token::BigInt { .. }) => true,
+            _ => false,
+        }
+    }};
+
     ($p:expr,';') => {{
         match $p.input.cur() {
             Some(&Token::Semi) | None | Some(&tok!('}')) => true,
@@ -65,11 +79,12 @@ macro_rules! is {
     };
 }
 
+#[allow(unused)]
 macro_rules! peeked_is {
     ($p:expr, BindingIdent) => {{
         let ctx = $p.ctx();
         match peek!($p) {
-            Ok(&Word(ref w)) => !ctx.is_reserved_word(&w.cow()),
+            Ok(&Word(ref w)) => !ctx.is_reserved(w),
             _ => false,
         }
     }};
@@ -77,7 +92,7 @@ macro_rules! peeked_is {
     ($p:expr, IdentRef) => {{
         let ctx = $p.ctx();
         match peek!($p) {
-            Ok(&Word(ref w)) => !ctx.is_reserved_word(&w.cow()),
+            Ok(&Word(ref w)) => !ctx.is_reserved(w),
             _ => false,
         }
     }};
@@ -240,14 +255,13 @@ macro_rules! cur {
             Some(c) => Ok(c),
             None => {
                 if $required {
-                    let err = crate::error::Error {
-                        error: Box::new((last, crate::error::SyntaxError::Eof)),
-                    };
+                    let err = crate::error::Error::new(last, crate::error::SyntaxError::Eof);
                     return Err(err);
                 }
-                Err(crate::error::Error {
-                    error: Box::new((last, crate::error::SyntaxError::Eof)),
-                })
+                Err(crate::error::Error::new(
+                    last,
+                    crate::error::SyntaxError::Eof,
+                ))
             }
         }
     }};
@@ -267,9 +281,7 @@ Current token is {:?}",
         match $p.input.peek() {
             Some(c) => Ok(c),
             None => {
-                let err = crate::error::Error {
-                    error: Box::new((last, crate::error::SyntaxError::Eof)),
-                };
+                let err = crate::error::Error::new(last, crate::error::SyntaxError::Eof);
                 Err(err)
             }
         }
@@ -342,9 +354,7 @@ macro_rules! span {
 
 macro_rules! make_error {
     ($p:expr, $span:expr, $err:expr) => {{
-        crate::error::Error {
-            error: Box::new(($span, $err)),
-        }
+        crate::error::Error::new($span, $err)
     }};
 }
 
@@ -355,6 +365,30 @@ macro_rules! syntax_error {
 
     ($p:expr, $span:expr, $err:expr) => {{
         let err = make_error!($p, $span, $err);
+
+        if cfg!(feature = "debug") {
+            tracing::error!(
+                "Syntax error called from {}:{}:{}\nCurrent token = {:?}",
+                file!(),
+                line!(),
+                column!(),
+                $p.input.cur()
+            );
+        }
         return Err(err.into());
+    }};
+}
+
+macro_rules! debug_tracing {
+    ($p:expr, $name:tt) => {{
+        #[cfg(feature = "debug")]
+        {
+            tracing::span!(
+                tracing::Level::ERROR,
+                $name,
+                cur = tracing::field::debug(&$p.input.cur())
+            )
+            .entered()
+        }
     }};
 }

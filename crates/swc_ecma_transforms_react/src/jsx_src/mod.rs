@@ -1,9 +1,8 @@
 use swc_common::{sync::Lrc, SourceMap, DUMMY_SP};
 use swc_ecma_ast::*;
 use swc_ecma_transforms_base::perf::Parallel;
-use swc_ecma_transforms_macros::parallel;
 use swc_ecma_utils::quote_ident;
-use swc_ecma_visit::{as_folder, noop_visit_mut_type, Fold, VisitMut};
+use swc_ecma_visit::{as_folder, noop_visit_mut_type, Fold, VisitMut, VisitMutWith};
 
 #[cfg(test)]
 mod tests;
@@ -27,7 +26,6 @@ impl Parallel for JsxSrc {
     fn merge(&mut self, _: Self) {}
 }
 
-#[parallel]
 impl VisitMut for JsxSrc {
     noop_visit_mut_type!();
 
@@ -36,7 +34,10 @@ impl VisitMut for JsxSrc {
             return;
         }
 
+        e.visit_mut_children_with(self);
+
         let loc = self.cm.lookup_char_pos(e.span.lo);
+        let file_name = loc.file.name.to_string();
 
         e.attrs.push(JSXAttrOrSpread::JSXAttr(JSXAttr {
             span: DUMMY_SP,
@@ -51,24 +52,17 @@ impl VisitMut for JsxSrc {
                                 key: PropName::Ident(quote_ident!("fileName")),
                                 value: Box::new(Expr::Lit(Lit::Str(Str {
                                     span: DUMMY_SP,
-                                    value: loc.file.name.to_string().into(),
-                                    has_escape: false,
-                                    kind: Default::default(),
+                                    raw: None,
+                                    value: file_name.into(),
                                 }))),
                             }))),
                             PropOrSpread::Prop(Box::new(Prop::KeyValue(KeyValueProp {
                                 key: PropName::Ident(quote_ident!("lineNumber")),
-                                value: Box::new(Expr::Lit(Lit::Num(Number {
-                                    span: DUMMY_SP,
-                                    value: loc.line as _,
-                                }))),
+                                value: loc.line.into(),
                             }))),
                             PropOrSpread::Prop(Box::new(Prop::KeyValue(KeyValueProp {
                                 key: PropName::Ident(quote_ident!("columnNumber")),
-                                value: Box::new(Expr::Lit(Lit::Num(Number {
-                                    span: DUMMY_SP,
-                                    value: (loc.col.0 + 1) as _,
-                                }))),
+                                value: (loc.col.0 + 1).into(),
                             }))),
                         ],
                     }

@@ -1,61 +1,31 @@
-use super::util::{
-    self, define_es_module, define_property, has_use_strict, initialize_to_undefined,
-    local_name_for_src, make_descriptor, use_strict, Exports, ModulePass, Scope,
-};
-use crate::path::{ImportResolver, NoopImportResolver};
 use anyhow::Context;
-use indexmap::IndexSet;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::{
-    cell::{Ref, RefCell, RefMut},
-    iter,
+use swc_atoms::JsWord;
+use swc_common::{
+    comments::{CommentKind, Comments},
+    util::take::Take,
+    FileName, Mark, Span, DUMMY_SP,
 };
-use swc_atoms::js_word;
-use swc_common::{FileName, Mark, Span, DUMMY_SP};
 use swc_ecma_ast::*;
-use swc_ecma_transforms_base::helper;
+use swc_ecma_transforms_base::{feature::FeatureFlag, helper_expr};
 use swc_ecma_utils::{
-    prepend_stmts, private_ident, quote_ident, quote_str, var::VarCollector, DestructuringFinder,
-    ExprFactory,
+    member_expr, private_ident, quote_ident, quote_str, undefined, ExprFactory, FunctionFactory,
+    IsDirective,
 };
-use swc_ecma_visit::{noop_fold_type, Fold, FoldWith, VisitWith};
+use swc_ecma_visit::{as_folder, noop_visit_mut_type, Fold, VisitMut, VisitMutWith};
 
-pub fn amd(config: Config) -> impl Fold {
-    Amd {
-        config,
-        in_top_level: Default::default(),
-        scope: RefCell::new(Default::default()),
-        exports: Default::default(),
-
-        resolver: None::<(NoopImportResolver, _)>,
-    }
-}
-
-pub fn amd_with_resolver<R>(resolver: R, base: FileName, config: Config) -> impl Fold
-where
-    R: ImportResolver,
-{
-    Amd {
-        config,
-        in_top_level: Default::default(),
-        scope: Default::default(),
-        exports: Default::default(),
-
-        resolver: Some((resolver, base)),
-    }
-}
-
-struct Amd<R>
-where
-    R: ImportResolver,
-{
-    config: Config,
-    in_top_level: bool,
-    scope: RefCell<Scope>,
-    exports: Exports,
-
-    resolver: Option<(R, FileName)>,
-}
+pub use super::util::Config as InnerConfig;
+use crate::{
+    module_decl_strip::{Export, Link, LinkFlag, LinkItem, LinkSpecifierReducer, ModuleDeclStrip},
+    module_ref_rewriter::{rewrite_import_bindings, ImportMap},
+    path::{ImportResolver, Resolver},
+    top_level_this::top_level_this,
+    util::{
+        define_es_module, emit_export_stmts, local_name_for_src, use_strict, ImportInterop,
+        VecStmtLike,
+    },
+};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -64,763 +34,522 @@ pub struct Config {
     pub module_id: Option<String>,
 
     #[serde(flatten, default)]
-    pub config: util::Config,
+    pub config: InnerConfig,
 }
 
-/// TODO: VisitMut
-impl<R> Fold for Amd<R>
+pub fn amd<C>(
+    unresolved_mark: Mark,
+    config: Config,
+    available_features: FeatureFlag,
+    comments: Option<C>,
+) -> impl Fold + VisitMut
 where
-    R: ImportResolver,
+    C: Comments,
 {
-    noop_fold_type!();
+    let Config { module_id, config } = config;
 
-    fn fold_expr(&mut self, expr: Expr) -> Expr {
-        let top_level = self.in_top_level;
+    as_folder(Amd {
+        module_id,
+        config,
+        unresolved_mark,
+        resolver: Resolver::Default,
+        comments,
 
-        Scope::fold_expr(self, self.exports.0.clone(), top_level, expr)
-    }
+        support_arrow: caniuse!(available_features.ArrowFunctions),
+        const_var_kind: if caniuse!(available_features.BlockScoping) {
+            VarDeclKind::Const
+        } else {
+            VarDeclKind::Var
+        },
 
-    fn fold_module(&mut self, module: Module) -> Module {
-        let items = module.body;
-        self.in_top_level = true;
+        dep_list: Default::default(),
+        require: quote_ident!(DUMMY_SP.apply_mark(unresolved_mark), "require"),
+        exports: None,
+        module: None,
+        found_import_meta: false,
+    })
+}
 
-        // Inserted after initializing exported names to undefined.
-        let mut extra_stmts = vec![];
-        let mut stmts = Vec::with_capacity(items.len() + 2);
-        if self.config.config.strict_mode && !has_use_strict(&items) {
+pub fn amd_with_resolver<C>(
+    resolver: Box<dyn ImportResolver>,
+    base: FileName,
+    unresolved_mark: Mark,
+    config: Config,
+    available_features: FeatureFlag,
+    comments: Option<C>,
+) -> impl Fold + VisitMut
+where
+    C: Comments,
+{
+    let Config { module_id, config } = config;
+
+    as_folder(Amd {
+        module_id,
+        config,
+        unresolved_mark,
+        resolver: Resolver::Real { base, resolver },
+        comments,
+
+        support_arrow: caniuse!(available_features.ArrowFunctions),
+        const_var_kind: if caniuse!(available_features.BlockScoping) {
+            VarDeclKind::Const
+        } else {
+            VarDeclKind::Var
+        },
+
+        dep_list: Default::default(),
+        require: quote_ident!(DUMMY_SP.apply_mark(unresolved_mark), "require"),
+        exports: None,
+        module: None,
+        found_import_meta: false,
+    })
+}
+
+pub struct Amd<C>
+where
+    C: Comments,
+{
+    module_id: Option<String>,
+    config: InnerConfig,
+    unresolved_mark: Mark,
+    resolver: Resolver,
+    comments: Option<C>,
+
+    support_arrow: bool,
+    const_var_kind: VarDeclKind,
+
+    dep_list: Vec<(Ident, JsWord, Span)>,
+    require: Ident,
+    exports: Option<Ident>,
+    module: Option<Ident>,
+    found_import_meta: bool,
+}
+
+impl<C> VisitMut for Amd<C>
+where
+    C: Comments,
+{
+    noop_visit_mut_type!();
+
+    fn visit_mut_module(&mut self, n: &mut Module) {
+        if self.module_id.is_none() {
+            self.module_id = self.get_amd_module_id_from_comments(n.span);
+        }
+
+        let mut stmts: Vec<Stmt> = Vec::with_capacity(n.body.len() + 4);
+
+        // Collect directives
+        stmts.extend(
+            &mut n
+                .body
+                .iter_mut()
+                .take_while(|i| i.directive_continue())
+                .map(|i| i.take())
+                .map(ModuleItem::expect_stmt),
+        );
+
+        // "use strict";
+        if self.config.strict_mode && !stmts.has_use_strict() {
             stmts.push(use_strict());
         }
 
-        let mut exports = vec![];
-        let mut initialized = IndexSet::default();
-        let mut export_alls = vec![];
-        let mut emitted_esmodule = false;
-        let mut has_export = false;
-        let exports_ident = self.exports.0.clone();
+        if !self.config.allow_top_level_this {
+            top_level_this(&mut n.body, *undefined(DUMMY_SP));
+        }
 
-        // Process items
-        for item in items {
-            let decl = match item {
-                ModuleItem::Stmt(stmt) => {
-                    extra_stmts.push(stmt.fold_with(self));
-                    continue;
-                }
-                ModuleItem::ModuleDecl(decl) => decl,
+        let import_interop = self.config.import_interop();
+
+        let mut strip = ModuleDeclStrip::new(self.const_var_kind);
+        n.body.visit_mut_with(&mut strip);
+
+        let ModuleDeclStrip {
+            link,
+            export,
+            export_assign,
+            has_module_decl,
+            ..
+        } = strip;
+
+        let is_export_assign = export_assign.is_some();
+
+        if has_module_decl && !import_interop.is_none() && !is_export_assign {
+            stmts.push(define_es_module(self.exports()))
+        }
+
+        let mut import_map = Default::default();
+
+        stmts.extend(
+            self.handle_import_export(&mut import_map, link, export, is_export_assign)
+                .map(From::from),
+        );
+
+        stmts.extend(n.body.take().into_iter().filter_map(|item| match item {
+            ModuleItem::Stmt(stmt) if !stmt.is_empty() => Some(stmt),
+            _ => None,
+        }));
+
+        if let Some(export_assign) = export_assign {
+            let return_stmt = ReturnStmt {
+                span: DUMMY_SP,
+                arg: Some(export_assign),
             };
-            match decl {
-                ModuleDecl::Import(import) => self.scope.borrow_mut().insert_import(import),
 
-                ModuleDecl::ExportAll(..)
-                | ModuleDecl::ExportDecl(..)
-                | ModuleDecl::ExportDefaultDecl(..)
-                | ModuleDecl::ExportDefaultExpr(..)
-                | ModuleDecl::ExportNamed(..) => {
-                    has_export = true;
-                    if !self.config.config.strict && !emitted_esmodule {
-                        emitted_esmodule = true;
-                        stmts.push(define_es_module(exports_ident.clone()));
-                    }
-
-                    macro_rules! init_export {
-                        ("default") => {{
-                            init_export!(js_word!("default"))
-                        }};
-                        ($name:expr) => {{
-                            exports.push($name.clone());
-                            initialized.insert($name.clone());
-                        }};
-                    }
-                    match decl {
-                        // Function declaration cannot throw an error.
-                        ModuleDecl::ExportDefaultDecl(ExportDefaultDecl {
-                            decl: DefaultDecl::Fn(..),
-                            ..
-                        }) => {
-                            // initialized.insert(js_word!("default"));
-                        }
-
-                        ModuleDecl::ExportDefaultDecl(ExportDefaultDecl {
-                            decl: DefaultDecl::TsInterfaceDecl(..),
-                            ..
-                        }) => {}
-
-                        ModuleDecl::ExportAll(ref export) => {
-                            self.scope
-                                .borrow_mut()
-                                .import_types
-                                .entry(export.src.value.clone())
-                                .and_modify(|v| *v = true);
-                        }
-
-                        ModuleDecl::ExportDefaultDecl(..) | ModuleDecl::ExportDefaultExpr(..) => {
-                            // TODO: Optimization (when expr cannot throw, `exports.default =
-                            // void 0` is not required)
-                            init_export!("default")
-                        }
-                        _ => {}
-                    }
-
-                    match decl {
-                        ModuleDecl::ExportAll(export) => export_alls.push(export),
-                        ModuleDecl::ExportDecl(ExportDecl {
-                            decl: decl @ Decl::Class(..),
-                            ..
-                        })
-                        | ModuleDecl::ExportDecl(ExportDecl {
-                            decl: decl @ Decl::Fn(..),
-                            ..
-                        }) => {
-                            let (ident, is_class) = match decl {
-                                Decl::Class(ref c) => (c.ident.clone(), true),
-                                Decl::Fn(ref f) => (f.ident.clone(), false),
-                                _ => unreachable!(),
-                            };
-
-                            //
-                            extra_stmts.push(Stmt::Decl(decl.fold_with(self)));
-
-                            let append_to: &mut Vec<_> = if is_class {
-                                &mut extra_stmts
-                            } else {
-                                // Function declaration cannot throw
-                                &mut stmts
-                            };
-
-                            append_to.push(
-                                AssignExpr {
-                                    span: DUMMY_SP,
-                                    left: PatOrExpr::Expr(Box::new(
-                                        exports_ident.clone().make_member(ident.clone()),
-                                    )),
-                                    op: op!("="),
-                                    right: Box::new(ident.into()),
-                                }
-                                .into_stmt(),
-                            );
-                        }
-                        ModuleDecl::ExportDecl(ExportDecl {
-                            decl: Decl::Var(var),
-                            ..
-                        }) => {
-                            extra_stmts.push(Stmt::Decl(Decl::Var(var.clone().fold_with(self))));
-
-                            let mut scope_ref_mut = self.scope.borrow_mut();
-                            let scope = &mut *scope_ref_mut;
-                            var.decls.visit_with(
-                                &Invalid { span: DUMMY_SP } as _,
-                                &mut VarCollector {
-                                    to: &mut scope.declared_vars,
-                                },
-                            );
-
-                            let mut found: Vec<Ident> = vec![];
-                            for decl in var.decls {
-                                let mut v = DestructuringFinder { found: &mut found };
-                                decl.visit_with(&Invalid { span: DUMMY_SP } as _, &mut v);
-
-                                for ident in found.drain(..) {
-                                    scope
-                                        .exported_bindings
-                                        .entry((ident.sym.clone(), ident.span.ctxt()))
-                                        .or_default()
-                                        .push((ident.sym.clone(), ident.span.ctxt()));
-                                    init_export!(ident.sym);
-
-                                    extra_stmts.push(
-                                        AssignExpr {
-                                            span: DUMMY_SP,
-                                            left: PatOrExpr::Expr(Box::new(
-                                                exports_ident.clone().make_member(ident.clone()),
-                                            )),
-                                            op: op!("="),
-                                            right: Box::new(ident.into()),
-                                        }
-                                        .into_stmt(),
-                                    );
-                                }
-                            }
-                        }
-                        ModuleDecl::ExportDefaultDecl(decl) => match decl {
-                            ExportDefaultDecl {
-                                decl: DefaultDecl::Class(ClassExpr { ident, class }),
-                                ..
-                            } => {
-                                let ident = ident.unwrap_or_else(|| private_ident!("_default"));
-
-                                extra_stmts.push(Stmt::Decl(Decl::Class(ClassDecl {
-                                    ident: ident.clone(),
-                                    class,
-                                    declare: false,
-                                })));
-
-                                extra_stmts.push(
-                                    AssignExpr {
-                                        span: DUMMY_SP,
-                                        left: PatOrExpr::Expr(Box::new(
-                                            exports_ident
-                                                .clone()
-                                                .make_member(quote_ident!("default")),
-                                        )),
-                                        op: op!("="),
-                                        right: Box::new(ident.into()),
-                                    }
-                                    .into_stmt(),
-                                );
-                            }
-                            ExportDefaultDecl {
-                                decl: DefaultDecl::Fn(FnExpr { ident, function }),
-                                ..
-                            } => {
-                                let ident = ident.unwrap_or_else(|| private_ident!("_default"));
-
-                                extra_stmts.push(
-                                    AssignExpr {
-                                        span: DUMMY_SP,
-                                        left: PatOrExpr::Expr(Box::new(
-                                            exports_ident
-                                                .clone()
-                                                .make_member(quote_ident!("default")),
-                                        )),
-                                        op: op!("="),
-                                        right: Box::new(ident.clone().into()),
-                                    }
-                                    .into_stmt(),
-                                );
-
-                                extra_stmts.push(Stmt::Decl(Decl::Fn(
-                                    FnDecl {
-                                        ident,
-                                        function,
-                                        declare: false,
-                                    }
-                                    .fold_with(self),
-                                )));
-                            }
-                            _ => {}
-                        },
-
-                        ModuleDecl::ExportDefaultExpr(ExportDefaultExpr { expr, .. }) => {
-                            let ident = private_ident!("_default");
-
-                            // We use extra statements because of the initialization
-                            extra_stmts.push(Stmt::Decl(Decl::Var(VarDecl {
-                                span: DUMMY_SP,
-                                kind: VarDeclKind::Var,
-                                decls: vec![VarDeclarator {
-                                    span: DUMMY_SP,
-                                    name: Pat::Ident(ident.clone().into()),
-                                    init: Some(expr.fold_with(self)),
-                                    definite: false,
-                                }],
-                                declare: false,
-                            })));
-                            extra_stmts.push(
-                                AssignExpr {
-                                    span: DUMMY_SP,
-                                    left: PatOrExpr::Expr(Box::new(
-                                        exports_ident.clone().make_member(quote_ident!("default")),
-                                    )),
-                                    op: op!("="),
-                                    right: Box::new(ident.into()),
-                                }
-                                .into_stmt(),
-                            );
-                        }
-
-                        // export { foo } from 'foo';
-                        ModuleDecl::ExportNamed(export) => {
-                            let mut scope_ref_mut = self.scope.borrow_mut();
-                            let scope = &mut *scope_ref_mut;
-                            let imported = export.src.clone().map(|src| {
-                                scope.import_to_export(&src, !export.specifiers.is_empty())
-                            });
-                            drop(scope);
-                            drop(scope_ref_mut);
-
-                            stmts.reserve(export.specifiers.len());
-
-                            for ExportNamedSpecifier { orig, exported, .. } in export
-                                .specifiers
-                                .into_iter()
-                                .map(|e| match e {
-                                    ExportSpecifier::Named(e) => e,
-                                    ExportSpecifier::Default(..) => unreachable!(
-                                        "export default from 'foo'; should be removed by previous \
-                                         pass"
-                                    ),
-                                    ExportSpecifier::Namespace(..) => unreachable!(
-                                        "export * as Foo from 'foo'; should be removed by \
-                                         previous pass"
-                                    ),
-                                })
-                                .filter(|e| !e.is_type_only)
-                            {
-                                let mut scope_ref_mut = self.scope.borrow_mut();
-                                let scope = &mut *scope_ref_mut;
-                                let is_import_default = orig.sym == js_word!("default");
-
-                                let key = (orig.sym.clone(), orig.span.ctxt());
-                                if scope.declared_vars.contains(&key) {
-                                    scope
-                                        .exported_bindings
-                                        .entry(key.clone())
-                                        .or_default()
-                                        .push(
-                                            exported
-                                                .clone()
-                                                .map(|i| (i.sym.clone(), i.span.ctxt()))
-                                                .unwrap_or_else(|| {
-                                                    (orig.sym.clone(), orig.span.ctxt())
-                                                }),
-                                        );
-                                }
-
-                                if let Some(ref src) = export.src {
-                                    if is_import_default {
-                                        scope
-                                            .import_types
-                                            .entry(src.value.clone())
-                                            .or_insert(false);
-                                    }
-                                }
-                                drop(scope);
-                                drop(scope_ref_mut);
-                                let value = match imported {
-                                    Some(ref imported) => Box::new(
-                                        imported.clone().unwrap().make_member(orig.clone()),
-                                    ),
-                                    None => Box::new(Expr::Ident(orig.clone()).fold_with(self)),
-                                };
-
-                                // True if we are exporting our own stuff.
-                                let is_value_ident = match *value {
-                                    Expr::Ident(..) => true,
-                                    _ => false,
-                                };
-
-                                if is_value_ident {
-                                    let exported_symbol = exported
-                                        .as_ref()
-                                        .map(|e| e.sym.clone())
-                                        .unwrap_or_else(|| orig.sym.clone());
-                                    init_export!(exported_symbol);
-
-                                    extra_stmts.push(
-                                        AssignExpr {
-                                            span: DUMMY_SP,
-                                            left: PatOrExpr::Expr(Box::new(
-                                                exports_ident
-                                                    .clone()
-                                                    .make_member(exported.unwrap_or(orig)),
-                                            )),
-                                            op: op!("="),
-                                            right: value,
-                                        }
-                                        .into_stmt(),
-                                    );
-                                } else {
-                                    stmts.push(
-                                        define_property(vec![
-                                            exports_ident.clone().as_arg(),
-                                            {
-                                                // export { foo }
-                                                //  -> 'foo'
-
-                                                // export { foo as bar }
-                                                //  -> 'bar'
-                                                let i = exported.unwrap_or_else(|| orig);
-                                                Lit::Str(quote_str!(i.span, i.sym)).as_arg()
-                                            },
-                                            make_descriptor(value).as_arg(),
-                                        ])
-                                        .into_stmt(),
-                                    );
-                                }
-                            }
-                        }
-
-                        _ => {}
-                    }
-                }
-
-                ModuleDecl::TsImportEquals(..)
-                | ModuleDecl::TsExportAssignment(..)
-                | ModuleDecl::TsNamespaceExport(..) => {}
-            }
+            stmts.push(return_stmt.into())
         }
 
-        // ====================
-        //  Handle imports
-        // ====================
-
-        // Prepended to statements.
-        let mut import_stmts = vec![];
-        let mut define_deps_arg = ArrayLit {
-            span: DUMMY_SP,
-            elems: vec![],
-        };
-        let mut scope_ref_mut = self.scope.borrow_mut();
-        let scope = &mut *scope_ref_mut;
-        let mut factory_params = Vec::with_capacity(scope.imports.len() + 1);
-        if has_export {
-            define_deps_arg
-                .elems
-                .push(Some(Lit::Str(quote_str!("exports")).as_arg()));
-            factory_params.push(Param {
-                span: DUMMY_SP,
-                decorators: Default::default(),
-                pat: Pat::Ident(exports_ident.clone().into()),
-            });
+        if !self.config.ignore_dynamic || !self.config.preserve_import_meta {
+            stmts.visit_mut_children_with(self);
         }
 
-        // Used only if export * exists
-        let exported_names = {
-            if !export_alls.is_empty() && !exports.is_empty() {
-                let exported_names = private_ident!("_exportNames");
-                stmts.push(Stmt::Decl(Decl::Var(VarDecl {
-                    span: DUMMY_SP,
-                    kind: VarDeclKind::Var,
-                    decls: vec![VarDeclarator {
-                        span: DUMMY_SP,
-                        name: Pat::Ident(exported_names.clone().into()),
-                        init: Some(Box::new(Expr::Object(ObjectLit {
-                            span: DUMMY_SP,
-                            props: exports
-                                .into_iter()
-                                .filter_map(|export| {
-                                    if export == js_word!("default") {
-                                        return None;
-                                    }
-
-                                    Some(PropOrSpread::Prop(Box::new(Prop::KeyValue(
-                                        KeyValueProp {
-                                            key: PropName::Ident(Ident::new(export, DUMMY_SP)),
-                                            value: Box::new(Expr::Lit(Lit::Bool(Bool {
-                                                span: DUMMY_SP,
-                                                value: true,
-                                            }))),
-                                        },
-                                    ))))
-                                })
-                                .collect(),
-                        }))),
-                        definite: false,
-                    }],
-                    declare: false,
-                })));
-
-                Some(exported_names)
-            } else {
-                None
-            }
-        };
-
-        for export in export_alls {
-            let export = scope
-                .import_to_export(&export.src, true)
-                .expect("Export should exists");
-            stmts.push(Scope::handle_export_all(
-                exports_ident.clone(),
-                exported_names.clone(),
-                export,
-            ));
-        }
-
-        if !initialized.is_empty() {
-            stmts.push(initialize_to_undefined(exports_ident, initialized).into_stmt());
-        }
-
-        for (src, import) in scope.imports.drain(..) {
-            let import = import.unwrap_or_else(|| {
-                (
-                    local_name_for_src(&src),
-                    DUMMY_SP.apply_mark(Mark::fresh(Mark::root())),
-                )
-            });
-            let ident = Ident::new(import.0.clone(), import.1);
-
-            {
-                let src = match &self.resolver {
-                    Some((resolver, base)) => resolver
-                        .resolve_import(&base, &src)
-                        .with_context(|| format!("failed to resolve `{}`", src))
-                        .unwrap(),
-                    None => src.clone(),
-                };
-
-                define_deps_arg
-                    .elems
-                    .push(Some(Lit::Str(quote_str!(src)).as_arg()));
-            }
-            factory_params.push(Param {
-                span: DUMMY_SP,
-                decorators: Default::default(),
-                pat: Pat::Ident(ident.clone().into()),
-            });
-
-            {
-                // handle interop
-                let ty = scope.import_types.get(&src);
-
-                if let Some(&wildcard) = ty {
-                    if !self.config.config.no_interop {
-                        let imported = ident.clone();
-                        let right = Box::new(Expr::Call(CallExpr {
-                            span: DUMMY_SP,
-                            callee: if wildcard {
-                                helper!(interop_require_wildcard, "interopRequireWildcard")
-                            } else {
-                                helper!(interop_require_default, "interopRequireDefault")
-                            },
-                            args: vec![imported.as_arg()],
-                            type_args: Default::default(),
-                        }));
-                        import_stmts.push(
-                            AssignExpr {
-                                span: DUMMY_SP,
-                                left: PatOrExpr::Pat(Box::new(Pat::Ident(ident.clone().into()))),
-                                op: op!("="),
-                                right,
-                            }
-                            .into_stmt(),
-                        );
-                    }
-                }
-            }
-        }
-
-        prepend_stmts(&mut stmts, import_stmts.into_iter());
-        stmts.append(&mut extra_stmts);
+        rewrite_import_bindings(&mut stmts, import_map, Default::default());
 
         // ====================
         //  Emit
         // ====================
 
-        Module {
-            body: vec![CallExpr {
+        let mut elems = vec![Some(quote_str!("require").as_arg())];
+        let mut params = vec![self.require.clone().into()];
+
+        if let Some(exports) = self.exports.take() {
+            elems.push(Some(quote_str!("exports").as_arg()));
+            params.push(exports.into())
+        }
+
+        if let Some(module) = self.module.clone() {
+            elems.push(Some(quote_str!("module").as_arg()));
+            params.push(module.into())
+        }
+
+        self.dep_list
+            .take()
+            .into_iter()
+            .for_each(|(ident, src_path, src_span)| {
+                let src_path = match &self.resolver {
+                    Resolver::Real { resolver, base } => resolver
+                        .resolve_import(base, &src_path)
+                        .with_context(|| format!("failed to resolve `{}`", src_path))
+                        .unwrap(),
+                    Resolver::Default => src_path,
+                };
+
+                elems.push(Some(quote_str!(src_span, src_path).as_arg()));
+                params.push(ident.into());
+            });
+
+        let mut amd_call_args = Vec::with_capacity(3);
+        if let Some(module_id) = self.module_id.clone() {
+            amd_call_args.push(quote_str!(module_id).as_arg());
+        }
+        amd_call_args.push(
+            ArrayLit {
                 span: DUMMY_SP,
-                callee: quote_ident!("define").as_callee(),
-                args: self
-                    .config
-                    .module_id
-                    .clone()
-                    .map(|s| quote_str!(s).as_arg())
-                    .into_iter()
-                    .chain(iter::once(define_deps_arg.as_arg()))
-                    .chain(iter::once(
-                        FnExpr {
-                            ident: None,
-                            function: Function {
-                                span: DUMMY_SP,
-                                is_async: false,
-                                is_generator: false,
-                                decorators: Default::default(),
-                                params: factory_params,
-                                body: Some(BlockStmt {
-                                    span: DUMMY_SP,
-                                    stmts,
-                                }),
-                                type_params: Default::default(),
-                                return_type: Default::default(),
-                            },
-                        }
-                        .as_arg(),
-                    ))
-                    .collect(),
-                type_args: Default::default(),
+                elems,
             }
-            .into_stmt()
-            .into()],
-            ..module
-        }
-    }
+            .as_arg(),
+        );
 
-    fn fold_prop(&mut self, p: Prop) -> Prop {
-        match p {
-            Prop::Shorthand(ident) => {
-                let top_level = self.in_top_level;
-                Scope::fold_shorthand_prop(self, top_level, ident)
-            }
-
-            _ => p.fold_children_with(self),
-        }
-    }
-
-    ///
-    /// - collects all declared variables for let and var.
-    fn fold_var_decl(&mut self, var: VarDecl) -> VarDecl {
-        if var.kind != VarDeclKind::Const {
-            var.decls.visit_with(
-                &Invalid { span: DUMMY_SP } as _,
-                &mut VarCollector {
-                    to: &mut self.scope.borrow_mut().declared_vars,
-                },
-            );
-        }
-
-        VarDecl {
-            decls: var.decls.fold_with(self),
-            ..var
-        }
-    }
-
-    mark_as_nested!();
-}
-
-impl<R> ModulePass for Amd<R>
-where
-    R: ImportResolver,
-{
-    fn config(&self) -> &util::Config {
-        &self.config.config
-    }
-
-    fn scope(&self) -> Ref<Scope> {
-        self.scope.borrow()
-    }
-
-    fn scope_mut(&mut self) -> RefMut<Scope> {
-        self.scope.borrow_mut()
-    }
-
-    fn make_dynamic_import(&mut self, span: Span, args: Vec<ExprOrSpread>) -> Expr {
-        handle_dynamic_import(span, args)
-    }
-}
-
-/// ```js
-/// 
-/// new Promise(function(resolve, reject) {
-///     require([
-///           'js/foo'
-///     ], function (foo) {
-///           resolve(foo)
-///     }, function (err) {
-//          reject(err);
-///     });
-/// });
-///
-/// ```
-pub(super) fn handle_dynamic_import(span: Span, args: Vec<ExprOrSpread>) -> Expr {
-    Expr::New(NewExpr {
-        span,
-        callee: Box::new(Expr::Ident(quote_ident!("Promise"))),
-        args: Some(vec![FnExpr {
-            ident: None,
-            function: Function {
-                span: DUMMY_SP,
-                is_async: false,
-                is_generator: false,
+        amd_call_args.push(
+            Function {
+                params,
                 decorators: Default::default(),
-                type_params: Default::default(),
-                return_type: Default::default(),
-                params: vec![
-                    // resolve
-                    Param {
-                        span: DUMMY_SP,
-                        decorators: Default::default(),
-                        pat: Pat::Ident(quote_ident!("resolve").into()),
-                    },
-                    // reject
-                    Param {
-                        span: DUMMY_SP,
-                        decorators: Default::default(),
-                        pat: Pat::Ident(quote_ident!("reject").into()),
-                    },
-                ],
-
-                // require([
-                //         'js/foo'
-                // ], function (foo) {
-                //         resolve(foo)
-                // }, function (err) {
-                //         reject(err);
-                // });
+                span: DUMMY_SP,
                 body: Some(BlockStmt {
                     span: DUMMY_SP,
-                    stmts: vec![Stmt::Expr(ExprStmt {
-                        span: DUMMY_SP,
-                        expr: Box::new(
-                            CallExpr {
-                                span: DUMMY_SP,
-                                callee: quote_ident!("require").as_callee(),
-                                args: vec![
-                                    ArrayLit {
-                                        span: DUMMY_SP,
-                                        elems: args.into_iter().map(Some).collect(),
-                                    }
-                                    .as_arg(),
-                                    // function (foo) {
-                                    //     resolve(foo)
-                                    // }
-                                    FnExpr {
-                                        ident: None,
-
-                                        function: Function {
-                                            span: DUMMY_SP,
-                                            decorators: Default::default(),
-                                            is_async: false,
-                                            is_generator: false,
-                                            type_params: Default::default(),
-                                            return_type: Default::default(),
-                                            params: vec![Param {
-                                                span: DUMMY_SP,
-                                                decorators: Default::default(),
-                                                pat: Pat::Ident(quote_ident!("dep").into()),
-                                            }],
-                                            body: Some(BlockStmt {
-                                                span: DUMMY_SP,
-                                                stmts: vec![CallExpr {
-                                                    span: DUMMY_SP,
-                                                    callee: quote_ident!("resolve").as_callee(),
-                                                    args: vec![quote_ident!("dep").as_arg()],
-                                                    type_args: Default::default(),
-                                                }
-                                                .into_stmt()],
-                                            }),
-                                        },
-                                    }
-                                    .as_arg(),
-                                    // function (err) {
-                                    //         reject(err);
-                                    // };
-                                    FnExpr {
-                                        ident: None,
-                                        function: Function {
-                                            span: DUMMY_SP,
-                                            decorators: Default::default(),
-                                            is_async: false,
-                                            is_generator: false,
-                                            type_params: Default::default(),
-                                            return_type: Default::default(),
-                                            params: vec![Param {
-                                                span: DUMMY_SP,
-                                                decorators: Default::default(),
-                                                pat: Pat::Ident(quote_ident!("err").into()),
-                                            }],
-                                            body: Some(BlockStmt {
-                                                span: DUMMY_SP,
-                                                stmts: vec![CallExpr {
-                                                    span: DUMMY_SP,
-                                                    callee: quote_ident!("reject").as_callee(),
-                                                    args: vec![quote_ident!("err").as_arg()],
-                                                    type_args: Default::default(),
-                                                }
-                                                .into_stmt()],
-                                            }),
-                                        },
-                                    }
-                                    .as_arg(),
-                                ],
-                                type_args: Default::default(),
-                            }
-                            .into(),
-                        ),
-                    })],
+                    stmts,
                 }),
-            },
+                is_generator: false,
+                is_async: false,
+                type_params: None,
+                return_type: None,
+            }
+            .into_fn_expr(None)
+            .as_arg(),
+        );
+
+        n.body = vec![
+            quote_ident!(DUMMY_SP.apply_mark(self.unresolved_mark), "define")
+                .as_call(DUMMY_SP, amd_call_args)
+                .into_stmt()
+                .into(),
+        ];
+    }
+
+    fn visit_mut_script(&mut self, _: &mut Script) {
+        // skip script
+    }
+
+    fn visit_mut_expr(&mut self, n: &mut Expr) {
+        match n {
+            Expr::Call(CallExpr {
+                span,
+                callee: Callee::Import(Import { span: import_span }),
+                args,
+                ..
+            }) if !self.config.ignore_dynamic => {
+                args.visit_mut_with(self);
+
+                args.get_mut(0).into_iter().for_each(|x| {
+                    if let ExprOrSpread { spread: None, expr } = x {
+                        if let Expr::Lit(Lit::Str(Str { value, raw, .. })) = &mut **expr {
+                            *value = self.resolver.resolve(value.clone());
+                            *raw = None;
+                        }
+                    }
+                });
+
+                let mut require = self.require.clone();
+                require.span = import_span.apply_mark(require.span.ctxt().outer());
+
+                *n = amd_dynamic_import(
+                    *span,
+                    self.pure_span(),
+                    args.take(),
+                    require,
+                    self.config.import_interop(),
+                    self.support_arrow,
+                );
+            }
+            Expr::Member(MemberExpr { span, obj, prop })
+                if prop.is_ident_with("url")
+                    && !self.config.preserve_import_meta
+                    && obj
+                        .as_meta_prop()
+                        .map(|p| p.kind == MetaPropKind::ImportMeta)
+                        .unwrap_or_default() =>
+            {
+                obj.visit_mut_with(self);
+
+                *n = amd_import_meta_url(*span, self.module());
+                self.found_import_meta = true;
+            }
+            _ => n.visit_mut_children_with(self),
         }
-        .as_arg()]),
-        type_args: Default::default(),
-    })
+    }
+}
+
+impl<C> Amd<C>
+where
+    C: Comments,
+{
+    fn handle_import_export(
+        &mut self,
+        import_map: &mut ImportMap,
+        link: Link,
+        export: Export,
+        is_export_assign: bool,
+    ) -> impl Iterator<Item = Stmt> {
+        let import_interop = self.config.import_interop();
+
+        let mut stmts = Vec::with_capacity(link.len());
+
+        let mut export_obj_prop_list = export.into_iter().collect();
+
+        link.into_iter().for_each(
+            |(src, LinkItem(src_span, link_specifier_set, mut link_flag))| {
+                let is_node_default = !link_flag.has_named() && import_interop.is_node();
+
+                if import_interop.is_none() {
+                    link_flag -= LinkFlag::NAMESPACE;
+                }
+
+                let need_re_export = link_flag.export_star();
+                let need_interop = link_flag.interop();
+                let need_new_var = link_flag.need_raw_import();
+
+                let mod_ident = private_ident!(local_name_for_src(&src));
+                let new_var_ident = if need_new_var {
+                    private_ident!(local_name_for_src(&src))
+                } else {
+                    mod_ident.clone()
+                };
+
+                self.dep_list.push((mod_ident.clone(), src, src_span));
+
+                link_specifier_set.reduce(
+                    import_map,
+                    &mut export_obj_prop_list,
+                    &new_var_ident,
+                    &Some(mod_ident.clone()),
+                    &mut false,
+                    is_node_default,
+                );
+
+                // _export_star(mod, exports);
+                let mut import_expr: Expr = if need_re_export {
+                    helper_expr!(export_star).as_call(
+                        DUMMY_SP,
+                        vec![mod_ident.clone().as_arg(), self.exports().as_arg()],
+                    )
+                } else {
+                    mod_ident.clone().into()
+                };
+
+                // _introp(mod);
+                if need_interop {
+                    import_expr = match import_interop {
+                        ImportInterop::Swc if link_flag.interop() => if link_flag.namespace() {
+                            helper_expr!(interop_require_wildcard)
+                        } else {
+                            helper_expr!(interop_require_default)
+                        }
+                        .as_call(self.pure_span(), vec![import_expr.as_arg()]),
+                        ImportInterop::Node if link_flag.namespace() => helper_expr!(
+                            interop_require_wildcard
+                        )
+                        .as_call(self.pure_span(), vec![import_expr.as_arg(), true.as_arg()]),
+                        _ => import_expr,
+                    }
+                };
+
+                // mod = _introp(mod);
+                // var mod1 = _introp(mod);
+                if need_new_var {
+                    let stmt: Stmt = import_expr
+                        .into_var_decl(self.const_var_kind, new_var_ident.into())
+                        .into();
+
+                    stmts.push(stmt)
+                } else if need_interop {
+                    let stmt = import_expr
+                        .make_assign_to(op!("="), mod_ident.as_pat_or_expr())
+                        .into_stmt();
+                    stmts.push(stmt);
+                } else if need_re_export {
+                    stmts.push(import_expr.into_stmt());
+                };
+            },
+        );
+
+        let mut export_stmts = Default::default();
+
+        if !export_obj_prop_list.is_empty() && !is_export_assign {
+            export_obj_prop_list.sort_by_cached_key(|(key, ..)| key.clone());
+
+            let exports = self.exports();
+
+            export_stmts = emit_export_stmts(exports, export_obj_prop_list);
+        }
+
+        export_stmts.into_iter().chain(stmts)
+    }
+
+    fn module(&mut self) -> Ident {
+        self.module
+            .get_or_insert_with(|| private_ident!("module"))
+            .clone()
+    }
+
+    fn exports(&mut self) -> Ident {
+        self.exports
+            .get_or_insert_with(|| private_ident!("exports"))
+            .clone()
+    }
+
+    fn pure_span(&self) -> Span {
+        let mut span = DUMMY_SP;
+
+        if self.config.import_interop().is_none() {
+            return span;
+        }
+
+        if let Some(comments) = &self.comments {
+            span = Span::dummy_with_cmt();
+            comments.add_pure_comment(span.lo);
+        }
+        span
+    }
+
+    fn get_amd_module_id_from_comments(&self, span: Span) -> Option<String> {
+        // https://github.com/microsoft/TypeScript/blob/1b9c8a15adc3c9a30e017a7048f98ef5acc0cada/src/compiler/parser.ts#L9648-L9658
+        let amd_module_re =
+            Regex::new(r#"(?i)^/\s*<amd-module.*?name\s*=\s*(?:(?:'([^']*)')|(?:"([^"]*)")).*?/>"#)
+                .unwrap();
+
+        self.comments.as_ref().and_then(|comments| {
+            comments
+                .get_leading(span.lo)
+                .iter()
+                .flatten()
+                .rev()
+                .find_map(|cmt| {
+                    if cmt.kind != CommentKind::Line {
+                        return None;
+                    }
+                    amd_module_re
+                        .captures(&cmt.text)
+                        .and_then(|cap| cap.get(1).or_else(|| cap.get(2)))
+                })
+                .map(|m| m.as_str().to_string())
+        })
+    }
+}
+
+/// new Promise((resolve, reject) => require([arg], m => resolve(m), reject))
+pub(crate) fn amd_dynamic_import(
+    span: Span,
+    pure_span: Span,
+    args: Vec<ExprOrSpread>,
+    require: Ident,
+    import_interop: ImportInterop,
+    support_arrow: bool,
+) -> Expr {
+    let resolve = private_ident!("resolve");
+    let reject = private_ident!("reject");
+    let arg = args[..1].iter().cloned().map(Option::Some).collect();
+
+    let module = private_ident!("m");
+
+    let resolved_module: Expr = match import_interop {
+        ImportInterop::None => module.clone().into(),
+        ImportInterop::Swc => {
+            helper_expr!(interop_require_wildcard).as_call(pure_span, vec![module.clone().as_arg()])
+        }
+        ImportInterop::Node => helper_expr!(interop_require_wildcard)
+            .as_call(pure_span, vec![module.clone().as_arg(), true.as_arg()]),
+    };
+
+    let resolve_callback = resolve
+        .clone()
+        .as_call(DUMMY_SP, vec![resolved_module.as_arg()])
+        .into_lazy_auto(vec![module.into()], support_arrow);
+
+    let require_call = require.as_call(
+        DUMMY_SP,
+        vec![
+            ArrayLit {
+                span: DUMMY_SP,
+                elems: arg,
+            }
+            .as_arg(),
+            resolve_callback.as_arg(),
+            reject.clone().as_arg(),
+        ],
+    );
+
+    let promise_executer =
+        require_call.into_lazy_auto(vec![resolve.into(), reject.into()], support_arrow);
+
+    NewExpr {
+        span,
+        callee: Box::new(quote_ident!("Promise").into()),
+        args: Some(vec![promise_executer.as_arg()]),
+        type_args: None,
+    }
+    .into()
+}
+
+/// new URL(module.uri, document.baseURI).href
+fn amd_import_meta_url(span: Span, module: Ident) -> Expr {
+    MemberExpr {
+        span,
+        obj: Box::new(Expr::New(quote_ident!("URL").into_new_expr(
+            DUMMY_SP,
+            Some(vec![
+                module.make_member(quote_ident!("uri")).as_arg(),
+                member_expr!(DUMMY_SP, document.baseURI).as_arg(),
+            ]),
+        ))),
+        prop: quote_ident!("href").into(),
+    }
+    .into()
 }

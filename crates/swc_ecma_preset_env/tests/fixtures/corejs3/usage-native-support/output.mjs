@@ -14,13 +14,12 @@ G.assign;
 function H(WeakMap) {
     var blah = new WeakMap();
 }
-var asdf = 'copyWithin';
+var asdf = "copyWithin";
 i[asdf];
 j[`copyWithin`];
 var { [asdf]: _a  } = k;
 const foo = new Promise((resolve)=>{
     resolve(new Map());
 });
-queueMicrotask(()=>globalThis
-);
+queueMicrotask(()=>globalThis);
 Observable.from(10);

@@ -1,3 +1,0 @@
-"".concat(function(x) {
-    "bad";
-});

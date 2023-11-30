@@ -1,7 +1,7 @@
-use crate::loaders::json::load_json_as_module;
+use std::{collections::HashMap, env, sync::Arc};
+
 use anyhow::{bail, Context, Error};
 use helpers::Helpers;
-use std::{collections::HashMap, env, sync::Arc};
 use swc::{
     config::{GlobalInliningPassEnvs, InputSourceMap, IsModule, JscConfig, TransformConfig},
     try_with_handler,
@@ -10,12 +10,13 @@ use swc_atoms::JsWord;
 use swc_bundler::{Load, ModuleData};
 use swc_common::{
     collections::AHashMap,
+    comments::SingleThreadedComments,
     errors::{Handler, HANDLER},
     sync::Lrc,
-    FileName, DUMMY_SP,
+    FileName, Mark, DUMMY_SP,
 };
 use swc_ecma_ast::{EsVersion, Expr, Lit, Module, Program, Str};
-use swc_ecma_parser::{lexer::Lexer, Parser, StringInput, Syntax};
+use swc_ecma_parser::{parse_file_as_module, Syntax};
 use swc_ecma_transforms::{
     helpers,
     optimization::{
@@ -23,8 +24,11 @@ use swc_ecma_transforms::{
         simplify::{dead_branch_remover, expr_simplifier},
     },
     pass::noop,
+    resolver,
 };
-use swc_ecma_visit::FoldWith;
+use swc_ecma_visit::{FoldWith, VisitMutWith};
+
+use crate::loaders::json::load_json_as_module;
 
 /// JavaScript loader
 pub struct SwcLoader {
@@ -48,7 +52,7 @@ impl SwcLoader {
             .as_ref()
             .and_then(|t| t.optimizer.as_ref())
             .and_then(|o| o.globals.as_ref())
-            .and_then(|g| Some(g.envs.clone()))
+            .map(|g| g.envs.clone())
             .unwrap_or_default();
 
         let envs_map: AHashMap<_, _> = match envs {
@@ -67,9 +71,8 @@ impl SwcLoader {
                 k,
                 Expr::Lit(Lit::Str(Str {
                     span: DUMMY_SP,
+                    raw: None,
                     value: v,
-                    has_escape: false,
-                    kind: Default::default(),
                 })),
             );
         }
@@ -81,40 +84,62 @@ impl SwcLoader {
         tracing::debug!("JsLoader.load({})", name);
         let helpers = Helpers::new(false);
 
-        match name {
-            FileName::Custom(id) => {
-                // Handle built-in modules
-                if id.starts_with("node:") {
-                    let fm = self
-                        .compiler
-                        .cm
-                        .new_source_file(name.clone(), "".to_string());
-                    return Ok(ModuleData {
-                        fm,
-                        module: Module {
-                            span: DUMMY_SP,
-                            body: Default::default(),
-                            shebang: Default::default(),
-                        },
-                        helpers: Default::default(),
-                    });
-                // Handle disabled modules, eg when `browser` has a field
-                // set to `false`
-                } else {
-                    // TODO: When we know the calling context is ESM
-                    // TODO: switch to `export default {}`.
-                    let fm = self
-                        .compiler
-                        .cm
-                        .new_source_file(name.clone(), "module.exports = {}".to_string());
-                    let lexer = Lexer::new(
-                        Syntax::Es(Default::default()),
-                        Default::default(),
-                        StringInput::from(&*fm),
-                        None,
-                    );
-                    let mut parser = Parser::new_from(lexer);
-                    let module = parser.parse_module().unwrap();
+        if let FileName::Custom(id) = name {
+            // Handle built-in modules
+            if id.starts_with("node:") {
+                let fm = self
+                    .compiler
+                    .cm
+                    .new_source_file(name.clone(), "".to_string());
+                return Ok(ModuleData {
+                    fm,
+                    module: Module {
+                        span: DUMMY_SP,
+                        body: Default::default(),
+                        shebang: Default::default(),
+                    },
+                    helpers: Default::default(),
+                });
+            // Handle disabled modules, eg when `browser` has a field
+            // set to `false`
+            } else {
+                // TODO: When we know the calling context is ESM
+                // TODO: switch to `export default {}`.
+                let fm = self
+                    .compiler
+                    .cm
+                    .new_source_file(name.clone(), "module.exports = {}".to_string());
+
+                let module = parse_file_as_module(
+                    &fm,
+                    Syntax::Es(Default::default()),
+                    Default::default(),
+                    None,
+                    &mut vec![],
+                )
+                .unwrap();
+                return Ok(ModuleData {
+                    fm,
+                    module,
+                    helpers: Default::default(),
+                });
+            }
+        }
+
+        let fm = self
+            .compiler
+            .cm
+            .load_file(match name {
+                FileName::Real(v) => v,
+                _ => bail!("swc-loader only accepts path. Got `{}`", name),
+            })
+            .with_context(|| format!("failed to load file `{}`", name))?;
+
+        if let FileName::Real(path) = name {
+            if let Some(ext) = path.extension() {
+                if ext == "json" {
+                    let module = load_json_as_module(&fm)
+                        .with_context(|| format!("failed to load json file at {}", fm.name))?;
                     return Ok(ModuleData {
                         fm,
                         module,
@@ -122,62 +147,41 @@ impl SwcLoader {
                     });
                 }
             }
-            _ => {}
-        }
-
-        let fm = self
-            .compiler
-            .cm
-            .load_file(match name {
-                FileName::Real(v) => &v,
-                _ => bail!("swc-loader only accepts path. Got `{}`", name),
-            })
-            .with_context(|| format!("failed to load file `{}`", name))?;
-
-        match name {
-            FileName::Real(path) => {
-                if let Some(ext) = path.extension() {
-                    if ext == "json" {
-                        let module = load_json_as_module(&fm)
-                            .with_context(|| format!("failed to load json file at {}", fm.name))?;
-                        return Ok(ModuleData {
-                            fm: fm.clone(),
-                            module,
-                            helpers: Default::default(),
-                        });
-                    }
-                }
-            }
-            _ => {}
         }
 
         tracing::trace!("JsLoader.load: loaded");
 
         let program = if fm.name.to_string().contains("node_modules") {
+            let comments = self.compiler.comments().clone();
+
             let program = self.compiler.parse_js(
                 fm.clone(),
-                &handler,
+                handler,
                 EsVersion::Es2020,
                 Default::default(),
                 IsModule::Bool(true),
-                true,
+                Some(&comments),
             )?;
-            let program = helpers::HELPERS.set(&helpers, || {
-                HANDLER.set(&handler, || {
-                    let program = program.fold_with(&mut inline_globals(
+
+            helpers::HELPERS.set(&helpers, || {
+                HANDLER.set(handler, || {
+                    let mut program = program.fold_with(&mut inline_globals(
                         self.env_map(),
                         Default::default(),
                         Default::default(),
                     ));
-                    let program = program.fold_with(&mut expr_simplifier(Default::default()));
-                    let program = program.fold_with(&mut dead_branch_remover());
+                    let unresolved_mark = Mark::new();
+                    let top_level_mark = Mark::new();
 
-                    program
+                    program.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
+                    let program = program
+                        .fold_with(&mut expr_simplifier(unresolved_mark, Default::default()));
+
+                    program.fold_with(&mut dead_branch_remover(unresolved_mark))
                 })
-            });
-
-            program
+            })
         } else {
+            let comments = SingleThreadedComments::default();
             let config = self.compiler.parse_js_as_input(
                 fm.clone(),
                 None,
@@ -188,8 +192,10 @@ impl SwcLoader {
                         swc::config::Config {
                             jsc: JscConfig {
                                 transform: {
-                                    if let Some(c) = &c.jsc.transform {
-                                        Some(TransformConfig {
+                                    c.jsc
+                                        .transform
+                                        .as_ref()
+                                        .map(|c| TransformConfig {
                                             react: c.react.clone(),
                                             const_modules: c.const_modules.clone(),
                                             optimizer: None,
@@ -198,43 +204,32 @@ impl SwcLoader {
                                             hidden: Default::default(),
                                             ..Default::default()
                                         })
-                                    } else {
-                                        None
-                                    }
+                                        .into()
                                 },
-                                external_helpers: true,
+                                external_helpers: true.into(),
                                 ..c.jsc.clone()
                             },
                             module: None,
-                            minify: false,
-                            input_source_map: InputSourceMap::Bool(false),
+                            minify: false.into(),
+                            input_source_map: InputSourceMap::Bool(false).into(),
                             ..c.clone()
                         }
                     },
                     skip_helper_injection: true,
                     disable_hygiene: false,
                     disable_fixer: true,
-                    global_mark: self.options.global_mark,
+                    top_level_mark: self.options.top_level_mark,
                     cwd: self.options.cwd.clone(),
                     caller: None,
                     filename: String::new(),
                     config_file: None,
                     root: None,
-                    root_mode: Default::default(),
                     swcrc: true,
-                    swcrc_roots: Default::default(),
-                    env_name: {
-                        let s = env::var("NODE_ENV").unwrap_or_else(|_| "development".into());
-                        s
-                    },
-                    source_maps: None,
-                    source_file_name: None,
-                    source_root: None,
-                    is_module: IsModule::Bool(true),
-                    output_path: None,
+                    env_name: { env::var("NODE_ENV").unwrap_or_else(|_| "development".into()) },
                     ..Default::default()
                 },
                 &fm.name,
+                Some(&comments),
                 |_| noop(),
             )?;
 
@@ -249,20 +244,29 @@ impl SwcLoader {
 
                 helpers::HELPERS.set(&helpers, || {
                     HANDLER.set(handler, || {
-                        let program = program.fold_with(&mut inline_globals(
+                        let mut program = program.fold_with(&mut inline_globals(
                             self.env_map(),
                             Default::default(),
                             Default::default(),
                         ));
-                        let program = program.fold_with(&mut expr_simplifier(Default::default()));
-                        let program = program.fold_with(&mut dead_branch_remover());
+                        let unresolved_mark = Mark::new();
+                        let top_level_mark = Mark::new();
 
-                        let program = program.fold_with(&mut pass);
+                        program.visit_mut_with(&mut resolver(
+                            unresolved_mark,
+                            top_level_mark,
+                            false,
+                        ));
+                        let program = program
+                            .fold_with(&mut expr_simplifier(unresolved_mark, Default::default()));
+                        let program = program.fold_with(&mut dead_branch_remover(unresolved_mark));
 
-                        program
+                        program.fold_with(&mut pass)
                     })
                 })
             } else {
+                let comments = self.compiler.comments().clone();
+
                 self.compiler
                     .parse_js(
                         fm.clone(),
@@ -270,7 +274,7 @@ impl SwcLoader {
                         EsVersion::Es2020,
                         config.as_ref().map(|v| v.syntax).unwrap_or_default(),
                         IsModule::Bool(true),
-                        true,
+                        Some(&comments),
                     )
                     .context("tried to parse as ecmascript as it's excluded by .swcrc")?
             };
@@ -293,8 +297,8 @@ impl SwcLoader {
 
 impl Load for SwcLoader {
     fn load(&self, name: &FileName) -> Result<ModuleData, Error> {
-        try_with_handler(self.compiler.cm.clone(), false, |handler| {
-            self.load_with_handler(&handler, name)
+        try_with_handler(self.compiler.cm.clone(), Default::default(), |handler| {
+            self.load_with_handler(handler, name)
         })
     }
 }

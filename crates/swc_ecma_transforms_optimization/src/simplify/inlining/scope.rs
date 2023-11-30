@@ -1,17 +1,18 @@
 #![allow(dead_code)]
 
-use super::{Inlining, Phase};
-use indexmap::map::{Entry, IndexMap};
 use std::{
     borrow::Cow,
     cell::{Cell, RefCell},
     collections::VecDeque,
 };
-use swc_atoms::js_word;
-use swc_common::collections::{AHashMap, AHashSet};
+
+use indexmap::map::{Entry, IndexMap};
+use swc_common::collections::{AHashMap, AHashSet, ARandomState};
 use swc_ecma_ast::*;
 use swc_ecma_transforms_base::ext::ExprRefExt;
-use swc_ecma_utils::{ident::IdentLike, Id};
+use tracing::{span, Level};
+
+use super::{Inlining, Phase};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScopeKind {
@@ -51,6 +52,7 @@ impl Inlining<'_> {
                 ident_type: self.ident_type,
                 pat_mode: self.pat_mode,
                 in_test: self.in_test,
+                pass: self.pass,
             };
 
             op(&mut child);
@@ -64,10 +66,7 @@ impl Inlining<'_> {
 
         self.scope.unresolved_usages.extend(unresolved_usages);
 
-        if match kind {
-            ScopeKind::Fn { .. } => false,
-            _ => true,
-        } {
+        if !matches!(kind, ScopeKind::Fn { .. }) {
             let v = bindings;
 
             for (id, v) in v.into_iter().filter_map(|(id, v)| {
@@ -125,8 +124,8 @@ impl Inlining<'_> {
 
         let mut alias_of = None;
 
-        let value_idx = match init.as_ref().map(|v| &**v) {
-            Some(&Expr::Ident(ref vi)) => {
+        let value_idx = match init.as_deref() {
+            Some(Expr::Ident(vi)) => {
                 if let Some((value_idx, value_var)) = self.scope.idx_val(&vi.to_id()) {
                     alias_of = Some(value_var.kind);
                     Some((value_idx, vi.to_id()))
@@ -139,7 +138,7 @@ impl Inlining<'_> {
 
         let is_inline_prevented = self.scope.should_prevent_inline_because_of_scope(&id)
             || match init {
-                Some(ref e) => self.scope.is_inline_prevented(&e),
+                Some(ref e) => self.scope.is_inline_prevented(e),
                 _ => false,
             };
 
@@ -215,9 +214,9 @@ impl Inlining<'_> {
 
                 let barrier_exists = (|| {
                     for &blocker in self.scope.inline_barriers.borrow().iter() {
-                        if value_idx <= blocker && blocker <= idx {
-                            return true;
-                        } else if idx <= blocker && blocker <= value_idx {
+                        if (value_idx <= blocker && blocker <= idx)
+                            || (idx <= blocker && blocker <= value_idx)
+                        {
                             return true;
                         }
                     }
@@ -243,7 +242,7 @@ pub(super) struct Scope<'a> {
     pub kind: ScopeKind,
 
     inline_barriers: RefCell<VecDeque<usize>>,
-    bindings: IndexMap<Id, VarInfo, ahash::RandomState>,
+    bindings: IndexMap<Id, VarInfo, ARandomState>,
     unresolved_usages: AHashSet<Id>,
 
     /// Simple optimization. We don't need complex scope analysis.
@@ -291,16 +290,16 @@ impl<'a> Scope<'a> {
 
     /// True if the returned scope is self
     fn scope_for(&self, id: &Id) -> (&Scope, bool) {
-        if let Some(..) = self.constants.get(id) {
+        if self.constants.get(id).is_some() {
             return (self, true);
         }
-        if let Some(..) = self.find_binding_from_current(id) {
+        if self.find_binding_from_current(id).is_some() {
             return (self, true);
         }
 
         match self.parent {
             None => (self, true),
-            Some(ref p) => {
+            Some(p) => {
                 let (s, _) = p.scope_for(id);
                 (s, false)
             }
@@ -372,7 +371,7 @@ impl<'a> Scope<'a> {
             self.prevent_inline(id)
         }
 
-        if id.0 == js_word!("arguments") {
+        if id.0 == "arguments" {
             self.prevent_inline_of_params();
         }
 
@@ -429,13 +428,21 @@ impl<'a> Scope<'a> {
     }
 
     pub fn add_write(&mut self, id: &Id, force_no_inline: bool) {
+        let _tracing = span!(
+            Level::DEBUG,
+            "add_write",
+            force_no_inline = force_no_inline,
+            id = &*format!("{:?}", id)
+        )
+        .entered();
+
         if self.write_prevents_inline(id) {
             tracing::trace!("prevent inlining because of write: {}", id.0);
 
             self.prevent_inline(id)
         }
 
-        if id.0 == js_word!("arguments") {
+        if id.0 == "arguments" {
             self.prevent_inline_of_params();
         }
 
@@ -501,7 +508,7 @@ impl<'a> Scope<'a> {
     }
 
     fn has_constant(&self, id: &Id) -> bool {
-        if let Some(..) = self.constants.get(id) {
+        if self.constants.get(id).is_some() {
             return true;
         }
 
@@ -519,14 +526,10 @@ impl<'a> Scope<'a> {
     }
 
     pub fn mark_this_sensitive(&self, callee: &Expr) {
-        match callee {
-            Expr::Ident(ref i) => {
-                if let Some(v) = self.find_binding(&i.to_id()) {
-                    v.this_sensitive.set(true);
-                }
+        if let Expr::Ident(ref i) = callee {
+            if let Some(v) = self.find_binding(&i.to_id()) {
+                v.this_sensitive.set(true);
             }
-
-            _ => {}
         }
     }
 
@@ -569,9 +572,8 @@ impl<'a> Scope<'a> {
             return;
         }
 
-        match self.parent {
-            Some(p) => p.prevent_inline_of_params(),
-            None => {}
+        if let Some(p) = self.parent {
+            p.prevent_inline_of_params()
         }
     }
 
@@ -583,14 +585,10 @@ impl<'a> Scope<'a> {
         }
 
         for (_, v) in self.bindings.iter() {
-            match v.value.borrow().as_ref() {
-                Some(&Expr::Ident(ref i)) => {
-                    if i.sym == id.0 && i.span.ctxt() == id.1 {
-                        v.inline_prevented.set(true);
-                    }
+            if let Some(Expr::Ident(i)) = v.value.borrow().as_ref() {
+                if i.sym == id.0 && i.span.ctxt() == id.1 {
+                    v.inline_prevented.set(true);
                 }
-
-                _ => {}
             }
         }
 
@@ -601,15 +599,14 @@ impl<'a> Scope<'a> {
     }
 
     pub fn is_inline_prevented(&self, e: &Expr) -> bool {
-        match &*e {
+        match e {
             Expr::Ident(ref ri) => {
                 if let Some(v) = self.find_binding_from_current(&ri.to_id()) {
                     return v.inline_prevented.get();
                 }
             }
             Expr::Member(MemberExpr {
-                obj: ExprOrSuper::Expr(right_expr),
-                ..
+                obj: right_expr, ..
             }) if right_expr.is_ident() => {
                 let ri = right_expr.as_ident().unwrap();
 
@@ -634,9 +631,8 @@ impl<'a> Scope<'a> {
     pub fn has_same_this(&self, id: &Id, init: Option<&Expr>) -> bool {
         if let Some(v) = self.find_binding(id) {
             if v.this_sensitive.get() {
-                match init {
-                    Some(&Expr::Member(..)) => return false,
-                    _ => {}
+                if let Some(&Expr::Member(..)) = init {
+                    return false;
                 }
             }
         }
@@ -674,9 +670,8 @@ impl VarInfo {
         }
 
         if self.this_sensitive.get() {
-            match *self.value.borrow() {
-                Some(Expr::Member(..)) => return true,
-                _ => {}
+            if let Some(Expr::Member(..)) = *self.value.borrow() {
+                return true;
             }
         }
 

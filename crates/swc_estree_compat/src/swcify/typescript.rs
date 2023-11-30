@@ -1,5 +1,3 @@
-use super::Context;
-use crate::swcify::Swcify;
 use swc_ecma_ast::{
     Accessibility, Ident, TsEntityName, TsQualifiedName, TsType, TsTypeAnn, TsTypeParam,
     TsTypeParamDecl, TsTypeParamInstantiation,
@@ -9,6 +7,9 @@ use swc_estree_ast::{
     TSTypeParameter, TSTypeParameterDeclaration, TSTypeParameterInstantiation, TypeAnnotOrNoop,
     TypeParamDeclOrNoop,
 };
+
+use super::Context;
+use crate::swcify::Swcify;
 
 impl Swcify for TSTypeParameterInstantiation {
     type Output = TsTypeParamInstantiation;
@@ -60,6 +61,9 @@ impl Swcify for TSTypeParameter {
         TsTypeParam {
             span,
             name: Ident::new(self.name, span),
+            is_in: self.is_in,
+            is_out: self.is_out,
+            is_const: self.is_const,
             constraint: self.constraint.swcify(ctx),
             default: self.default.swcify(ctx),
         }

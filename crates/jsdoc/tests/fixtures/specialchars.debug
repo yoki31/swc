@@ -2,56 +2,56 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                15,
+                16,
             ),
             hi: BytePos(
-                15,
+                16,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    15,
+                    16,
                 ),
                 hi: BytePos(
-                    15,
+                    16,
                 ),
                 ctxt: #0,
             },
-            value: Atom('' type=static),
+            value: "",
         },
         tags: [
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        15,
+                        16,
                     ),
                     hi: BytePos(
-                        20,
+                        21,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            15,
+                            16,
                         ),
                         hi: BytePos(
-                            20,
+                            21,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('class' type=static),
+                    value: "class",
                 },
                 tag: Class(
                     ClassTag {
                         span: Span {
                             lo: BytePos(
-                                15,
+                                16,
                             ),
                             hi: BytePos(
-                                20,
+                                21,
                             ),
                             ctxt: #0,
                         },
@@ -65,48 +65,48 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                57,
+                58,
             ),
             hi: BytePos(
-                57,
+                58,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    57,
+                    58,
                 ),
                 hi: BytePos(
-                    69,
+                    70,
                 ),
                 ctxt: #0,
             },
-            value: Atom('Port number.' type=dynamic),
+            value: "Port number.",
         },
         tags: [],
     },
     JsDoc {
         span: Span {
             lo: BytePos(
-                109,
+                110,
             ),
             hi: BytePos(
-                109,
+                110,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    109,
+                    110,
                 ),
                 hi: BytePos(
-                    127,
+                    128,
                 ),
                 ctxt: #0,
             },
-            value: Atom('Open a connection.' type=dynamic),
+            value: "Open a connection.",
         },
         tags: [],
     },

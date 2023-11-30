@@ -1,3 +1,3 @@
-class A {
+class A__2 {
 }
-new A();
+new A__2();

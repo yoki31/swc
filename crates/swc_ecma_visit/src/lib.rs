@@ -1,18 +1,18 @@
 // This is not a public api.
+#![cfg_attr(docsrs, feature(doc_cfg))]
+#![deny(clippy::all)]
+#![allow(clippy::ptr_arg)]
+
 #[doc(hidden)]
 pub extern crate swc_ecma_ast;
 
+use std::{borrow::Cow, fmt::Debug};
+
 use num_bigint::BigInt as BigIntValue;
-use std::{any::Any, borrow::Cow, fmt::Debug};
-use swc_atoms::JsWord;
+use swc_atoms::Atom;
 use swc_common::{pass::CompilerPass, Span, DUMMY_SP};
 use swc_ecma_ast::*;
 use swc_visit::{define, AndThen, Repeat, Repeated};
-
-/// Visitable nodes.
-pub trait Node: Any {}
-
-impl<T: ?Sized> Node for T where T: Any {}
 
 impl<A, B> Fold for AndThen<A, B>
 where
@@ -20,6 +20,12 @@ where
 
     B: Fold,
 {
+    #[inline(always)]
+    fn fold_program(&mut self, n: Program) -> Program {
+        let n = self.first.fold_program(n);
+        self.second.fold_program(n)
+    }
+
     #[inline(always)]
     fn fold_module(&mut self, n: Module) -> Module {
         let n = self.first.fold_module(n);
@@ -38,6 +44,11 @@ where
     A: VisitMut,
     B: VisitMut,
 {
+    fn visit_mut_program(&mut self, n: &mut Program) {
+        self.first.visit_mut_program(n);
+        self.second.visit_mut_program(n);
+    }
+
     fn visit_mut_module(&mut self, n: &mut Module) {
         self.first.visit_mut_module(n);
         self.second.visit_mut_module(n)
@@ -54,14 +65,19 @@ where
     A: Visit,
     B: Visit,
 {
-    fn visit_module(&mut self, n: &Module, _parent: &dyn Node) {
-        self.first.visit_module(n, _parent);
-        self.second.visit_module(n, _parent);
+    fn visit_program(&mut self, n: &Program) {
+        self.first.visit_program(n);
+        self.second.visit_program(n);
     }
 
-    fn visit_script(&mut self, n: &Script, _parent: &dyn Node) {
-        self.first.visit_script(n, _parent);
-        self.second.visit_script(n, _parent);
+    fn visit_module(&mut self, n: &Module) {
+        self.first.visit_module(n);
+        self.second.visit_module(n);
+    }
+
+    fn visit_script(&mut self, n: &Script) {
+        self.first.visit_script(n);
+        self.second.visit_script(n);
     }
 }
 
@@ -69,6 +85,19 @@ impl<V> Fold for Repeat<V>
 where
     V: Fold + Repeated,
 {
+    fn fold_program(&mut self, mut node: Program) -> Program {
+        loop {
+            self.pass.reset();
+            node = node.fold_with(&mut self.pass);
+
+            if !self.pass.changed() {
+                break;
+            }
+        }
+
+        node
+    }
+
     fn fold_module(&mut self, mut node: Module) -> Module {
         loop {
             self.pass.reset();
@@ -93,6 +122,44 @@ where
         }
 
         node
+    }
+}
+
+impl<V> VisitMut for Repeat<V>
+where
+    V: VisitMut + Repeated,
+{
+    fn visit_mut_program(&mut self, node: &mut Program) {
+        loop {
+            self.pass.reset();
+            node.visit_mut_with(&mut self.pass);
+
+            if !self.pass.changed() {
+                break;
+            }
+        }
+    }
+
+    fn visit_mut_module(&mut self, node: &mut Module) {
+        loop {
+            self.pass.reset();
+            node.visit_mut_with(&mut self.pass);
+
+            if !self.pass.changed() {
+                break;
+            }
+        }
+    }
+
+    fn visit_mut_script(&mut self, node: &mut Script) {
+        loop {
+            self.pass.reset();
+            node.visit_mut_with(&mut self.pass);
+
+            if !self.pass.changed() {
+                break;
+            }
+        }
     }
 }
 
@@ -130,10 +197,10 @@ macro_rules! assert_eq_ignore_span {
     }};
 }
 
-/// Implemeented for passes which inject varaibles.
+/// Implemented for passes which inject variables.
 ///
 /// If a pass depends on other pass which injects variables, this trait can be
-/// used to keep the varaibles.
+/// used to keep the variables.
 pub trait InjectVars {
     fn take_vars(&mut self) -> Vec<VarDeclarator>;
 }
@@ -147,6 +214,9 @@ where
     }
 }
 
+/// The returned folder only handles `fold_script` and `fold_module`, and
+/// typescript nodes are ignored. So if your visitor needs to handle typescript
+/// or low-level nodes, you should use [as_folder] instead.
 #[inline]
 pub fn as_folder<V>(v: V) -> Folder<V>
 where
@@ -163,12 +233,10 @@ impl<V> Repeated for Folder<V>
 where
     V: Repeated + VisitMut,
 {
-    #[inline(always)]
     fn changed(&self) -> bool {
         self.0.changed()
     }
 
-    #[inline(always)]
     fn reset(&mut self) {
         self.0.reset();
     }
@@ -185,7 +253,6 @@ where
 
 macro_rules! delegate {
     ($name:ident, $T:ty) => {
-        #[inline(always)]
         fn $name(&mut self, n: &mut $T) {
             n.visit_mut_with(&mut self.0);
         }
@@ -198,23 +265,28 @@ where
     V: VisitMut,
 {
     delegate!(visit_mut_ident, Ident);
+
     delegate!(visit_mut_span, Span);
 
     delegate!(visit_mut_expr, Expr);
+
     delegate!(visit_mut_decl, Decl);
+
     delegate!(visit_mut_stmt, Stmt);
+
     delegate!(visit_mut_pat, Pat);
 
     delegate!(visit_mut_ts_type, TsType);
 
     delegate!(visit_mut_module, Module);
+
     delegate!(visit_mut_script, Script);
+
     delegate!(visit_mut_program, Program);
 }
 
 macro_rules! method {
     ($name:ident, $T:ty) => {
-        #[inline(always)]
         fn $name(&mut self, mut n: $T) -> $T {
             n.visit_mut_with(&mut self.0);
             n
@@ -227,25 +299,41 @@ where
     V: VisitMut,
 {
     method!(fold_ident, Ident);
+
     method!(fold_span, Span);
 
     method!(fold_expr, Expr);
+
     method!(fold_decl, Decl);
+
     method!(fold_stmt, Stmt);
+
     method!(fold_pat, Pat);
 
     method!(fold_ts_type, TsType);
 
-    method!(fold_module, Module);
     method!(fold_script, Script);
+
     method!(fold_program, Program);
+
+    method!(fold_reserved_unused, ReservedUnused);
+
+    #[inline(always)]
+    fn fold_module(&mut self, mut n: Module) -> Module {
+        #[cfg(all(debug_assertions, feature = "debug"))]
+        let _tracing = {
+            let visitor_name = std::any::type_name::<V>();
+            tracing::span!(tracing::Level::INFO, "as_folder", visitor = visitor_name).entered()
+        };
+        n.visit_mut_with(&mut self.0);
+        n
+    }
 }
 
 /// Note: Ignoring more types is not considered as a breaking change.
 #[macro_export]
 macro_rules! noop_fold_type {
     ($name:ident, $N:tt) => {
-        #[inline]
         fn $name(&mut self, node: $crate::swc_ecma_ast::$N) -> $crate::swc_ecma_ast::$N {
             node
         }
@@ -322,8 +410,7 @@ macro_rules! noop_fold_type {
 #[macro_export]
 macro_rules! noop_visit_type {
     ($name:ident, $N:tt) => {
-        #[inline]
-        fn $name(&mut self, _: &$crate::swc_ecma_ast::$N, _: &dyn $crate::Node) {}
+        fn $name(&mut self, _: &$crate::swc_ecma_ast::$N) {}
     };
     () => {
         noop_visit_type!(visit_accessibility, Accessibility);
@@ -334,14 +421,10 @@ macro_rules! noop_visit_type {
         noop_visit_type!(visit_ts_construct_signature_decl, TsConstructSignatureDecl);
         noop_visit_type!(visit_ts_constructor_type, TsConstructorType);
         noop_visit_type!(visit_ts_entity_name, TsEntityName);
-        noop_visit_type!(visit_ts_enum_decl, TsEnumDecl);
-        noop_visit_type!(visit_ts_enum_member, TsEnumMember);
-        noop_visit_type!(visit_ts_enum_member_id, TsEnumMemberId);
         noop_visit_type!(visit_ts_external_module_ref, TsExternalModuleRef);
         noop_visit_type!(visit_ts_fn_or_constructor_type, TsFnOrConstructorType);
         noop_visit_type!(visit_ts_fn_param, TsFnParam);
         noop_visit_type!(visit_ts_fn_type, TsFnType);
-        noop_visit_type!(visit_ts_import_equals_decl, TsImportEqualsDecl);
         noop_visit_type!(visit_ts_import_type, TsImportType);
         noop_visit_type!(visit_ts_index_signature, TsIndexSignature);
         noop_visit_type!(visit_ts_indexed_access_type, TsIndexedAccessType);
@@ -353,16 +436,8 @@ macro_rules! noop_visit_type {
         noop_visit_type!(visit_ts_keyword_type_kind, TsKeywordTypeKind);
         noop_visit_type!(visit_ts_mapped_type, TsMappedType);
         noop_visit_type!(visit_ts_method_signature, TsMethodSignature);
-        noop_visit_type!(visit_ts_module_block, TsModuleBlock);
-        noop_visit_type!(visit_ts_module_decl, TsModuleDecl);
-        noop_visit_type!(visit_ts_module_name, TsModuleName);
         noop_visit_type!(visit_ts_module_ref, TsModuleRef);
-        noop_visit_type!(visit_ts_namespace_body, TsNamespaceBody);
-        noop_visit_type!(visit_ts_namespace_decl, TsNamespaceDecl);
-        noop_visit_type!(visit_ts_namespace_export_decl, TsNamespaceExportDecl);
         noop_visit_type!(visit_ts_optional_type, TsOptionalType);
-        noop_visit_type!(visit_ts_param_prop, TsParamProp);
-        noop_visit_type!(visit_ts_param_prop_param, TsParamPropParam);
         noop_visit_type!(visit_ts_parenthesized_type, TsParenthesizedType);
         noop_visit_type!(visit_ts_property_signature, TsPropertySignature);
         noop_visit_type!(visit_ts_qualified_name, TsQualifiedName);
@@ -373,7 +448,6 @@ macro_rules! noop_visit_type {
         noop_visit_type!(visit_ts_type, TsType);
         noop_visit_type!(visit_ts_type_alias_decl, TsTypeAliasDecl);
         noop_visit_type!(visit_ts_type_ann, TsTypeAnn);
-        noop_visit_type!(visit_ts_type_assertion, TsTypeAssertion);
         noop_visit_type!(visit_ts_type_element, TsTypeElement);
         noop_visit_type!(visit_ts_type_lit, TsTypeLit);
         noop_visit_type!(visit_ts_type_operator, TsTypeOperator);
@@ -397,7 +471,6 @@ macro_rules! noop_visit_type {
 #[macro_export]
 macro_rules! noop_visit_mut_type {
     ($name:ident, $N:ident) => {
-        #[inline]
         fn $name(&mut self, _: &mut $crate::swc_ecma_ast::$N) {}
     };
     () => {
@@ -412,14 +485,10 @@ macro_rules! noop_visit_mut_type {
         );
         noop_visit_mut_type!(visit_mut_ts_constructor_type, TsConstructorType);
         noop_visit_mut_type!(visit_mut_ts_entity_name, TsEntityName);
-        noop_visit_mut_type!(visit_mut_ts_enum_decl, TsEnumDecl);
-        noop_visit_mut_type!(visit_mut_ts_enum_member, TsEnumMember);
-        noop_visit_mut_type!(visit_mut_ts_enum_member_id, TsEnumMemberId);
         noop_visit_mut_type!(visit_mut_ts_external_module_ref, TsExternalModuleRef);
         noop_visit_mut_type!(visit_mut_ts_fn_or_constructor_type, TsFnOrConstructorType);
         noop_visit_mut_type!(visit_mut_ts_fn_param, TsFnParam);
         noop_visit_mut_type!(visit_mut_ts_fn_type, TsFnType);
-        noop_visit_mut_type!(visit_mut_ts_import_equals_decl, TsImportEqualsDecl);
         noop_visit_mut_type!(visit_mut_ts_import_type, TsImportType);
         noop_visit_mut_type!(visit_mut_ts_index_signature, TsIndexSignature);
         noop_visit_mut_type!(visit_mut_ts_indexed_access_type, TsIndexedAccessType);
@@ -431,16 +500,8 @@ macro_rules! noop_visit_mut_type {
         noop_visit_mut_type!(visit_mut_ts_keyword_type_kind, TsKeywordTypeKind);
         noop_visit_mut_type!(visit_mut_ts_mapped_type, TsMappedType);
         noop_visit_mut_type!(visit_mut_ts_method_signature, TsMethodSignature);
-        noop_visit_mut_type!(visit_mut_ts_module_block, TsModuleBlock);
-        noop_visit_mut_type!(visit_mut_ts_module_decl, TsModuleDecl);
-        noop_visit_mut_type!(visit_mut_ts_module_name, TsModuleName);
         noop_visit_mut_type!(visit_mut_ts_module_ref, TsModuleRef);
-        noop_visit_mut_type!(visit_mut_ts_namespace_body, TsNamespaceBody);
-        noop_visit_mut_type!(visit_mut_ts_namespace_decl, TsNamespaceDecl);
-        noop_visit_mut_type!(visit_mut_ts_namespace_export_decl, TsNamespaceExportDecl);
         noop_visit_mut_type!(visit_mut_ts_optional_type, TsOptionalType);
-        noop_visit_mut_type!(visit_mut_ts_param_prop, TsParamProp);
-        noop_visit_mut_type!(visit_mut_ts_param_prop_param, TsParamPropParam);
         noop_visit_mut_type!(visit_mut_ts_parenthesized_type, TsParenthesizedType);
         noop_visit_mut_type!(visit_mut_ts_property_signature, TsPropertySignature);
         noop_visit_mut_type!(visit_mut_ts_qualified_name, TsQualifiedName);
@@ -451,7 +512,6 @@ macro_rules! noop_visit_mut_type {
         noop_visit_mut_type!(visit_mut_ts_type, TsType);
         noop_visit_mut_type!(visit_mut_ts_type_alias_decl, TsTypeAliasDecl);
         noop_visit_mut_type!(visit_mut_ts_type_ann, TsTypeAnn);
-        noop_visit_mut_type!(visit_mut_ts_type_assertion, TsTypeAssertion);
         noop_visit_mut_type!(visit_mut_ts_type_element, TsTypeElement);
         noop_visit_mut_type!(visit_mut_ts_type_lit, TsTypeLit);
         noop_visit_mut_type!(visit_mut_ts_type_operator, TsTypeOperator);
@@ -475,14 +535,16 @@ macro_rules! noop_visit_mut_type {
 }
 
 define!({
+    use BigIntValue;
+
     pub struct Class {
         pub span: Span,
         pub decorators: Vec<Decorator>,
         pub body: Vec<ClassMember>,
         pub super_class: Option<Box<Expr>>,
         pub is_abstract: bool,
-        pub type_params: Option<TsTypeParamDecl>,
-        pub super_type_params: Option<TsTypeParamInstantiation>,
+        pub type_params: Option<Box<TsTypeParamDecl>>,
+        pub super_type_params: Option<Box<TsTypeParamInstantiation>>,
         pub implements: Vec<TsExprWithTypeArgs>,
     }
 
@@ -495,16 +557,16 @@ define!({
         TsIndexSignature(TsIndexSignature),
         Empty(EmptyStmt),
         StaticBlock(StaticBlock),
+        AutoAccessor(AutoAccessor),
     }
 
     pub struct ClassProp {
         pub span: Span,
-        pub key: Box<Expr>,
+        pub key: PropName,
         pub value: Option<Box<Expr>>,
-        pub type_ann: Option<TsTypeAnn>,
+        pub type_ann: Option<Box<TsTypeAnn>>,
         pub is_static: bool,
         pub decorators: Vec<Decorator>,
-        pub computed: bool,
         pub accessibility: Option<Accessibility>,
         pub is_abstract: bool,
         pub is_optional: bool,
@@ -517,12 +579,10 @@ define!({
         pub span: Span,
         pub key: PrivateName,
         pub value: Option<Box<Expr>>,
-        pub type_ann: Option<TsTypeAnn>,
+        pub type_ann: Option<Box<TsTypeAnn>>,
         pub is_static: bool,
         pub decorators: Vec<Decorator>,
-        pub computed: bool,
         pub accessibility: Option<Accessibility>,
-        pub is_abstract: bool,
         pub is_optional: bool,
         pub is_override: bool,
         pub readonly: bool,
@@ -531,7 +591,7 @@ define!({
     pub struct ClassMethod {
         pub span: Span,
         pub key: PropName,
-        pub function: Function,
+        pub function: Box<Function>,
         pub kind: MethodKind,
         pub is_static: bool,
         pub accessibility: Option<Accessibility>,
@@ -542,7 +602,7 @@ define!({
     pub struct PrivateMethod {
         pub span: Span,
         pub key: PrivateName,
-        pub function: Function,
+        pub function: Box<Function>,
         pub kind: MethodKind,
         pub is_static: bool,
         pub accessibility: Option<Accessibility>,
@@ -574,21 +634,22 @@ define!({
     pub enum Decl {
         Class(ClassDecl),
         Fn(FnDecl),
-        Var(VarDecl),
-        TsInterface(TsInterfaceDecl),
-        TsTypeAlias(TsTypeAliasDecl),
-        TsEnum(TsEnumDecl),
-        TsModule(TsModuleDecl),
+        Var(Box<VarDecl>),
+        Using(Box<UsingDecl>),
+        TsInterface(Box<TsInterfaceDecl>),
+        TsTypeAlias(Box<TsTypeAliasDecl>),
+        TsEnum(Box<TsEnumDecl>),
+        TsModule(Box<TsModuleDecl>),
     }
     pub struct FnDecl {
         pub ident: Ident,
         pub declare: bool,
-        pub function: Function,
+        pub function: Box<Function>,
     }
     pub struct ClassDecl {
         pub ident: Ident,
         pub declare: bool,
-        pub class: Class,
+        pub class: Box<Class>,
     }
     pub struct VarDecl {
         pub span: Span,
@@ -617,6 +678,7 @@ define!({
         Bin(BinExpr),
         Assign(AssignExpr),
         Member(MemberExpr),
+        SuperProp(SuperPropExpr),
         Cond(CondExpr),
         Call(CallExpr),
         New(NewExpr),
@@ -640,6 +702,8 @@ define!({
         TsConstAssertion(TsConstAssertion),
         TsNonNull(TsNonNullExpr),
         TsAs(TsAsExpr),
+        TsSatisfies(TsSatisfiesExpr),
+        TsInstantiation(TsInstantiation),
         PrivateName(PrivateName),
         OptChain(OptChainExpr),
         Invalid(Invalid),
@@ -682,11 +746,11 @@ define!({
     }
     pub struct FnExpr {
         pub ident: Option<Ident>,
-        pub function: Function,
+        pub function: Box<Function>,
     }
     pub struct ClassExpr {
         pub ident: Option<Ident>,
-        pub class: Class,
+        pub class: Box<Class>,
     }
     pub struct AssignExpr {
         pub span: Span,
@@ -696,9 +760,22 @@ define!({
     }
     pub struct MemberExpr {
         pub span: Span,
-        pub obj: ExprOrSuper,
-        pub prop: Box<Expr>,
-        pub computed: bool,
+        pub obj: Box<Expr>,
+        pub prop: MemberProp,
+    }
+    pub enum MemberProp {
+        Ident(Ident),
+        PrivateName(PrivateName),
+        Computed(ComputedPropName),
+    }
+    pub struct SuperPropExpr {
+        pub span: Span,
+        pub obj: Super,
+        pub prop: SuperProp,
+    }
+    pub enum SuperProp {
+        Ident(Ident),
+        Computed(ComputedPropName),
     }
     pub struct CondExpr {
         pub span: Span,
@@ -708,15 +785,15 @@ define!({
     }
     pub struct CallExpr {
         pub span: Span,
-        pub callee: ExprOrSuper,
+        pub callee: Callee,
         pub args: Vec<ExprOrSpread>,
-        pub type_args: Option<TsTypeParamInstantiation>,
+        pub type_args: Option<Box<TsTypeParamInstantiation>>,
     }
     pub struct NewExpr {
         pub span: Span,
         pub callee: Box<Expr>,
         pub args: Option<Vec<ExprOrSpread>>,
-        pub type_args: Option<TsTypeParamInstantiation>,
+        pub type_args: Option<Box<TsTypeParamInstantiation>>,
     }
     pub struct SeqExpr {
         pub span: Span,
@@ -725,11 +802,11 @@ define!({
     pub struct ArrowExpr {
         pub span: Span,
         pub params: Vec<Pat>,
-        pub body: BlockStmtOrExpr,
+        pub body: Box<BlockStmtOrExpr>,
         pub is_async: bool,
         pub is_generator: bool,
-        pub type_params: Option<TsTypeParamDecl>,
-        pub return_type: Option<TsTypeAnn>,
+        pub type_params: Option<Box<TsTypeParamDecl>>,
+        pub return_type: Option<Box<TsTypeAnn>>,
     }
     pub struct YieldExpr {
         pub span: Span,
@@ -737,8 +814,12 @@ define!({
         pub delegate: bool,
     }
     pub struct MetaPropExpr {
-        pub meta: Ident,
-        pub prop: Ident,
+        pub span: Span,
+        pub kind: MetaPropKind,
+    }
+    pub enum MetaPropKind {
+        NewTarget,
+        ImportMeta,
     }
     pub struct AwaitExpr {
         pub span: Span,
@@ -752,24 +833,28 @@ define!({
     pub struct TaggedTpl {
         pub span: Span,
         pub tag: Box<Expr>,
-        pub type_params: Option<TsTypeParamInstantiation>,
-        pub tpl: Tpl,
+        pub type_params: Option<Box<TsTypeParamInstantiation>>,
+        pub tpl: Box<Tpl>,
     }
     pub struct TplElement {
         pub span: Span,
         pub tail: bool,
-        pub cooked: Option<Str>,
-        pub raw: Str,
+        pub cooked: Option<Atom>,
+        pub raw: Atom,
     }
     pub struct ParenExpr {
         pub span: Span,
         pub expr: Box<Expr>,
     }
-    pub enum ExprOrSuper {
+    pub enum Callee {
         Super(Super),
+        Import(Import),
         Expr(Box<Expr>),
     }
     pub struct Super {
+        pub span: Span,
+    }
+    pub struct Import {
         pub span: Span,
     }
     pub struct ExprOrSpread {
@@ -786,8 +871,18 @@ define!({
     }
     pub struct OptChainExpr {
         pub span: Span,
-        pub question_dot_token: Span,
-        pub expr: Box<Expr>,
+        pub optional: bool,
+        pub base: Box<OptChainBase>,
+    }
+    pub enum OptChainBase {
+        Member(MemberExpr),
+        Call(OptCall),
+    }
+    pub struct OptCall {
+        pub span: Span,
+        pub callee: Box<Expr>,
+        pub args: Vec<ExprOrSpread>,
+        pub type_args: Option<Box<TsTypeParamInstantiation>>,
     }
     pub struct Function {
         pub params: Vec<Param>,
@@ -796,8 +891,8 @@ define!({
         pub body: Option<BlockStmt>,
         pub is_generator: bool,
         pub is_async: bool,
-        pub type_params: Option<TsTypeParamDecl>,
-        pub return_type: Option<TsTypeAnn>,
+        pub type_params: Option<Box<TsTypeParamDecl>>,
+        pub return_type: Option<Box<TsTypeAnn>>,
     }
     pub struct Param {
         pub span: Span,
@@ -811,12 +906,12 @@ define!({
 
     pub struct BindingIdent {
         pub id: Ident,
-        pub type_ann: Option<TsTypeAnn>,
+        pub type_ann: Option<Box<TsTypeAnn>>,
     }
 
     pub struct Ident {
         pub span: Span,
-        pub sym: JsWord,
+        pub sym: Atom,
         pub optional: bool,
     }
 
@@ -862,7 +957,7 @@ define!({
         pub span: Span,
         pub attrs: Vec<JSXAttrOrSpread>,
         pub self_closing: bool,
-        pub type_args: Option<TsTypeParamInstantiation>,
+        pub type_args: Option<Box<TsTypeParamInstantiation>>,
     }
     pub enum JSXAttrOrSpread {
         JSXAttr(JSXAttr),
@@ -889,8 +984,8 @@ define!({
     }
     pub struct JSXText {
         pub span: Span,
-        pub value: JsWord,
-        pub raw: JsWord,
+        pub value: Atom,
+        pub raw: Atom,
     }
     pub struct JSXElement {
         pub span: Span,
@@ -931,13 +1026,13 @@ define!({
     }
     pub struct BigInt {
         pub span: Span,
-        pub value: BigIntValue,
+        pub value: Box<BigIntValue>,
+        pub raw: Option<Atom>,
     }
     pub struct Str {
         pub span: Span,
-        pub value: JsWord,
-        pub has_escape: bool,
-        pub kind: StrKind,
+        pub value: Atom,
+        pub raw: Option<Atom>,
     }
     pub struct Bool {
         pub span: Span,
@@ -948,26 +1043,29 @@ define!({
     }
     pub struct Regex {
         pub span: Span,
-        pub exp: JsWord,
-        pub flags: JsWord,
+        pub exp: Atom,
+        pub flags: Atom,
     }
     pub struct Number {
         pub span: Span,
         pub value: f64,
+        pub raw: Option<Atom>,
     }
     pub enum Program {
         Module(Module),
         Script(Script),
+        // TODO: reenable once experimental_metadata breaking change is merged
+        // ReservedUnused(ReservedUnused),
     }
     pub struct Module {
         pub span: Span,
         pub body: Vec<ModuleItem>,
-        pub shebang: Option<JsWord>,
+        pub shebang: Option<Atom>,
     }
     pub struct Script {
         pub span: Span,
         pub body: Vec<Stmt>,
-        pub shebang: Option<JsWord>,
+        pub shebang: Option<Atom>,
     }
     pub enum ModuleItem {
         ModuleDecl(ModuleDecl),
@@ -980,7 +1078,7 @@ define!({
         ExportDefaultDecl(ExportDefaultDecl),
         ExportDefaultExpr(ExportDefaultExpr),
         ExportAll(ExportAll),
-        TsImportEquals(TsImportEqualsDecl),
+        TsImportEquals(Box<TsImportEqualsDecl>),
         TsExportAssignment(TsExportAssignment),
         TsNamespaceExport(TsNamespaceExportDecl),
     }
@@ -995,21 +1093,22 @@ define!({
     pub struct ImportDecl {
         pub span: Span,
         pub specifiers: Vec<ImportSpecifier>,
-        pub src: Str,
+        pub src: Box<Str>,
         pub type_only: bool,
-        pub asserts: Option<ObjectLit>,
+        pub with: Option<Box<ObjectLit>>,
     }
     pub struct ExportAll {
         pub span: Span,
-        pub src: Str,
-        pub asserts: Option<ObjectLit>,
+        pub src: Box<Str>,
+        pub type_only: bool,
+        pub with: Option<Box<ObjectLit>>,
     }
     pub struct NamedExport {
         pub span: Span,
         pub specifiers: Vec<ExportSpecifier>,
-        pub src: Option<Str>,
+        pub src: Option<Box<Str>>,
         pub type_only: bool,
-        pub asserts: Option<ObjectLit>,
+        pub with: Option<Box<ObjectLit>>,
     }
     pub struct ExportDefaultDecl {
         pub span: Span,
@@ -1018,7 +1117,7 @@ define!({
     pub enum DefaultDecl {
         Class(ClassExpr),
         Fn(FnExpr),
-        TsInterfaceDecl(TsInterfaceDecl),
+        TsInterfaceDecl(Box<TsInterfaceDecl>),
     }
     pub enum ImportSpecifier {
         Named(ImportNamedSpecifier),
@@ -1036,7 +1135,7 @@ define!({
     pub struct ImportNamedSpecifier {
         pub span: Span,
         pub local: Ident,
-        pub imported: Option<Ident>,
+        pub imported: Option<ModuleExportName>,
         pub is_type_only: bool,
     }
     pub enum ExportSpecifier {
@@ -1046,15 +1145,19 @@ define!({
     }
     pub struct ExportNamespaceSpecifier {
         pub span: Span,
-        pub name: Ident,
+        pub name: ModuleExportName,
     }
     pub struct ExportDefaultSpecifier {
         pub exported: Ident,
     }
+    pub enum ModuleExportName {
+        Ident(Ident),
+        Str(Str),
+    }
     pub struct ExportNamedSpecifier {
         pub span: Span,
-        pub orig: Ident,
-        pub exported: Option<Ident>,
+        pub orig: ModuleExportName,
+        pub exported: Option<ModuleExportName>,
         pub is_type_only: bool,
     }
     pub enum BinaryOp {
@@ -1129,25 +1232,24 @@ define!({
         pub span: Span,
         pub elems: Vec<Option<Pat>>,
         pub optional: bool,
-        pub type_ann: Option<TsTypeAnn>,
+        pub type_ann: Option<Box<TsTypeAnn>>,
     }
     pub struct ObjectPat {
         pub span: Span,
         pub props: Vec<ObjectPatProp>,
         pub optional: bool,
-        pub type_ann: Option<TsTypeAnn>,
+        pub type_ann: Option<Box<TsTypeAnn>>,
     }
     pub struct AssignPat {
         pub span: Span,
         pub left: Box<Pat>,
         pub right: Box<Expr>,
-        pub type_ann: Option<TsTypeAnn>,
     }
     pub struct RestPat {
         pub span: Span,
         pub dot3_token: Span,
         pub arg: Box<Pat>,
-        pub type_ann: Option<TsTypeAnn>,
+        pub type_ann: Option<Box<TsTypeAnn>>,
     }
     pub enum ObjectPatProp {
         KeyValue(KeyValuePatProp),
@@ -1182,18 +1284,18 @@ define!({
     pub struct GetterProp {
         pub span: Span,
         pub key: PropName,
-        pub type_ann: Option<TsTypeAnn>,
+        pub type_ann: Option<Box<TsTypeAnn>>,
         pub body: Option<BlockStmt>,
     }
     pub struct SetterProp {
         pub span: Span,
         pub key: PropName,
-        pub param: Pat,
+        pub param: Box<Pat>,
         pub body: Option<BlockStmt>,
     }
     pub struct MethodProp {
         pub key: PropName,
-        pub function: Function,
+        pub function: Box<Function>,
     }
     pub enum PropName {
         Ident(Ident),
@@ -1222,7 +1324,7 @@ define!({
         If(IfStmt),
         Switch(SwitchStmt),
         Throw(ThrowStmt),
-        Try(TryStmt),
+        Try(Box<TryStmt>),
         While(WhileStmt),
         DoWhile(DoWhileStmt),
         For(ForStmt),
@@ -1303,14 +1405,14 @@ define!({
     }
     pub struct ForInStmt {
         pub span: Span,
-        pub left: VarDeclOrPat,
+        pub left: ForHead,
         pub right: Box<Expr>,
         pub body: Box<Stmt>,
     }
     pub struct ForOfStmt {
         pub span: Span,
-        pub await_token: Option<Span>,
-        pub left: VarDeclOrPat,
+        pub is_await: bool,
+        pub left: ForHead,
         pub right: Box<Expr>,
         pub body: Box<Stmt>,
     }
@@ -1324,12 +1426,13 @@ define!({
         pub param: Option<Pat>,
         pub body: BlockStmt,
     }
-    pub enum VarDeclOrPat {
-        VarDecl(VarDecl),
-        Pat(Pat),
+    pub enum ForHead {
+        VarDecl(Box<VarDecl>),
+        UsingDecl(Box<UsingDecl>),
+        Pat(Box<Pat>),
     }
     pub enum VarDeclOrExpr {
-        VarDecl(VarDecl),
+        VarDecl(Box<VarDecl>),
         Expr(Box<Expr>),
     }
     pub struct TsTypeAnn {
@@ -1343,6 +1446,9 @@ define!({
     pub struct TsTypeParam {
         pub span: Span,
         pub name: Ident,
+        pub is_in: bool,
+        pub is_out: bool,
+        pub is_const: bool,
         pub constraint: Option<Box<TsType>>,
         pub default: Option<Box<TsType>>,
     }
@@ -1382,14 +1488,14 @@ define!({
     pub struct TsCallSignatureDecl {
         pub span: Span,
         pub params: Vec<TsFnParam>,
-        pub type_ann: Option<TsTypeAnn>,
-        pub type_params: Option<TsTypeParamDecl>,
+        pub type_ann: Option<Box<TsTypeAnn>>,
+        pub type_params: Option<Box<TsTypeParamDecl>>,
     }
     pub struct TsConstructSignatureDecl {
         pub span: Span,
         pub params: Vec<TsFnParam>,
-        pub type_ann: Option<TsTypeAnn>,
-        pub type_params: Option<TsTypeParamDecl>,
+        pub type_ann: Option<Box<TsTypeAnn>>,
+        pub type_params: Option<Box<TsTypeParamDecl>>,
     }
     pub struct TsPropertySignature {
         pub span: Span,
@@ -1399,8 +1505,8 @@ define!({
         pub optional: bool,
         pub init: Option<Box<Expr>>,
         pub params: Vec<TsFnParam>,
-        pub type_ann: Option<TsTypeAnn>,
-        pub type_params: Option<TsTypeParamDecl>,
+        pub type_ann: Option<Box<TsTypeAnn>>,
+        pub type_params: Option<Box<TsTypeParamDecl>>,
     }
 
     pub struct TsGetterSignature {
@@ -1409,7 +1515,7 @@ define!({
         pub key: Box<Expr>,
         pub computed: bool,
         pub optional: bool,
-        pub type_ann: Option<TsTypeAnn>,
+        pub type_ann: Option<Box<TsTypeAnn>>,
     }
 
     pub struct TsSetterSignature {
@@ -1427,12 +1533,12 @@ define!({
         pub computed: bool,
         pub optional: bool,
         pub params: Vec<TsFnParam>,
-        pub type_ann: Option<TsTypeAnn>,
-        pub type_params: Option<TsTypeParamDecl>,
+        pub type_ann: Option<Box<TsTypeAnn>>,
+        pub type_params: Option<Box<TsTypeParamDecl>>,
     }
     pub struct TsIndexSignature {
         pub params: Vec<TsFnParam>,
-        pub type_ann: Option<TsTypeAnn>,
+        pub type_ann: Option<Box<TsTypeAnn>>,
         pub readonly: bool,
         pub is_static: bool,
         pub span: Span,
@@ -1494,26 +1600,26 @@ define!({
     pub struct TsFnType {
         pub span: Span,
         pub params: Vec<TsFnParam>,
-        pub type_params: Option<TsTypeParamDecl>,
-        pub type_ann: TsTypeAnn,
+        pub type_params: Option<Box<TsTypeParamDecl>>,
+        pub type_ann: Box<TsTypeAnn>,
     }
     pub struct TsConstructorType {
         pub span: Span,
         pub params: Vec<TsFnParam>,
-        pub type_params: Option<TsTypeParamDecl>,
-        pub type_ann: TsTypeAnn,
+        pub type_params: Option<Box<TsTypeParamDecl>>,
+        pub type_ann: Box<TsTypeAnn>,
         pub is_abstract: bool,
     }
     pub struct TsTypeRef {
         pub span: Span,
         pub type_name: TsEntityName,
-        pub type_params: Option<TsTypeParamInstantiation>,
+        pub type_params: Option<Box<TsTypeParamInstantiation>>,
     }
     pub struct TsTypePredicate {
         pub span: Span,
         pub asserts: bool,
         pub param_name: TsThisTypeOrIdent,
-        pub type_ann: Option<TsTypeAnn>,
+        pub type_ann: Option<Box<TsTypeAnn>>,
     }
     pub enum TsThisTypeOrIdent {
         TsThisType(TsThisType),
@@ -1522,6 +1628,7 @@ define!({
     pub struct TsTypeQuery {
         pub span: Span,
         pub expr_name: TsTypeQueryExpr,
+        pub type_args: Option<Box<TsTypeParamInstantiation>>,
     }
     pub enum TsTypeQueryExpr {
         TsEntityName(TsEntityName),
@@ -1531,7 +1638,7 @@ define!({
         pub span: Span,
         pub arg: Str,
         pub qualifier: Option<TsEntityName>,
-        pub type_args: Option<TsTypeParamInstantiation>,
+        pub type_args: Option<Box<TsTypeParamInstantiation>>,
     }
     pub struct TsTypeLit {
         pub span: Span,
@@ -1550,7 +1657,7 @@ define!({
     pub struct TsTupleElement {
         pub span: Span,
         pub label: Option<Pat>,
-        pub ty: TsType,
+        pub ty: Box<TsType>,
     }
 
     pub struct TsOptionalType {
@@ -1637,7 +1744,7 @@ define!({
         pub span: Span,
         pub id: Ident,
         pub declare: bool,
-        pub type_params: Option<TsTypeParamDecl>,
+        pub type_params: Option<Box<TsTypeParamDecl>>,
         pub extends: Vec<TsExprWithTypeArgs>,
         pub body: TsInterfaceBody,
     }
@@ -1647,14 +1754,14 @@ define!({
     }
     pub struct TsExprWithTypeArgs {
         pub span: Span,
-        pub expr: TsEntityName,
-        pub type_args: Option<TsTypeParamInstantiation>,
+        pub expr: Box<Expr>,
+        pub type_args: Option<Box<TsTypeParamInstantiation>>,
     }
     pub struct TsTypeAliasDecl {
         pub span: Span,
         pub declare: bool,
         pub id: Ident,
-        pub type_params: Option<TsTypeParamDecl>,
+        pub type_params: Option<Box<TsTypeParamDecl>>,
         pub type_ann: Box<TsType>,
     }
     pub struct TsEnumDecl {
@@ -1701,7 +1808,6 @@ define!({
     }
     pub struct TsImportEqualsDecl {
         pub span: Span,
-        pub declare: bool,
         pub is_export: bool,
         pub is_type_only: bool,
         pub id: Ident,
@@ -1746,4 +1852,80 @@ define!({
         pub span: Span,
         pub expr: Box<Expr>,
     }
+
+    pub struct TsInstantiation {
+        pub span: Span,
+        pub expr: Box<Expr>,
+        pub type_args: Box<TsTypeParamInstantiation>,
+    }
+
+    pub struct TsSatisfiesExpr {
+        pub span: Span,
+        pub expr: Box<Expr>,
+        pub type_ann: Box<TsType>,
+    }
+
+    pub struct ReservedUnused {
+        pub span: Span,
+        pub body: Option<Vec<ModuleItem>>,
+    }
+
+    pub struct AutoAccessor {
+        pub span: Span,
+        pub key: Key,
+        pub value: Option<Box<Expr>>,
+        pub type_ann: Option<Box<TsTypeAnn>>,
+        pub is_static: bool,
+        pub decorators: Vec<Decorator>,
+        pub accessibility: Option<Accessibility>,
+    }
+
+    pub enum Key {
+        Private(PrivateName),
+        Public(PropName),
+    }
+
+    pub struct UsingDecl {
+        pub span: Span,
+
+        pub is_await: bool,
+
+        pub decls: Vec<VarDeclarator>,
+    }
 });
+
+#[macro_export]
+macro_rules! visit_obj_and_computed {
+    () => {
+        fn visit_member_expr(&mut self, n: &$crate::swc_ecma_ast::MemberExpr) {
+            n.obj.visit_with(self);
+            if let $crate::swc_ecma_ast::MemberProp::Computed(c) = &n.prop {
+                c.visit_with(self);
+            }
+        }
+
+        fn visit_super_prop_expr(&mut self, n: &$crate::swc_ecma_ast::SuperPropExpr) {
+            if let $crate::swc_ecma_ast::SuperProp::Computed(c) = &n.prop {
+                c.visit_with(self);
+            }
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! visit_mut_obj_and_computed {
+    () => {
+        fn visit_mut_member_expr(&mut self, n: &mut $crate::swc_ecma_ast::MemberExpr) {
+            n.obj.visit_mut_with(self);
+            if let $crate::swc_ecma_ast::MemberProp::Computed(c) = &mut n.prop {
+                c.visit_mut_with(self);
+            }
+        }
+
+        fn visit_mut_super_prop_expr(&mut self, n: &mut $crate::swc_ecma_ast::SuperPropExpr) {
+            if let $crate::swc_ecma_ast::SuperProp::Computed(c) = &mut n.prop {
+                c.visit_mut_with(self);
+            }
+        }
+    };
+}

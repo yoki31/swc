@@ -1,6 +1,6 @@
-interface I6 {
+interface I6__2 {
     x__0: string;
 }
-type T6 = I6;
-var x6: I6;
-var x6: T6;
+type T6__2 = I6__2;
+var x6__2: I6__2;
+var x6__2: T6__2;

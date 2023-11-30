@@ -1,22 +1,26 @@
-#![allow(dead_code, unused_variables)]
+#![allow(clippy::let_unit_value)]
 #![deny(non_snake_case)]
+
+use std::ops::{Deref, DerefMut};
+
+use swc_atoms::{Atom, JsWord};
+use swc_common::{collections::AHashMap, comments::Comments, input::StringInput, BytePos, Span};
+use swc_ecma_ast::*;
+
 pub use self::input::{Capturing, Tokens, TokensInput};
 use self::{input::Buffer, util::ParseObject};
 use crate::{
     error::SyntaxError,
     lexer::Lexer,
     token::{Token, Word},
-    Context, EsVersion, Syntax,
+    Context, EsVersion, Syntax, TsConfig,
 };
-use std::ops::{Deref, DerefMut};
-use swc_atoms::JsWord;
-use swc_common::{comments::Comments, input::Input, BytePos, Span};
-use swc_ecma_ast::*;
 #[cfg(test)]
 extern crate test;
-use crate::error::Error;
 #[cfg(test)]
 use test::Bencher;
+
+use crate::error::Error;
 
 #[macro_use]
 mod macros;
@@ -30,6 +34,7 @@ mod pat;
 mod stmt;
 #[cfg(test)]
 mod tests;
+#[cfg(feature = "typescript")]
 mod typescript;
 mod util;
 
@@ -39,8 +44,6 @@ pub type PResult<T> = Result<T, Error>;
 /// EcmaScript parser.
 #[derive(Clone)]
 pub struct Parser<I: Tokens> {
-    /// [false] while backtracking
-    emit_err: bool,
     state: State,
     input: Buffer<I>,
 }
@@ -52,18 +55,32 @@ struct State {
     potential_arrow_start: Option<BytePos>,
 
     found_module_item: bool,
+    /// Start position of an AST node and the span of its trailing comma.
+    trailing_commas: AHashMap<BytePos, Span>,
 }
 
-impl<'a, I: Input> Parser<Lexer<'a, I>> {
-    pub fn new(syntax: Syntax, input: I, comments: Option<&'a dyn Comments>) -> Self {
+impl<'a> Parser<Lexer<'a>> {
+    pub fn new(syntax: Syntax, input: StringInput<'a>, comments: Option<&'a dyn Comments>) -> Self {
         Self::new_from(Lexer::new(syntax, Default::default(), input, comments))
     }
 }
 
 impl<I: Tokens> Parser<I> {
-    pub fn new_from(input: I) -> Self {
+    pub fn new_from(mut input: I) -> Self {
+        #[cfg(feature = "typescript")]
+        let in_declare = matches!(
+            input.syntax(),
+            Syntax::Typescript(TsConfig { dts: true, .. })
+        );
+        #[cfg(not(feature = "typescript"))]
+        let in_declare = false;
+        let ctx = Context {
+            in_declare,
+            ..input.ctx()
+        };
+        input.set_ctx(ctx);
+
         Parser {
-            emit_err: true,
             state: Default::default(),
             input: Buffer::new(input),
         }
@@ -71,10 +88,6 @@ impl<I: Tokens> Parser<I> {
 
     pub fn take_errors(&mut self) -> Vec<Error> {
         self.input().take_errors()
-    }
-
-    pub(crate) fn target(&self) -> EsVersion {
-        self.input.target()
     }
 
     pub fn parse_script(&mut self) -> PResult<Script> {
@@ -136,10 +149,9 @@ impl<I: Tokens> Parser<I> {
 
         let body: Vec<ModuleItem> = self.with_ctx(ctx).parse_block_body(true, true, None)?;
         let has_module_item = self.state.found_module_item
-            || body.iter().any(|item| match item {
-                ModuleItem::ModuleDecl(..) => true,
-                _ => false,
-            });
+            || body
+                .iter()
+                .any(|item| matches!(item, ModuleItem::ModuleDecl(..)));
         if has_module_item && !self.ctx().module {
             let ctx = Context {
                 module: true,
@@ -193,7 +205,7 @@ impl<I: Tokens> Parser<I> {
         })
     }
 
-    fn parse_shebang(&mut self) -> PResult<Option<JsWord>> {
+    fn parse_shebang(&mut self) -> PResult<Option<Atom>> {
         match cur!(self, false) {
             Ok(&Token::Shebang(..)) => match bump!(self) {
                 Token::Shebang(v) => Ok(Some(v)),
@@ -209,18 +221,16 @@ impl<I: Tokens> Parser<I> {
 
     #[cold]
     fn emit_err(&self, span: Span, error: SyntaxError) {
-        if !self.emit_err || !self.syntax().early_errors() {
+        if self.ctx().ignore_error || !self.syntax().early_errors() {
             return;
         }
 
-        self.emit_error(Error {
-            error: Box::new((span, error)),
-        })
+        self.emit_error(Error::new(span, error))
     }
 
     #[cold]
     fn emit_error(&self, error: Error) {
-        if !self.emit_err || !self.syntax().early_errors() {
+        if self.ctx().ignore_error || !self.syntax().early_errors() {
             return;
         }
 
@@ -229,12 +239,10 @@ impl<I: Tokens> Parser<I> {
 
     #[cold]
     fn emit_strict_mode_err(&self, span: Span, error: SyntaxError) {
-        if !self.emit_err {
+        if self.ctx().ignore_error {
             return;
         }
-        let error = Error {
-            error: Box::new((span, error)),
-        };
+        let error = Error::new(span, error);
         self.input_ref().add_module_mode_error(error);
     }
 }
@@ -242,7 +250,7 @@ impl<I: Tokens> Parser<I> {
 #[cfg(test)]
 pub fn test_parser<F, Ret>(s: &'static str, syntax: Syntax, f: F) -> Ret
 where
-    F: FnOnce(&mut Parser<Lexer<crate::StringInput<'_>>>) -> Result<Ret, Error>,
+    F: FnOnce(&mut Parser<Lexer>) -> Result<Ret, Error>,
 {
     crate::with_test_sess(s, |handler, input| {
         let lexer = Lexer::new(syntax, EsVersion::Es2019, input, None);
@@ -269,7 +277,7 @@ where
 #[cfg(test)]
 pub fn test_parser_comment<F, Ret>(c: &dyn Comments, s: &'static str, syntax: Syntax, f: F) -> Ret
 where
-    F: FnOnce(&mut Parser<Lexer<crate::StringInput<'_>>>) -> Result<Ret, Error>,
+    F: FnOnce(&mut Parser<Lexer>) -> Result<Ret, Error>,
 {
     crate::with_test_sess(s, |handler, input| {
         let lexer = Lexer::new(syntax, EsVersion::Es2019, input, Some(&c));
@@ -288,7 +296,7 @@ where
 #[cfg(test)]
 pub fn bench_parser<F>(b: &mut Bencher, s: &'static str, syntax: Syntax, mut f: F)
 where
-    F: for<'a> FnMut(&'a mut Parser<Lexer<'a, crate::StringInput<'_>>>) -> PResult<()>,
+    F: for<'a> FnMut(&'a mut Parser<Lexer<'a>>) -> PResult<()>,
 {
     b.bytes = s.len() as u64;
 

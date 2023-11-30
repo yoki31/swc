@@ -1,20 +1,8 @@
-function _defineProperty(obj, key, value) {
-    if (key in obj) {
-        Object.defineProperty(obj, key, {
-            value: value,
-            enumerable: true,
-            configurable: true,
-            writable: true
-        });
-    } else {
-        obj[key] = value;
-    }
-    return obj;
-}
+import { _ as _define_property } from "@swc/helpers/_/_define_property";
 let Foo = class Foo {
     method() {
         let Foo = class Foo {
         };
     }
 };
-_defineProperty(Foo, "a", 1);
+_define_property(Foo, "a", 1);

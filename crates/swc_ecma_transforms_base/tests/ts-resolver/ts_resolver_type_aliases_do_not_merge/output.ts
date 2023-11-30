@@ -1,4 +1,4 @@
-export type A = {
+export type A__2 = {
 };
-type A = {
+type A__2 = {
 };

@@ -1,6 +1,7 @@
+use std::sync::Arc;
+
 use rayon::prelude::*;
 use serde::{de::DeserializeOwned, Serialize};
-use std::sync::Arc;
 use swc_common::{
     comments::{CommentKind, Comments},
     sync::Lrc,
@@ -34,18 +35,14 @@ pub struct Context {
 
 impl Context {
     /// Byte offset starting from the 0. (counted separately for each file)
-    fn offset(&self, span: Span) -> (Option<usize>, Option<usize>) {
-        // We rename this to feel more comfortable while doing math.
-        let start_offset = self.fm.start_pos;
-
+    fn offset(&self, span: Span) -> (Option<u32>, Option<u32>) {
         if span.is_dummy() {
-            (None, None)
-        } else {
-            (
-                Some((span.lo.0 - start_offset.0) as _),
-                Some((span.hi.0 - start_offset.0) as _),
-            )
+            return (None, None);
         }
+
+        let (start, end) = self.cm.span_to_char_offset(&self.fm, span);
+
+        (Some(start), Some(end))
     }
 
     fn line_col(&self, pos: BytePos) -> Option<LineCol> {
@@ -53,7 +50,7 @@ impl Context {
 
         Some(LineCol {
             line: loc.line,
-            column: loc.col_display,
+            column: loc.col.0,
         })
     }
 
@@ -124,7 +121,7 @@ impl Context {
             start,
             end,
             loc,
-            range: if matches!(Flavor::current(), Flavor::Acorn) {
+            range: if matches!(Flavor::current(), Flavor::Acorn { .. }) {
                 match (start, end) {
                     (Some(start), Some(end)) => Some([start, end]),
                     _ => None,
@@ -154,7 +151,11 @@ where
 
     fn babelify(self, ctx: &Context) -> Self::Output {
         if T::parallel(self.len()) {
-            self.into_par_iter().map(|v| v.babelify(ctx)).collect()
+            let flavor = Flavor::current();
+
+            self.into_par_iter()
+                .map(|v| flavor.with(|| v.babelify(ctx)))
+                .collect()
         } else {
             self.into_iter().map(|v| v.babelify(ctx)).collect()
         }
@@ -169,6 +170,17 @@ where
 
     fn babelify(self, ctx: &Context) -> Self::Output {
         self.map(|v| v.babelify(ctx))
+    }
+}
+
+impl<T> Babelify for Box<T>
+where
+    T: Babelify,
+{
+    type Output = T::Output;
+
+    fn babelify(self, ctx: &Context) -> Self::Output {
+        (*self).babelify(ctx)
     }
 }
 

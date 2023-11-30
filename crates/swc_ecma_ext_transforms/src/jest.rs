@@ -36,26 +36,21 @@ impl Jest {
                 Ok(stmt) => match &stmt {
                     Stmt::Expr(ExprStmt { expr, .. }) => match &**expr {
                         Expr::Call(CallExpr {
-                            callee: ExprOrSuper::Expr(callee),
+                            callee: Callee::Expr(callee),
                             ..
                         }) => match &**callee {
                             Expr::Member(
                                 callee @ MemberExpr {
-                                    computed: false, ..
+                                    prop: MemberProp::Ident(prop),
+                                    ..
                                 },
-                            ) => match &callee.obj {
-                                ExprOrSuper::Super(_) => new.push(T::from_stmt(stmt)),
-                                ExprOrSuper::Expr(callee_obj) => match &**callee_obj {
-                                    Expr::Ident(i) if i.sym == *"jest" => match &*callee.prop {
-                                        Expr::Ident(prop) if HOIST_METHODS.contains(&*prop.sym) => {
-                                            hoisted.push(T::from_stmt(stmt));
-                                            return;
-                                        }
-                                        _ => new.push(T::from_stmt(stmt)),
-                                    },
-                                    _ => new.push(T::from_stmt(stmt)),
-                                },
-                            },
+                            ) => {
+                                if is_jest(&callee.obj) && HOIST_METHODS.contains(&*prop.sym) {
+                                    hoisted.push(T::from_stmt(stmt))
+                                } else {
+                                    new.push(T::from_stmt(stmt));
+                                }
+                            }
                             _ => new.push(T::from_stmt(stmt)),
                         },
                         _ => new.push(T::from_stmt(stmt)),
@@ -76,11 +71,23 @@ impl Jest {
 impl VisitMut for Jest {
     noop_visit_mut_type!();
 
+    fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
+        self.visit_mut_stmt_like(items)
+    }
+
     fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
         self.visit_mut_stmt_like(stmts)
     }
+}
 
-    fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
-        self.visit_mut_stmt_like(items)
+fn is_jest(e: &Expr) -> bool {
+    match e {
+        Expr::Ident(i) => i.sym == *"jest",
+        Expr::Member(MemberExpr { obj, .. }) => is_jest(obj),
+        Expr::Call(CallExpr {
+            callee: Callee::Expr(callee),
+            ..
+        }) => is_jest(callee),
+        _ => false,
     }
 }

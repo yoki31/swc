@@ -1,3 +1,6 @@
+use is_macro::Is;
+use swc_common::{ast_node, util::take::Take, EqIgnoreSpan, Span, DUMMY_SP};
+
 use crate::{
     expr::Expr,
     function::Function,
@@ -6,9 +9,8 @@ use crate::{
     pat::Pat,
     stmt::BlockStmt,
     typescript::TsTypeAnn,
+    Id, MemberProp,
 };
-use is_macro::Is;
-use swc_common::{ast_node, util::take::Take, EqIgnoreSpan, Span};
 
 #[ast_node]
 #[derive(Eq, Hash, Is, EqIgnoreSpan)]
@@ -63,9 +65,9 @@ pub struct AssignProp {
 pub struct GetterProp {
     pub span: Span,
     pub key: PropName,
-    #[serde(default, rename = "typeAnnotation")]
-    pub type_ann: Option<TsTypeAnn>,
-    #[serde(default)]
+    #[cfg_attr(feature = "serde-impl", serde(default, rename = "typeAnnotation"))]
+    pub type_ann: Option<Box<TsTypeAnn>>,
+    #[cfg_attr(feature = "serde-impl", serde(default))]
     pub body: Option<BlockStmt>,
 }
 #[ast_node("SetterProperty")]
@@ -74,8 +76,8 @@ pub struct GetterProp {
 pub struct SetterProp {
     pub span: Span,
     pub key: PropName,
-    pub param: Pat,
-    #[serde(default)]
+    pub param: Box<Pat>,
+    #[cfg_attr(feature = "serde-impl", serde(default))]
     pub body: Option<BlockStmt>,
 }
 #[ast_node("MethodProperty")]
@@ -84,9 +86,9 @@ pub struct SetterProp {
 pub struct MethodProp {
     pub key: PropName,
 
-    #[serde(flatten)]
+    #[cfg_attr(feature = "serde-impl", serde(flatten))]
     #[span]
-    pub function: Function,
+    pub function: Box<Function>,
 }
 
 #[ast_node]
@@ -103,13 +105,36 @@ pub enum PropName {
     Num(Number),
     #[tag("Computed")]
     Computed(ComputedPropName),
-    #[tag("BigInt")]
+    #[tag("BigIntLiteral")]
     BigInt(BigInt),
 }
+
+bridge_from!(PropName, Ident, Id);
 
 impl Take for PropName {
     fn dummy() -> Self {
         PropName::Ident(Take::dummy())
+    }
+}
+
+impl From<PropName> for MemberProp {
+    fn from(p: PropName) -> Self {
+        match p {
+            PropName::Ident(p) => MemberProp::Ident(p),
+            PropName::Computed(p) => MemberProp::Computed(p),
+            PropName::Str(p) => MemberProp::Computed(ComputedPropName {
+                span: DUMMY_SP,
+                expr: p.into(),
+            }),
+            PropName::Num(p) => MemberProp::Computed(ComputedPropName {
+                span: DUMMY_SP,
+                expr: p.into(),
+            }),
+            PropName::BigInt(p) => MemberProp::Computed(ComputedPropName {
+                span: DUMMY_SP,
+                expr: p.into(),
+            }),
+        }
     }
 }
 
@@ -119,6 +144,15 @@ impl Take for PropName {
 pub struct ComputedPropName {
     /// Span including `[` and `]`.
     pub span: Span,
-    #[serde(rename = "expression")]
+    #[cfg_attr(feature = "serde-impl", serde(rename = "expression"))]
     pub expr: Box<Expr>,
+}
+
+impl Take for ComputedPropName {
+    fn dummy() -> Self {
+        Self {
+            span: DUMMY_SP,
+            expr: Take::dummy(),
+        }
+    }
 }

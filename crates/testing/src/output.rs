@@ -1,11 +1,15 @@
-use crate::paths;
 use std::{
-    fmt,
-    fs::{create_dir_all, File},
+    env, fmt,
+    fs::{self, create_dir_all, File},
     io::Read,
     ops::Deref,
     path::Path,
 };
+
+use serde::Serialize;
+use tracing::debug;
+
+use crate::paths;
 
 #[must_use]
 pub struct TestOutput<R> {
@@ -49,7 +53,78 @@ impl fmt::Debug for NormalizedOutput {
     }
 }
 
+fn normalize_input(input: String, skip_last_newline: bool) -> String {
+    let manifest_dirs = [
+        adjust_canonicalization(paths::manifest_dir()),
+        paths::manifest_dir().to_string_lossy().to_string(),
+    ]
+    .into_iter()
+    .flat_map(|dir| [dir.replace('\\', "\\\\"), dir.replace('\\', "/"), dir])
+    .collect::<Vec<_>>();
+
+    let input = input.replace("\r\n", "\n");
+
+    let mut buf = String::new();
+
+    for line in input.lines() {
+        if manifest_dirs.iter().any(|dir| line.contains(&**dir)) {
+            let mut s = line.to_string();
+
+            for dir in &manifest_dirs {
+                s = s.replace(&**dir, "$DIR");
+            }
+            s = s.replace("\\\\", "\\").replace('\\', "/");
+            let s = if cfg!(target_os = "windows") {
+                s.replace("//?/$DIR", "$DIR").replace("/?/$DIR", "$DIR")
+            } else {
+                s
+            };
+            buf.push_str(&s)
+        } else {
+            buf.push_str(line);
+        }
+
+        buf.push('\n');
+    }
+
+    if skip_last_newline && !matches!(input.chars().last(), Some('\n')) {
+        buf.truncate(buf.len() - 1);
+    }
+
+    buf
+}
+
 impl NormalizedOutput {
+    pub fn new_raw(s: String) -> Self {
+        if s.is_empty() {
+            return NormalizedOutput(s);
+        }
+
+        NormalizedOutput(normalize_input(s, true))
+    }
+
+    pub fn compare_json_to_file<T>(actual: &T, path: &Path)
+    where
+        T: Serialize,
+    {
+        let actual_value =
+            serde_json::to_value(actual).expect("failed to serialize the actual value to json");
+
+        if let Ok(expected) = fs::read_to_string(path) {
+            let expected_value = serde_json::from_str::<serde_json::Value>(&expected)
+                .expect("failed to deserialize the expected value from json");
+
+            if expected_value == actual_value {
+                return;
+            }
+        }
+
+        let actual_json_string = serde_json::to_string_pretty(&actual_value)
+            .expect("failed to serialize the actual value to json");
+
+        let _ = NormalizedOutput::from(actual_json_string).compare_to_file(path);
+    }
+
     /// If output differs, prints actual stdout/stderr to
     /// `CARGO_MANIFEST_DIR/target/swc-test-results/ui/$rel_path` where
     /// `$rel_path`: `path.strip_prefix(CARGO_MANIFEST_DIR)`
@@ -59,7 +134,7 @@ impl NormalizedOutput {
     {
         let path = path.as_ref();
         let path = path.canonicalize().unwrap_or_else(|err| {
-            eprintln!(
+            debug!(
                 "compare_to_file: failed to canonicalize outfile path `{}`: {:?}",
                 path.display(),
                 err
@@ -85,19 +160,18 @@ impl NormalizedOutput {
             return Ok(());
         }
 
-        eprintln!("Comparing output to {}", path.display());
+        debug!("Comparing output to {}", path.display());
         create_dir_all(path.parent().unwrap()).expect("failed to run `mkdir -p`");
 
-        if std::env::var("UPDATE").unwrap_or(String::from("0")) == "1" {
+        let update = std::env::var("UPDATE").unwrap_or_default() == "1";
+        if update {
             crate::write_to_file(&path, &self.0);
 
-            eprintln!(
-                "Assertion failed: \nActual file printed to {}",
-                path.display()
-            );
+            debug!("Updating file {}", path.display());
+            return Ok(());
         }
 
-        if self.0.lines().count() <= 5 {
+        if !update && self.0.lines().count() <= 5 {
             assert_eq!(expected, self, "Actual:\n{}", self);
         }
 
@@ -106,7 +180,11 @@ impl NormalizedOutput {
             actual: self,
         };
 
-        pretty_assertions::assert_eq!(diff.expected, diff.actual, "Actual:\n{}", diff.actual);
+        if env::var("DIFF").unwrap_or_default() == "0" {
+            assert_eq!(diff.expected, diff.actual, "Actual:\n{}", diff.actual);
+        } else {
+            pretty_assertions::assert_eq!(diff.expected, diff.actual, "Actual:\n{}", diff.actual);
+        }
 
         // Actually unreachable.
         Err(diff)
@@ -119,44 +197,13 @@ impl From<String> for NormalizedOutput {
             return NormalizedOutput(s);
         }
 
-        let manifest_dirs = vec![
-            adjust_canonicalization(paths::manifest_dir()),
-            paths::manifest_dir().to_string_lossy().to_string(),
-            adjust_canonicalization(paths::manifest_dir()).replace("\\", "\\\\"),
-            paths::manifest_dir()
-                .to_string_lossy()
-                .replace("\\", "\\\\"),
-        ];
-
-        let s = s.replace("\r\n", "\n");
-
-        let mut buf = String::new();
-        for line in s.lines() {
-            if manifest_dirs.iter().any(|dir| line.contains(&**dir)) {
-                let mut s = line.to_string();
-
-                for dir in &manifest_dirs {
-                    s = s.replace(&**dir, "$DIR");
-                }
-                s = s.replace("\\\\", "\\").replace("\\", "/");
-                let s = if cfg!(target_os = "windows") {
-                    s.replace("//?/$DIR", "$DIR").replace("/?/$DIR", "$DIR")
-                } else {
-                    s
-                };
-                buf.push_str(&s)
-            } else {
-                buf.push_str(&line);
-            }
-            buf.push('\n')
-        }
-
-        NormalizedOutput(buf)
+        NormalizedOutput(normalize_input(s, false))
     }
 }
 
 impl Deref for NormalizedOutput {
     type Target = str;
+
     fn deref(&self) -> &str {
         &self.0
     }
@@ -180,8 +227,8 @@ fn adjust_canonicalization<P: AsRef<Path>>(p: P) -> String {
 fn adjust_canonicalization<P: AsRef<Path>>(p: P) -> String {
     const VERBATIM_PREFIX: &str = r#"\\?\"#;
     let p = p.as_ref().display().to_string();
-    if p.starts_with(VERBATIM_PREFIX) {
-        p[VERBATIM_PREFIX.len()..].to_string()
+    if let Some(stripped) = p.strip_prefix(VERBATIM_PREFIX) {
+        stripped.to_string()
     } else {
         p
     }

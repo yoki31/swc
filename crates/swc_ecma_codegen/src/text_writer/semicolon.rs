@@ -1,17 +1,18 @@
+use swc_common::{BytePos, Span, DUMMY_SP};
+
 use super::{Result, WriteJs};
-use swc_common::Span;
 
 pub fn omit_trailing_semi<W: WriteJs>(w: W) -> impl WriteJs {
     OmitTrailingSemi {
         inner: w,
-        pending_semi: false,
+        pending_semi: None,
     }
 }
 
 #[derive(Debug, Clone)]
 struct OmitTrailingSemi<W: WriteJs> {
     inner: W,
-    pending_semi: bool,
+    pending_semi: Option<Span>,
 }
 
 macro_rules! with_semi {
@@ -35,59 +36,70 @@ macro_rules! with_semi {
 
 impl<W: WriteJs> WriteJs for OmitTrailingSemi<W> {
     with_semi!(increase_indent());
+
     with_semi!(decrease_indent());
 
-    fn write_semi(&mut self, _: Option<Span>) -> Result {
-        self.pending_semi = true;
+    with_semi!(write_space());
+
+    with_semi!(write_comment(s: &str));
+
+    with_semi!(write_keyword(span: Option<Span>, s: &'static str));
+
+    with_semi!(write_operator(span: Option<Span>, s: &str));
+
+    with_semi!(write_param(s: &str));
+
+    with_semi!(write_property(s: &str));
+
+    with_semi!(write_line());
+
+    with_semi!(write_lit(span: Span, s: &str));
+
+    with_semi!(write_str_lit(span: Span, s: &str));
+
+    with_semi!(write_str(s: &str));
+
+    with_semi!(write_symbol(span: Span, s: &str));
+
+    fn write_semi(&mut self, span: Option<Span>) -> Result {
+        self.pending_semi = Some(span.unwrap_or(DUMMY_SP));
         Ok(())
     }
 
-    with_semi!(write_space());
-    with_semi!(write_comment(span: Span, s: &str));
-    with_semi!(write_keyword(span: Option<Span>, s: &'static str));
-    with_semi!(write_operator(span: Option<Span>, s: &str));
-    with_semi!(write_param(s: &str));
-    with_semi!(write_property(s: &str));
-    with_semi!(write_line());
-    with_semi!(write_lit(span: Span, s: &str));
-    with_semi!(write_str_lit(span: Span, s: &str));
-    with_semi!(write_str(s: &str));
-    with_semi!(write_symbol(span: Span, s: &str));
-
     fn write_punct(&mut self, span: Option<Span>, s: &'static str) -> Result {
         match s {
-            "\"" | "'" => {
-                self.commit_pending_semi()?;
-            }
-
-            "[" | "!" | "/" | "{" | "(" | "~" => {
+            "\"" | "'" | "[" | "!" | "/" | "{" | "(" | "~" | "-" | "+" | "#" | "`" | "*" => {
                 self.commit_pending_semi()?;
             }
 
             _ => {
-                self.pending_semi = false;
+                self.pending_semi = None;
             }
         }
 
-        Ok(self.inner.write_punct(span, s)?)
-    }
-
-    fn target(&self) -> swc_ecma_ast::EsVersion {
-        self.inner.target()
+        self.inner.write_punct(span, s)
     }
 
     #[inline]
     fn care_about_srcmap(&self) -> bool {
         self.inner.care_about_srcmap()
     }
-}
 
-impl<W: WriteJs> OmitTrailingSemi<W> {
+    #[inline]
+    fn add_srcmap(&mut self, pos: BytePos) -> Result {
+        self.inner.add_srcmap(pos)
+    }
+
     fn commit_pending_semi(&mut self) -> Result {
-        if self.pending_semi {
-            self.inner.write_punct(None, ";")?;
-            self.pending_semi = false;
+        if let Some(span) = self.pending_semi {
+            self.inner.write_semi(Some(span))?;
+            self.pending_semi = None;
         }
         Ok(())
+    }
+
+    #[inline(always)]
+    fn can_ignore_invalid_unicodes(&mut self) -> bool {
+        self.inner.can_ignore_invalid_unicodes()
     }
 }

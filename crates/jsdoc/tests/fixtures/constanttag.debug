@@ -2,56 +2,56 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                0,
+                1,
             ),
             hi: BytePos(
-                0,
+                1,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    0,
+                    1,
                 ),
                 hi: BytePos(
-                    0,
+                    1,
                 ),
                 ctxt: #0,
             },
-            value: Atom('' type=static),
+            value: "",
         },
         tags: [
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        0,
+                        1,
                     ),
                     hi: BytePos(
-                        8,
+                        9,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            0,
+                            1,
                         ),
                         hi: BytePos(
-                            8,
+                            9,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('constant' type=dynamic),
+                    value: "constant",
                 },
                 tag: Const(
                     ConstTag {
                         span: Span {
                             lo: BytePos(
-                                0,
+                                1,
                             ),
                             hi: BytePos(
-                                8,
+                                9,
                             ),
                             ctxt: #0,
                         },
@@ -65,56 +65,56 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                31,
+                32,
             ),
             hi: BytePos(
-                35,
+                36,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    31,
+                    32,
                 ),
                 hi: BytePos(
-                    31,
+                    32,
                 ),
                 ctxt: #0,
             },
-            value: Atom('' type=static),
+            value: "",
         },
         tags: [
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        31,
+                        32,
                     ),
                     hi: BytePos(
-                        36,
+                        37,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            31,
+                            32,
                         ),
                         hi: BytePos(
-                            36,
+                            37,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('const' type=static),
+                    value: "const",
                 },
                 tag: Const(
                     ConstTag {
                         span: Span {
                             lo: BytePos(
-                                31,
+                                32,
                             ),
                             hi: BytePos(
-                                36,
+                                37,
                             ),
                             ctxt: #0,
                         },
@@ -128,56 +128,56 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                50,
+                51,
             ),
             hi: BytePos(
-                63,
+                64,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    50,
+                    51,
                 ),
                 hi: BytePos(
-                    50,
+                    51,
                 ),
                 ctxt: #0,
             },
-            value: Atom('' type=static),
+            value: "",
         },
         tags: [
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        50,
+                        51,
                     ),
                     hi: BytePos(
-                        55,
+                        56,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            50,
+                            51,
                         ),
                         hi: BytePos(
-                            55,
+                            56,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('const' type=static),
+                    value: "const",
                 },
                 tag: Const(
                     ConstTag {
                         span: Span {
                             lo: BytePos(
-                                50,
+                                51,
                             ),
                             hi: BytePos(
-                                55,
+                                56,
                             ),
                             ctxt: #0,
                         },
@@ -191,56 +191,56 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                78,
+                79,
             ),
             hi: BytePos(
-                87,
+                88,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    78,
+                    79,
                 ),
                 hi: BytePos(
-                    78,
+                    79,
                 ),
                 ctxt: #0,
             },
-            value: Atom('' type=static),
+            value: "",
         },
         tags: [
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        78,
+                        79,
                     ),
                     hi: BytePos(
-                        83,
+                        84,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            78,
+                            79,
                         ),
                         hi: BytePos(
-                            83,
+                            84,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('const' type=static),
+                    value: "const",
                 },
                 tag: Const(
                     ConstTag {
                         span: Span {
                             lo: BytePos(
-                                78,
+                                79,
                             ),
                             hi: BytePos(
-                                83,
+                                84,
                             ),
                             ctxt: #0,
                         },
@@ -254,56 +254,56 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                115,
+                116,
             ),
             hi: BytePos(
-                131,
+                132,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    115,
+                    116,
                 ),
                 hi: BytePos(
-                    115,
+                    116,
                 ),
                 ctxt: #0,
             },
-            value: Atom('' type=static),
+            value: "",
         },
         tags: [
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        115,
+                        116,
                     ),
                     hi: BytePos(
-                        120,
+                        121,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            115,
+                            116,
                         ),
                         hi: BytePos(
-                            120,
+                            121,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('const' type=static),
+                    value: "const",
                 },
                 tag: Const(
                     ConstTag {
                         span: Span {
                             lo: BytePos(
-                                115,
+                                116,
                             ),
                             hi: BytePos(
-                                120,
+                                121,
                             ),
                             ctxt: #0,
                         },
@@ -317,56 +317,56 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                160,
+                161,
             ),
             hi: BytePos(
-                167,
+                168,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    160,
+                    161,
                 ),
                 hi: BytePos(
-                    160,
+                    161,
                 ),
                 ctxt: #0,
             },
-            value: Atom('' type=static),
+            value: "",
         },
         tags: [
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        160,
+                        161,
                     ),
                     hi: BytePos(
-                        165,
+                        166,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            160,
+                            161,
                         ),
                         hi: BytePos(
-                            165,
+                            166,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('const' type=static),
+                    value: "const",
                 },
                 tag: Const(
                     ConstTag {
                         span: Span {
                             lo: BytePos(
-                                160,
+                                161,
                             ),
                             hi: BytePos(
-                                165,
+                                166,
                             ),
                             ctxt: #0,
                         },
@@ -380,24 +380,24 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                196,
+                197,
             ),
             hi: BytePos(
-                196,
+                197,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    196,
+                    197,
                 ),
                 hi: BytePos(
-                    215,
+                    216,
                 ),
                 ctxt: #0,
             },
-            value: Atom('auto-detected const' type=dynamic),
+            value: "auto-detected const",
         },
         tags: [],
     },

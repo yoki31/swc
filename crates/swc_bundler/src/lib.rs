@@ -1,3 +1,7 @@
+#![deny(clippy::all)]
+#![allow(unstable_name_collisions)]
+#![allow(clippy::mutable_key_type)]
+
 pub use self::{
     bundler::{Bundle, BundleKind, Bundler, Config, ModuleType},
     hook::{Hook, ModuleRecord},

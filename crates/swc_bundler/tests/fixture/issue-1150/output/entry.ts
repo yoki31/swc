@@ -1,21 +1,19 @@
 function a() {
     console.log("a");
 }
-var O1;
+var O;
 (function(O) {
     O[O["A"] = 0] = "A";
     O[O["B"] = 1] = "B";
     O[O["C"] = 2] = "C";
-})(O1 || (O1 = {
-}));
-export { O1 as O };
+})(O || (O = {}));
+export { O as O };
 class A {
     #a;
     #c;
-    constructor(o = {
-    }){
-        const { a: a2 = a , c ,  } = o;
-        this.#a = a2;
+    constructor(o = {}){
+        const { a: a1 = a, c } = o;
+        this.#a = a1;
         this.#c = c;
     }
     a() {

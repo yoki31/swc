@@ -1,5 +1,5 @@
 var c = "FAIL";
-(function (b) {
+(function(b) {
     b[0] = 1;
     +b && (c = "PASS");
 })([]);

@@ -1,6 +1,4 @@
-import { jsx as _jsx } from "react/jsx-runtime";
-
-/*#__PURE__*/
+/*#__PURE__*/ import { jsx as _jsx } from "react/jsx-runtime";
 _jsx("div", {
-  children: "\xA0 "
+    children: "  "
 });

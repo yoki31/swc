@@ -2,57 +2,56 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                15,
+                16,
             ),
             hi: BytePos(
-                15,
+                16,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    15,
+                    16,
                 ),
                 hi: BytePos(
-                    31,
+                    32,
                 ),
                 ctxt: #0,
             },
-            value: Atom('Socket class.
-             *' type=dynamic),
+            value: "Socket class.\n *",
         },
         tags: [
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        15,
+                        16,
                     ),
                     hi: BytePos(
-                        20,
+                        21,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            15,
+                            16,
                         ),
                         hi: BytePos(
-                            20,
+                            21,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('class' type=static),
+                    value: "class",
                 },
                 tag: Class(
                     ClassTag {
                         span: Span {
                             lo: BytePos(
-                                15,
+                                16,
                             ),
                             hi: BytePos(
-                                20,
+                                21,
                             ),
                             ctxt: #0,
                         },
@@ -60,14 +59,14 @@
                             Text {
                                 span: Span {
                                     lo: BytePos(
-                                        15,
+                                        16,
                                     ),
                                     hi: BytePos(
-                                        41,
+                                        42,
                                     ),
                                     ctxt: #0,
                                 },
-                                value: Atom('* @memberof module:network' type=dynamic),
+                                value: "* @memberof module:network",
                             },
                         ),
                         name: None,
@@ -79,48 +78,48 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                100,
+                101,
             ),
             hi: BytePos(
-                100,
+                101,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    100,
+                    101,
                 ),
                 hi: BytePos(
-                    116,
+                    117,
                 ),
                 ctxt: #0,
             },
-            value: Atom('Open the socket.' type=dynamic),
+            value: "Open the socket.",
         },
         tags: [],
     },
     JsDoc {
         span: Span {
             lo: BytePos(
-                168,
+                169,
             ),
             hi: BytePos(
-                168,
+                169,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    168,
+                    169,
                 ),
                 hi: BytePos(
-                    205,
+                    206,
                 ),
                 ctxt: #0,
             },
-            value: Atom('Unique identifier for `Socket` class.' type=dynamic),
+            value: "Unique identifier for `Socket` class.",
         },
         tags: [],
     },

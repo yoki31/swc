@@ -1,58 +1,52 @@
-use swc_common::chain;
+use std::path::PathBuf;
+
+use swc_common::{chain, comments::SingleThreadedComments, Mark};
 use swc_ecma_parser::Syntax;
-use swc_ecma_transforms_base::resolver::resolver;
+use swc_ecma_transforms_base::resolver;
 use swc_ecma_transforms_compat::{
-    es2015::{arrow, block_scoping, classes, destructuring, parameters, spread},
+    es2015::{
+        arrow, block_scoping, classes, destructuring, parameters, parameters::Config, spread,
+    },
     es2017::async_to_generator,
 };
-use swc_ecma_transforms_testing::{test, test_exec};
+use swc_ecma_transforms_testing::{test, test_exec, test_fixture};
 use swc_ecma_visit::Fold;
 
 fn syntax() -> Syntax {
     Default::default()
 }
 
-fn tr() -> impl Fold {
+fn tr(c: Config) -> impl Fold {
+    let unresolved_mark = Mark::new();
+    let top_level_mark = Mark::new();
+
     chain!(
-        resolver(),
-        parameters(),
+        resolver(unresolved_mark, top_level_mark, false),
+        parameters(c, unresolved_mark),
         destructuring(destructuring::Config { loose: false }),
-        block_scoping(),
+        block_scoping(unresolved_mark),
     )
 }
 
 test!(
     syntax(),
-    |_| tr(),
+    |_| tr(Default::default()),
     issue_254,
-    "export const someFunction = (update = false, action = {}) => {}",
-    "
-export var someFunction = (param, param1)=>{
-    var update = param === void 0 ? false : param, action = param1 === void 0 ? {} : param1;
-};
-"
+    "export const someFunction = (update = false, action = {}) => {}"
 );
 
 test!(
     syntax(),
-    |_| tr(),
+    |_| tr(Default::default()),
     issue_227,
     "export default function fn1(...args) {
   fn2(...args);
-}",
-    "
-export default function fn1() {
-    for(var _len = arguments.length, args = new Array(_len), _key = 0; _key < _len; _key++){
-        args[_key] = arguments[_key];
-    }
-    fn2(...args);
-}
-"
+}"
 );
 
 test!(
     syntax(),
-    |_| tr(),
+    |_| tr(Default::default()),
     issue_169,
     r#"
 class Foo {
@@ -60,48 +54,29 @@ class Foo {
 		return {a};
 	}
 }
-"#,
-    r#"
-class Foo{
-     func(a, param) {
-        var b = param === void 0 ? Date.now() : param
-        return {
-            a
-        };
-    }
-}"#
+"#
 );
 
 test!(
     syntax(),
-    |_| tr(),
+    |_| tr(Default::default()),
     babel_6057_simple,
     r#"const a = 'bar';
 function foo(...a) {
   return a;
-}"#,
-    r#"var a1 = 'bar';
-function foo() {
-    for(var _len = arguments.length, a = new Array(_len), _key = 0; _key < _len; _key++){
-        a[_key] = arguments[_key];
-    }
-    return a;
 }"#
 );
 
 test!(
     syntax(),
-    |_| tr(),
+    |_| tr(Default::default()),
     default_before_last,
-    r#"function foo(a = "foo", b) {}"#,
-    r#"function foo(param, b) {
-    var a = param === void 0 ? 'foo' : param;
-}"#
+    r#"function foo({x,y} = "foo", b) {}"#
 );
 
 test_exec!(
     syntax(),
-    |_| tr(),
+    |_| tr(Default::default()),
     default_destructuring,
     r#"function required(msg) {
   throw new Error(msg);
@@ -126,7 +101,7 @@ expect(sum({arr:[1,2]})).toBe(3);"#
 
 test_exec!(
     syntax(),
-    |_| tr(),
+    |_| tr(Default::default()),
     default_earlier_params,
     r#"function f(a, b = a, c = b) { return c; }
 
@@ -136,32 +111,19 @@ expect(3).toBe(f(3));"#
 test!(
     ignore,
     syntax(),
-    |_| tr(),
+    |_| tr(Default::default()),
     default_eval,
     r#"let x = "outside";
 function outer(a = () => eval("x")) {
   let x = "inside";
   return a();
 }
-outer();"#,
-    r#"var x = "outside";
-
-function outer() {
-  var a = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : function () {
-    return eval("x");
-  };
-  return function () {
-    var x = "inside";
-    return a();
-  }();
-}
-
 outer();"#
 );
 
 test_exec!(
     syntax(),
-    |_| tr(),
+    |_| tr(Default::default()),
     default_iife_1128,
     r#"const bar = true;
 
@@ -176,28 +138,24 @@ foo(1, 2, 3);"#
 
 test!(
     syntax(),
-    |t| chain!(classes(Some(t.comments.clone())), tr()),
+    |t| chain!(
+        classes(Some(t.comments.clone()), Default::default()),
+        tr(Default::default())
+    ),
     default_iife_4253,
     r#"class Ref {
   constructor(id = ++Ref.nextID) {
     this.id = id
   }
 }
-Ref.nextID = 0"#,
-    r#"var Ref1 = function Ref(param) {
-        'use strict';
-        var id = param === void 0 ? ++Ref.nextID : param;
-        _classCallCheck(this, Ref);
-        this.id = id;
-    };
-Ref1.nextID = 0;"#
+Ref.nextID = 0"#
 );
 
 test_exec!(
     ignore,
     syntax(),
     // Stage0
-    |_| tr(),
+    |_| tr(Default::default()),
     default_iife_4253_exec,
     r#"class Ref {
   static nextId = 0
@@ -212,7 +170,10 @@ expect(new Ref().id).toBe(2);"#
 
 test!(
     syntax(),
-    |t| chain!(classes(Some(t.comments.clone())), tr()),
+    |t| chain!(
+        classes(Some(t.comments.clone()), Default::default()),
+        tr(Default::default())
+    ),
     default_iife_self,
     r#"class Ref {
   constructor(ref = Ref) {
@@ -224,25 +185,12 @@ class X {
   constructor(x = foo) {
     this.x = x
   }
-}"#,
-    r#"var Ref1 = function Ref(param) {
-        'use strict';
-        var ref = param === void 0 ? Ref : param;
-        _classCallCheck(this, Ref);
-        this.ref = ref;
-    }
-var X1 = function X(param) {
-        'use strict';
-        var x = param === void 0 ? foo : param;
-        _classCallCheck(this, X);
-        this.x = x;
-    };
-"#
+}"#
 );
 
 test_exec!(
     syntax(),
-    |_| tr(),
+    |_| tr(Default::default()),
     default_iife_self_exec,
     r#"class Ref {
   constructor(ref = Ref) {
@@ -255,7 +203,7 @@ expect(new Ref().ref).toBe(Ref);"#
 
 test!(
     syntax(),
-    |_| tr(),
+    |_| tr(Default::default()),
     default_multiple,
     r#"var t = function (e = "foo", f = 5) {
   return e + " bar " + f;
@@ -263,99 +211,57 @@ test!(
 
 var a = function (e, f = 5) {
   return e + " bar " + f;
-};"#,
-    "var t = function(param, param1) {
-    var e = param === void 0 ? 'foo' : param, f = param1 === void 0 ? 5 : param1;
-    return e + ' bar ' + f;
-};
-var a = function(e, param) {
-    var f = param === void 0 ? 5 : param;
-    return e + ' bar ' + f;
-};
-"
+};"#
 );
 
 test!(
     syntax(),
-    |_| tr(),
+    |_| tr(Default::default()),
     default_rest_mix,
     r#"function fn(
   a1,
   a2 = 4,
   {a3, a4},
   a5,
-  {a6, a7} = {}) {}"#,
-    "function fn(a1, param, param1, a5, param2) {
-    var a2 = param === void 0 ? 4 : param, a3 = param1.a3, a4 = param1.a4, ref = param2 === void 0 \
-     ? {
-    } : param2, a6 = ref.a6, a7 = ref.a7;
-}
-"
+  {a6, a7} = {}) {}"#
 );
 
 test!(
     syntax(),
-    |_| tr(),
+    |_| tr(Default::default()),
     default_rest_1,
     r#"const a = 1;
 function rest(b = a, ...a) {
   expect(b).toBe(1);
 }
-rest(undefined, 2)"#,
-    r#"var a = 1;
-function rest(param) {
-    var b = param === void 0 ? a : param;
-    for(var _len = arguments.length, a1 = new Array(_len > 1 ? _len - 1 : 0), _key = 1; _key < _len; _key++){
-        a1[_key - 1] = arguments[_key];
-    }
-    expect(b).toBe(1);
-}
-rest(undefined, 2);"#
+rest(undefined, 2)"#
 );
 
 test!(
     syntax(),
-    |_| tr(),
+    |_| tr(Default::default()),
     default_rest_2,
     r#"const a = 1;
   function rest2(b = a, ...a) {
   expect(a[0]).toBe(2);
-}
-rest2(undefined, 2);"#,
-    r#"var a = 1;
-function rest2(param) {
-    var b = param === void 0 ? a : param;
-    for(var _len = arguments.length, a1 = new Array(_len > 1 ? _len - 1 : 0), _key = 1; _key < _len; _key++){
-        a1[_key - 1] = arguments[_key];
-    }
-    expect(a1[0]).toBe(2);
 }
 rest2(undefined, 2);"#
 );
 
 test!(
     syntax(),
-    |_| tr(),
+    |_| tr(Default::default()),
     default_rest_3,
     r#"const a = 1;
     function rest3(b = a, ...a) {
   expect(a).toHaveLength(1);
 }
-rest3(undefined, 2)"#,
-    r#"var a = 1;
-function rest3(param) {
-    var b = param === void 0 ? a : param;
-    for(var _len = arguments.length, a1 = new Array(_len > 1 ? _len - 1 : 0), _key = 1; _key < _len; _key++){
-        a1[_key - 1] = arguments[_key];
-    }
-    expect(a1).toHaveLength(1);
-}
-rest3(undefined, 2);"#
+rest3(undefined, 2)"#
 );
 
 test_exec!(
     syntax(),
-    |_| tr(),
+    |_| tr(Default::default()),
     default_rest_exec,
     r#"const a = 1;
 function rest(b = a, ...a) {
@@ -376,25 +282,32 @@ rest3(undefined, 2)"#
 
 test!(
     syntax(),
-    |_| tr(),
+    |_| tr(Default::default()),
     default_setter_noexec,
     r#"const obj = {
   set field(num = 1) {
     this.num = num;
   }
-};"#,
-    "var obj = {
-    set field (param){
-        var num = param === void 0 ? 1 : param;
-        this.num = num;
-    }
-};
-"
+};"#
+);
+
+test!(
+    syntax(),
+    |_| tr(Default::default()),
+    default_setter_complex,
+    r#"const obj = {
+set obj({ a, b } = {}) {
+  this.num = { a, b };
+},
+set arr([x, y] = []) {
+  this.num = { x, y }
+}
+};"#
 );
 
 test_exec!(
     syntax(),
-    |_| tr(),
+    |_| tr(Default::default()),
     default_setter_exec,
     r#"const defaultValue = 1;
 const obj = {
@@ -409,69 +322,40 @@ expect(obj.num).toBe(defaultValue);"#
 
 test!(
     syntax(),
-    |_| tr(),
+    |_| tr(Default::default()),
     default_single,
     r#"var t = function (f = "foo") {
   return f + " bar";
-};"#,
-    r#"var t = function(param) {
-    var f = param === void 0 ? 'foo' : param;
-    return f + ' bar';
 };"#
 );
 
 test!(
     syntax(),
-    |_| tr(),
+    |_| tr(Default::default()),
     destructuring_rest,
     r#"// #3861
 function t(x = "default", { a, b }, ...args) {
   console.log(x, a, b, args);
-}"#,
-    "// #3861
-function t(param, param1) {
-    var x = param === void 0 ? 'default' : param, a = param1.a, b = param1.b;
-    for(var _len = arguments.length, args = new Array(_len > 2 ? _len - 2 : 0), _key = 2; _key < \
-     _len; _key++){
-        args[_key - 2] = arguments[_key];
-    }
-    console.log(x, a, b, args);
-}
-"
+}"#
 );
 
 test!(
     syntax(),
-    |_| tr(),
+    |_| tr(Default::default()),
     regression_4333,
     r#"const args = 'bar';
 function foo(...args) {
   return args;
-}"#,
-    r#"var args1 = 'bar';
-function foo() {
-    for(var _len = arguments.length, args = new Array(_len), _key = 0; _key < _len; _key++){
-        args[_key] = arguments[_key];
-    }
-    return args;
-}
-"#
+}"#
 );
 
 test!(
     syntax(),
-    |_| tr(),
+    |_| tr(Default::default()),
     regression_4348,
     r#"function first(...values) {
   var index = 0;
   return values[index++];
-}"#,
-    r#"function first() {
-    for(var _len = arguments.length, values = new Array(_len), _key = 0; _key < _len; _key++){
-        values[_key] = arguments[_key];
-    }
-    var index = 0;
-    return values[index++];
 }"#
 );
 
@@ -479,31 +363,19 @@ test!(
     ignore,
     syntax(),
     // type
-    |_| tr(),
+    |_| tr(Default::default()),
     regression_4634,
     r#"let oneOf = (...nodes) => {
   if (nodes.length === 1) {
     return nodes[0];
   }
   return ((new OneOfNode(nodes)): any)
-}"#,
-    r#"
-let oneOf = function () {
-  for (var _len = arguments.length, nodes = new Array(_len), _key = 0; _key < _len; _key++) {
-    nodes[_key] = arguments[_key];
-  }
-
-  if (nodes.length === 1) {
-    return nodes[0];
-  }
-
-  return new OneOfNode(nodes);
-};"#
+}"#
 );
 
 test!(
     syntax(),
-    |_| tr(),
+    |_| tr(Default::default()),
     regression_5787,
     r#"function f(a, ...rest) {
   let b = rest[rest.length - 3];
@@ -514,27 +386,12 @@ test!(
 
 function f(a, ...rest) {
   return rest[-1];
-}"#,
-    r#"function f(a) {
-    for(var _len = arguments.length, rest = new Array(_len > 1 ? _len - 1 : 0), _key = 1; _key < _len; _key++){
-        rest[_key - 1] = arguments[_key];
-    }
-    var b = rest[rest.length - 3];
-    var c = rest[rest.length - 2];
-    var d = rest[rest.length - 1];
-    return [a, b, c, d];
-}
-function f(a) {
-    for(var _len = arguments.length, rest = new Array(_len > 1 ? _len - 1 : 0), _key = 1; _key < _len; _key++){
-        rest[_key - 1] = arguments[_key];
-    }
-    return rest[-1];
 }"#
 );
 
 test_exec!(
     syntax(),
-    |_| tr(),
+    |_| tr(Default::default()),
     regression_5787_exec,
     r#"function f1(a, ...rest) {
   let b = rest[rest.length - 3];
@@ -552,17 +409,9 @@ expect(f2(1, 2)).toBeUndefined();"#
 
 test!(
     syntax(),
-    |_| tr(),
+    |_| tr(Default::default()),
     rest_args_deoptimiazation,
     r#"function x (...rest) {
-  arguments;
-}"#,
-    r#"
-function x() {
-  for (var _len = arguments.length, rest = new Array(_len), _key = 0; _key < _len; _key++) {
-    rest[_key] = arguments[_key];
-  }
-
   arguments;
 }"#
 );
@@ -571,7 +420,7 @@ test!(
     // Stage 0
     ignore,
     syntax(),
-    |_| tr(),
+    |_| tr(Default::default()),
     rest_arrow_fn,
     r#"var concat = (...arrs) => {
   var x = arrs[0];
@@ -608,72 +457,13 @@ var innerclassproperties = (...args) => (
     static args = args;
     args = args;
   }
-);"#,
-    r#"var concat = function () {
-  var x = arguments.length <= 0 ? undefined : arguments[0];
-  var y = arguments.length <= 1 ? undefined : arguments[1];
-};
-
-var somefun = function () {
-  var get2ndArg = function (a, b) {
-    var _b = arguments.length <= 2 ? undefined : arguments[2];
-
-    var somef = function (x, y, z) {
-      var _a = arguments.length <= 3 ? undefined : arguments[3];
-    };
-
-    var somefg = function (c, d, e, f) {
-      var _a = arguments.length <= 4 ? undefined : arguments[4];
-    };
-
-    var _d = arguments.length <= 3 ? undefined : arguments[3];
-  };
-
-  var get3rdArg = function () {
-    return arguments.length <= 2 ? undefined : arguments[2];
-  };
-};
-
-function demo1() {
-  for (var _len = arguments.length, args = new Array(_len), _key = 0; _key < _len; _key++) {
-    args[_key] = arguments[_key];
-  }
-
-  return function (i) {
-    return args[i + 0];
-  };
-}
-
-var x = function () {
-  if (noNeedToWork) return 0;
-
-  for (var _len2 = arguments.length, rest = new Array(_len2), _key2 = 0; _key2 < _len2; _key2++) {
-    rest[_key2] = arguments[_key2];
-  }
-
-  return rest;
-};
-
-var innerclassproperties = function () {
-  var _class, _temp;
-
-  for (var _len3 = arguments.length, args = new Array(_len3), _key3 = 0; _key3 < _len3; _key3++) {
-    args[_key3] = arguments[_key3];
-  }
-
-  return _temp = _class = function _class() {
-    "use strict";
-
-    _classCallCheck(this, _class);
-    this.args = args;
-  }, _class.args = args, _temp;
-};"#
+);"#
 );
 
 test!(
     ignore,
     syntax(),
-    |_| tr(),
+    |_| tr(Default::default()),
     rest_async_arrow_fn,
     r#"var concat = async (...arrs) => {
   var x = arrs[0];
@@ -683,59 +473,33 @@ test!(
 var x = async (...rest) => {
   if (noNeedToWork) return 0;
   return rest;
-};"#,
-    r#"var concat =
-/*#__PURE__*/
-function () {
-  var _ref = _asyncToGenerator(function* () {
-    var x = arguments.length <= 0 ? undefined : arguments[0];
-    var y = arguments.length <= 1 ? undefined : arguments[1];
-  });
-
-  return function concat() {
-    return _ref.apply(this, arguments);
-  };
-}();
-
-var x =
-/*#__PURE__*/
-function () {
-  var _ref2 = _asyncToGenerator(function* () {
-    if (noNeedToWork) return 0;
-
-    for (var _len = arguments.length, rest = new Array(_len), _key = 0; _key < _len; _key++) {
-      rest[_key] = arguments[_key];
-    }
-
-    return rest;
-  });
-
-  return function x() {
-    return _ref2.apply(this, arguments);
-  };
-}();"#
-);
-
-test!(
-    syntax(),
-    |_| chain!(arrow(), tr()),
-    rest_binding_deoptimisation,
-    r#"const deepAssign = (...args) => args = [];
-"#,
-    r#"var deepAssign = function () {
-  for (var _len = arguments.length, args = new Array(_len), _key = 0; _key < _len; _key++) {
-    args[_key] = arguments[_key];
-  }
-
-  return args = [];
 };"#
 );
 
 test!(
-    // optimiation is not implemented
+    syntax(),
+    |_| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            arrow(unresolved_mark),
+            resolver(unresolved_mark, top_level_mark, false),
+            parameters(Default::default(), unresolved_mark),
+            destructuring(destructuring::Config { loose: false }),
+            block_scoping(unresolved_mark),
+        )
+    },
+    rest_binding_deoptimisation,
+    r#"const deepAssign = (...args) => args = [];
+"#
+);
+
+test!(
+    // optimization is not implemented
     ignore,
     syntax(),
-    |_| tr(),
+    |_| tr(Default::default()),
     rest_deepest_common_ancestor_earliest_child,
     r#"// single reference
 function r(...rest){
@@ -786,7 +550,7 @@ function a(...args) {
   return function() {
     function b() {}
 
-    console.log("Shouldn't args be from a's scope?", args);
+    console.log("Shouldn't args be from a's scope?" args);
   };
 }
 
@@ -810,128 +574,12 @@ function r(...rest){
   if (noNeedToWork) return 0;
   [rest[0]] = x;
   return rest;
-}"#,
-    r#"// single reference
-function r() {
-  if (noNeedToWork) return 0;
-
-  for (var _len = arguments.length, rest = new Array(_len), _key = 0; _key < _len; _key++) {
-    rest[_key] = arguments[_key];
-  }
-
-  return rest;
-} // multiple references
-
-
-function r() {
-  if (noNeedToWork) return 0;
-
-  for (var _len2 = arguments.length, rest = new Array(_len2), _key2 = 0; _key2 < _len2; _key2++) {
-    rest[_key2] = arguments[_key2];
-  }
-
-  rest;
-  rest;
-} // multiple nested references
-
-
-function r() {
-  if (noNeedToWork) return 0;
-
-  for (var _len3 = arguments.length, rest = new Array(_len3), _key3 = 0; _key3 < _len3; _key3++) {
-    rest[_key3] = arguments[_key3];
-  }
-
-  if (true) {
-    return rest;
-  } else {
-    return rest;
-  }
-} // deeply nested
-
-
-function r() {
-  if (true) {
-    for (var _len4 = arguments.length, rest = new Array(_len4), _key4 = 0; _key4 < _len4; _key4++) {
-      rest[_key4] = arguments[_key4];
-    }
-
-    if (true) {
-      return rest;
-    } else {
-      return rest;
-    }
-  }
-} // nested reference with root reference
-
-
-function r() {
-  if (noNeedToWork) return 0;
-
-  for (var _len5 = arguments.length, rest = new Array(_len5), _key5 = 0; _key5 < _len5; _key5++) {
-    rest[_key5] = arguments[_key5];
-  }
-
-  if (lol) rest;
-  rest;
-} // nested functions
-
-
-function a() {
-  for (var _len6 = arguments.length, args = new Array(_len6), _key6 = 0; _key6 < _len6; _key6++) {
-    args[_key6] = arguments[_key6];
-  }
-
-  return function () {
-    function b() {}
-
-    console.log("Shouldn't args be from a's scope?", args);
-  };
-} // loop
-
-
-function runQueue(queue) {
-  for (var _len7 = arguments.length, args = new Array(_len7 > 1 ? _len7 - 1 : 0), _key7 = 1; _key7 < _len7; _key7++) {
-    args[_key7 - 1] = arguments[_key7];
-  }
-
-  for (var i = 0; i < queue.length; i++) {
-    queue[i].apply(queue, args);
-  }
-} // nested loop
-
-
-function runQueue(queue) {
-  if (foo) {
-    for (var _len8 = arguments.length, args = new Array(_len8 > 1 ? _len8 - 1 : 0), _key8 = 1; _key8 < _len8; _key8++) {
-      args[_key8 - 1] = arguments[_key8];
-    }
-
-    for (var i = 0; i < queue.length; i++) {
-      queue[i].apply(queue, args);
-    }
-  }
-}
-
-function r() {
-  if (noNeedToWork) return 0;
-
-  for (var _len9 = arguments.length, rest = new Array(_len9), _key9 = 0; _key9 < _len9; _key9++) {
-    rest[_key9] = arguments[_key9];
-  }
-
-  var _x = x;
-
-  var _x2 = _slicedToArray(_x, 1);
-
-  rest[0] = _x2[0];
-  return rest;
 }"#
 );
 
 test!(
     syntax(),
-    |_| tr(),
+    |_| tr(Default::default()),
     rest_length,
     r#"var t = function (f, ...items) {
   items[0];
@@ -942,27 +590,12 @@ function t(f, ...items) {
   items;
   items[0];
   items[items.length - 1];
-}"#,
-    r#"var t = function(f) {
-    for(var _len = arguments.length, items = new Array(_len > 1 ? _len - 1 : 0), _key = 1; _key < _len; _key++){
-        items[_key - 1] = arguments[_key];
-    }
-    items[0];
-    items[items.length - 1];
-};
-function t(f) {
-    for(var _len = arguments.length, items = new Array(_len > 1 ? _len - 1 : 0), _key = 1; _key < _len; _key++){
-        items[_key - 1] = arguments[_key];
-    }
-    items;
-    items[0];
-    items[items.length - 1];
 }"#
 );
 
 test_exec!(
     syntax(),
-    |_| tr(),
+    |_| tr(Default::default()),
     rest_length_exec,
     r#"var length = function (a, b, ...items) {
   return items.length;
@@ -978,7 +611,7 @@ test!(
     // optimisation is not implemented
     ignore,
     syntax(),
-    |_| tr(),
+    |_| tr(Default::default()),
     rest_member_expression_deoptimisation,
     r#"var t = function (...items) {
   var x = items[0];
@@ -1003,32 +636,6 @@ function t(...items) {
   for (let i = 0; i < items.length; i++) {
     return items[i];
   }
-}"#,
-    r#"var t = function () {
-  var x = arguments.length <= 0 ? undefined : arguments[0];
-  var y = arguments.length <= 1 ? undefined : arguments[1];
-};
-
-function t() {
-  var x = arguments.length <= 0 ? undefined : arguments[0];
-  var y = arguments.length <= 1 ? undefined : arguments[1];
-}
-
-function t() {
-  var a = [];
-
-  for (var i = 0; i < arguments.length; i++) {
-    a.push(i);
-  }
-
-  return a;
-} // https://github.com/babel/babel/pull/2833#issuecomment-166039291
-
-
-function t() {
-  for (var i = 0; i < arguments.length; i++) {
-    return i < 0 || arguments.length <= i ? undefined : arguments[i];
-  }
 }"#
 );
 
@@ -1036,7 +643,7 @@ test!(
     // optimisation is not implemented
     ignore,
     syntax(),
-    |_| tr(),
+    |_| tr(Default::default()),
     rest_member_expression_optimisation,
     r#"var t = function (...items) {
   var x = items[0];
@@ -1061,38 +668,12 @@ function t(...items) {
   for (let i = 0; i < items.length; i++) {
     return items[i];
   }
-}"#,
-    r#"var t = function () {
-  var x = arguments.length <= 0 ? undefined : arguments[0];
-  var y = arguments.length <= 1 ? undefined : arguments[1];
-};
-
-function t() {
-  var x = arguments.length <= 0 ? undefined : arguments[0];
-  var y = arguments.length <= 1 ? undefined : arguments[1];
-}
-
-function t() {
-  var a = [];
-
-  for (var i = 0; i < arguments.length; i++) {
-    a.push(i);
-  }
-
-  return a;
-} // https://github.com/babel/babel/pull/2833#issuecomment-166039291
-
-
-function t() {
-  for (var i = 0; i < arguments.length; i++) {
-    return i < 0 || arguments.length <= i ? undefined : arguments[i];
-  }
 }"#
 );
 
 test!(
     syntax(),
-    |_| tr(),
+    |_| tr(Default::default()),
     rest_multiple,
     r#"var t = function (f, ...items) {
     var x = f;
@@ -1112,32 +693,6 @@ function u(f, g, ...items) {
     x[12] = items[0];
     y.prop = items[1];
     var z = items[2] | 0 || 12;
-}"#,
-    r#"var t = function(f) {
-    for(var _len = arguments.length, items = new Array(_len > 1 ? _len - 1 : 0), _key = 1; _key < _len; _key++){
-        items[_key - 1] = arguments[_key];
-    }
-    var x = f;
-    x = items[0];
-    x = items[1];
-};
-function t(f) {
-    for(var _len = arguments.length, items = new Array(_len > 1 ? _len - 1 : 0), _key = 1; _key < _len; _key++){
-        items[_key - 1] = arguments[_key];
-    }
-    var x = f;
-    x = items[0];
-    x = items[1];
-}
-function u(f, g) {
-    for(var _len = arguments.length, items = new Array(_len > 2 ? _len - 2 : 0), _key = 2; _key < _len; _key++){
-        items[_key - 2] = arguments[_key];
-    }
-    var x = f;
-    var y = g;
-    x[12] = items[0];
-    y.prop = items[1];
-    var z = items[2] | 0 || 12;
 }"#
 );
 
@@ -1145,7 +700,7 @@ test!(
     // optimisation is not implemented
     ignore,
     syntax(),
-    |_| tr(),
+    |_| tr(Default::default()),
     rest_nested_5656,
     r#"function a(...args) {
   const foo = (...list) => bar(...list);
@@ -1168,48 +723,14 @@ function d(thing, ...args) {
     let args = thing;
     foo(thing);
   }
-}"#,
-    r#"function a() {
-  var foo = function () {
-    return bar.apply(void 0, arguments);
-  };
-
-  foo.apply(void 0, arguments);
-}
-
-function b() {
-  var foo = function () {
-    return bar.apply(void 0, arguments);
-  };
-
-  foo.apply(void 0, arguments);
-}
-
-function c() {
-  var foo = function () {
-    return bar.apply(void 0, arguments);
-  };
-
-  foo([]);
-}
-
-function d(thing) {
-  var foo = function () {
-    return bar.apply(void 0, arguments);
-  };
-
-  {
-    var args = thing;
-    foo(thing);
-  }
 }"#
 );
 
 test!(
     syntax(),
     |t| chain!(
-        tr(),
-        classes(Some(t.comments.clone())),
+        tr(Default::default()),
+        classes(Some(t.comments.clone()), Default::default()),
         spread(Default::default())
     ),
     rest_nested_iife,
@@ -1218,44 +739,19 @@ test!(
     class Foo extends Bar { }
     return hello(...foo)
   }
-}"#,
-    r#"function broken(x) {
-    for(var _len = arguments.length, foo = new Array(_len > 1 ? _len - 1 : 0),
-        _key = 1; _key < _len; _key++){
-        foo[_key - 1] = arguments[_key];
-    }
-    if (true) {
-        let Foo = function(Bar) {
-            'use strict';
-            _inherits(Foo, Bar);
-            var _super = _createSuper(Foo);
-            function Foo() {
-                _classCallCheck(this, Foo);
-                return _super.apply(this, arguments);
-            }
-            return Foo;
-        }(Bar);
-        return hello.apply(void 0, _toConsumableArray(foo));
-    }
 }"#
 );
 
 test!(
     syntax(),
-    |_| tr(),
+    |_| tr(Default::default()),
     rest_patterns,
-    r#"function foo(...[a]) {}"#,
-    r#"function foo() {
-    for(var _len = arguments.length, _tmp = new Array(_len), _key = 0; _key < _len; _key++){
-        _tmp[_key] = arguments[_key];
-    }
-    var __tmp = _slicedToArray(_tmp, 1), a = __tmp[0];
-}"#
+    r#"function foo(...[a]) {}"#
 );
 
 test_exec!(
     syntax(),
-    |_| tr(),
+    |_| tr(Default::default()),
     rest_patterns_exec,
     r#"
 function foo(...{ length }) {
@@ -1269,7 +765,7 @@ test!(
     // optimisation is not implemented
     ignore,
     syntax(),
-    |_| tr(),
+    |_| tr(Default::default()),
     rest_spread_optimisation,
     r#"// optimisation
 
@@ -1290,37 +786,6 @@ function foo(...b) {
 function foo(...args){
   args.pop()
   foo(...args);
-}"#,
-    r#"// optimisation
-function foo() {
-  foo.apply(void 0, arguments);
-} // deoptimisation
-
-
-function foo(a) {
-  for (var _len = arguments.length, b = new Array(_len > 1 ? _len - 1 : 0),
-   _key = 1; _key < _len; _key++) {
-    b[_key - 1] = arguments[_key];
-  }
-
-  foo.apply(void 0, b);
-}
-
-function foo() {
-  for (var _len2 = arguments.length, b = new Array(_len2), _key2 = 0; _key2 < _len2; _key2++) {
-    b[_key2] = arguments[_key2];
-  }
-
-  foo.apply(void 0, [1].concat(b));
-}
-
-function foo() {
-  for (var _len3 = arguments.length, args = new Array(_len3), _key3 = 0; _key3 < _len3; _key3++) {
-    args[_key3] = arguments[_key3];
-  }
-
-  args.pop();
-  foo.apply(void 0, args);
 }"#
 );
 
@@ -1344,19 +809,19 @@ function foo() {
 //  }
 //}
 //
-//"#,
+//"#
 //    r#"
 //"use strict";
 //
-//Object.defineProperty(exports, "__esModule", {
+//Object.defineProperty(exports, "__esModule" {
 //  value: true
 //});
 //exports["default"] = void 0;
 //
-//var _args = _interopRequireDefault(require("utils/url/args"));
+//var _args = _interop_require_default(require("utils/url/args"));
 //
-//function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : {
-// "default": obj }; }
+//function _interop_require_default(obj) { return obj && obj.__esModule ? obj :
+// { "default": obj }; }
 //
 //function _typeof(obj) { if (typeof Symbol === "function" && typeof
 // Symbol.iterator === "symbol") { _typeof = function _typeof(obj) { return
@@ -1364,7 +829,7 @@ function foo() {
 // typeof Symbol === "function" && obj.constructor === Symbol && obj !==
 // Symbol.prototype ? "symbol" : typeof obj; }; } return _typeof(obj); }
 //
-//function _classCallCheck(instance, Constructor) { if (!(instance instanceof
+//function _class_call_check(instance, Constructor) { if (!(instance instanceof
 // Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
 //
 //function _defineProperties(target, props) { for (var i = 0; i < props.length;
@@ -1373,19 +838,20 @@ function foo() {
 // in descriptor) descriptor.writable = true; Object.defineProperty(target,
 // descriptor.key, descriptor); } }
 //
-//function _createClass(Constructor, protoProps, staticProps) { if (protoProps)
-// _defineProperties(Constructor.prototype, protoProps); if (staticProps)
-// _defineProperties(Constructor, staticProps); return Constructor; }
+//function _create_class(Constructor, protoProps, staticProps) { if
+// (protoProps) _defineProperties(Constructor.prototype, protoProps); if
+// (staticProps) _defineProperties(Constructor, staticProps); return
+// Constructor; }
 //
-//function _possibleConstructorReturn(self, call) { if (call && (_typeof(call)
-// === "object" || typeof call === "function")) { return call; } return
-// _assertThisInitialized(self); }
+//function _possible_constructor_return(self, call) { if (call &&
+// (_typeof(call) === "object" || typeof call === "function")) { return call; }
+// return _assert_this_initialized(self); }
 //
-//function _getPrototypeOf(o) { _getPrototypeOf = Object.setPrototypeOf ?
-// Object.getPrototypeOf : function _getPrototypeOf(o) { return o.__proto__ ||
-// Object.getPrototypeOf(o); }; return _getPrototypeOf(o); }
+//function _get_prototype_of(o) { _get_prototype_of = Object.setPrototypeOf ?
+// Object.getPrototypeOf : function _get_prototype_of(o) { return o.__proto__ ||
+// Object.getPrototypeOf(o); }; return _get_prototype_of(o); }
 //
-//function _assertThisInitialized(self) { if (self === void 0) { throw new
+//function _assert_this_initialized(self) { if (self === void 0) { throw new
 // ReferenceError("this hasn't been initialised - super() hasn't been called");
 // } return self; }
 //
@@ -1394,13 +860,13 @@ function foo() {
 // must either be null or a function"); } subClass.prototype =
 // Object.create(superClass && superClass.prototype, { constructor: { value:
 // subClass, writable: true, configurable: true } }); if (superClass)
-// _setPrototypeOf(subClass, superClass); }
+// _set_prototype_of(subClass, superClass); }
 //
-//function _setPrototypeOf(o, p) { _setPrototypeOf = Object.setPrototypeOf ||
-// function _setPrototypeOf(o, p) { o.__proto__ = p; return o; }; return
-// _setPrototypeOf(o, p); }
+//function _set_prototype_of(o, p) { _set_prototype_of = Object.setPrototypeOf
+// || function _set_prototype_of(o, p) { o.__proto__ = p; return o; }; return
+// _set_prototype_of(o, p); }
 //
-//function _defineProperty(obj, key, value) { if (key in obj) {
+//function _define_property(obj, key, value) { if (key in obj) {
 // Object.defineProperty(obj, key, { value: value, enumerable: true,
 // configurable: true, writable: true }); } else { obj[key] = value; } return
 // obj; }
@@ -1411,26 +877,26 @@ function foo() {
 //  _inherits(App, _Component);
 //
 //  function App() {
-//    var _getPrototypeOf2;
+//    var _get_prototype_of2;
 //
 //    var _this;
 //
-//    _classCallCheck(this, App);
+//    _class_call_check(this, App);
 //
 //    for (var _len = arguments.length, args = new Array(_len), _key = 0; _key <
 // _len; _key++) {      args[_key] = arguments[_key];
 //    }
 //
-//    _this = _possibleConstructorReturn(this, (_getPrototypeOf2 =
-// _getPrototypeOf(App)).call.apply(_getPrototypeOf2, [this].concat(args)));
+//    _this = _possible_constructor_return(this, (_get_prototype_of2 =
+// _get_prototype_of(App)).call.apply(_get_prototype_of2, [this].concat(args)));
 //
-//    _defineProperty(_assertThisInitialized(_this), "exportType", '');
+//    _define_property(_assert_this_initialized(_this), "exportType" '');
 //
 //    return _this;
 //  }
 //
-//  _createClass(App, [{
-//    key: "componentDidMount",
+//  _create_class(App, [{
+//    key: "componentDidMount"
 //    value: function componentDidMount() {
 //      this.exportType = _args["default"].get('type', window.location.href);
 //    }
@@ -1460,16 +926,16 @@ function foo() {
 //    console.log(this)
 //  }
 //}
-//"#,
+//"#
 //    r#"
 //"use strict";
 //
-//Object.defineProperty(exports, "__esModule", {
+//Object.defineProperty(exports, "__esModule" {
 //  value: true
 //});
 //exports.Test = void 0;
 //
-//function _classCallCheck(instance, Constructor) { if (!(instance instanceof
+//function _class_call_check(instance, Constructor) { if (!(instance instanceof
 // Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
 //
 //function _defineProperties(target, props) { for (var i = 0; i < props.length;
@@ -1478,19 +944,20 @@ function foo() {
 // in descriptor) descriptor.writable = true; Object.defineProperty(target,
 // descriptor.key, descriptor); } }
 //
-//function _createClass(Constructor, protoProps, staticProps) { if (protoProps)
-// _defineProperties(Constructor.prototype, protoProps); if (staticProps)
-// _defineProperties(Constructor, staticProps); return Constructor; }
+//function _create_class(Constructor, protoProps, staticProps) { if
+// (protoProps) _defineProperties(Constructor.prototype, protoProps); if
+// (staticProps) _defineProperties(Constructor, staticProps); return
+// Constructor; }
 //
 //var Test =
 // /*#__PURE__*/
 //function () {
 //  function Test() {
-//    _classCallCheck(this, Test);
+//    _class_call_check(this, Test);
 //  }
 //
-//  _createClass(Test, [{
-//    key: "invite",
+//  _create_class(Test, [{
+//    key: "invite"
 //    value: function invite() {
 //      var options = arguments.length > 0 && arguments[0] !== undefined ?
 // arguments[0] : {};      var privacy = options.privacy || "Private";
@@ -1511,25 +978,22 @@ test!(
     // See https://github.com/swc-project/swc/issues/490
     ignore,
     syntax(),
-    |_| chain!(async_to_generator(), arrow(), parameters(),),
+    |_| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+        chain!(
+            resolver(unresolved_mark, top_level_mark, false),
+            async_to_generator::<SingleThreadedComments>(Default::default(), None, unresolved_mark),
+            arrow(unresolved_mark),
+            parameters(Default::default(), unresolved_mark),
+        )
+    },
     parameters_rest_async_arrow_functions_1,
     r#"
 var concat = async (...arrs) => {
   var x = arrs[0];
   var y = arrs[1];
 };
-"#,
-    r#"
-var concat = function () {
-  var _ref = _asyncToGenerator(function* () {
-    var x = arguments.length <= 0 ? undefined : arguments[0];
-    var y = arguments.length <= 1 ? undefined : arguments[1];
-  });
-
-  return function concat() {
-    return _ref.apply(this, arguments);
-  };
-}();
 "#
 );
 
@@ -1538,7 +1002,16 @@ test!(
     // See https://github.com/swc-project/swc/issues/490
     ignore,
     syntax(),
-    |_| chain!(async_to_generator(), arrow(), parameters(),),
+    |_| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+        chain!(
+            resolver(unresolved_mark, top_level_mark, false),
+            async_to_generator::<SingleThreadedComments>(Default::default(), None, unresolved_mark),
+            arrow(unresolved_mark),
+            parameters(Default::default(), unresolved_mark),
+        )
+    },
     parameters_rest_async_arrow_functions_2,
     r#"
 var x = async (...rest) => {
@@ -1546,31 +1019,20 @@ var x = async (...rest) => {
   return rest;
 };
 
-"#,
-    r#"
-var x = function () {
-  var _ref = _asyncToGenerator(function* () {
-    if (noNeedToWork) return 0;
-
-    for (var _len = arguments.length, rest = new Array(_len), _key = 0; _key < _len; _key++) {
-      rest[_key] = arguments[_key];
-    }
-
-    return rest;
-  });
-
-  return function x() {
-    return _ref.apply(this, arguments);
-  };
-}();
-
 "#
 );
 
 // regression_6057_simple
 test!(
     syntax(),
-    |_| parameters(),
+    |_| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+        chain!(
+            resolver(unresolved_mark, top_level_mark, false),
+            parameters(Default::default(), unresolved_mark),
+        )
+    },
     regression_6057_simple,
     r#"
 const a = 'bar';
@@ -1579,25 +1041,21 @@ function foo(...a) {
 }
 
 
-"#,
-    r#"
-const a = 'bar';
-
-function foo() {
-  for (let _len = arguments.length, a = new Array(_len), _key = 0; _key < _len; _key++) {
-    a[_key] = arguments[_key];
-  }
-
-  return a;
-}
-
 "#
 );
 
 // parameters_regression_4333
 test!(
     syntax(),
-    |_| chain!(parameters(), block_scoping(),),
+    |_| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+        chain!(
+            resolver(unresolved_mark, top_level_mark, false),
+            parameters(Default::default(), unresolved_mark),
+            block_scoping(unresolved_mark)
+        )
+    },
     parameters_regression_4333,
     r#"
 const args = 'bar';
@@ -1605,144 +1063,426 @@ function foo(...args) {
   return args;
 }
 
-"#,
-    r#"
-var args = 'bar';
-
-function foo() {
-  for (var _len = arguments.length, args = new Array(_len), _key = 0; _key < _len; _key++) {
-    args[_key] = arguments[_key];
-  }
-
-  return args;
-}
-
 "#
 );
 
 test!(
     syntax(),
-    |_| chain!(parameters(), destructuring(Default::default())),
+    |_| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+        chain!(
+            resolver(unresolved_mark, top_level_mark, false),
+            parameters(Default::default(), unresolved_mark),
+            destructuring(Default::default())
+        )
+    },
     issue_760,
     "const initialState = 'foo'
 export default function reducer(state = initialState, action = {}) {
-}",
-    "const initialState = 'foo';
-  export default function reducer(param, param1) {
-      let state = param === void 0 ? initialState : param, action = param1 === void 0 ? {
-      } : param1;
-  }"
+}"
 );
 
 test!(
     syntax(),
-    |_| parameters(),
+    |_| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+        chain!(
+            resolver(unresolved_mark, top_level_mark, false),
+            parameters(Default::default(), unresolved_mark),
+        )
+    },
     rest_in_top_level_arrow_1,
     "
     const arrow = (...args) => {
       console.log(args);
     }
-    ",
-    "
-    const arrow = function() {
-        for(let _len = arguments.length, args = new Array(_len), _key = 0; _key < _len; _key++){
-            args[_key] = arguments[_key];
-        }
-        console.log(args);
-    };
     "
 );
 
 test!(
     syntax(),
-    |_| parameters(),
+    |_| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+        chain!(
+            resolver(unresolved_mark, top_level_mark, false),
+            parameters(Default::default(), unresolved_mark),
+        )
+    },
     rest_in_top_level_arrow_2,
     "
     const arrow = () => (...args) => {
       console.log(args);
     }
-    ",
-    "
-    const arrow = ()=>function() {
-        for(let _len = arguments.length, args = new Array(_len), _key = 0; _key < _len; _key++){
-            args[_key] = arguments[_key];
-        }
-        console.log(args);
-    };
     "
 );
 
 test!(
     syntax(),
-    |_| parameters(),
+    |_| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+        chain!(
+            resolver(unresolved_mark, top_level_mark, false),
+            parameters(Default::default(), unresolved_mark),
+        )
+    },
     rest_in_top_level_arrow_3,
     "
     const arrow = () => (...args) => {
       console.log(this, args);
     }
-    ",
-    "
-    const arrow = ()=>{
-        var self = this;
-        return function() {
-            for(let _len = arguments.length, args = new Array(_len), _key = 0; _key < _len; \
-     _key++){
-                args[_key] = arguments[_key];
-            }
-            console.log(self, args);
-        };
-    };
     "
 );
 
 test!(
     syntax(),
-    |_| parameters(),
+    |_| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+        chain!(
+            resolver(unresolved_mark, top_level_mark, false),
+            parameters(Default::default(), unresolved_mark),
+        )
+    },
     rest_in_top_level_arrow_4,
     "
     const arrow = () => (this, (...args) => {
       console.log(this, args);
     })
-    ",
-    "
-    const arrow = ()=>{
-      var self = this;
-      return this, function() {
-          for(let _len = arguments.length, args = new Array(_len), _key = 0; _key < _len; _key++){
-              args[_key] = arguments[_key];
-          }
-          console.log(self, args);
-      };
-    };
     "
 );
 
 test!(
     syntax(),
-    |_| parameters(),
+    |_| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+        chain!(
+            resolver(unresolved_mark, top_level_mark, false),
+            parameters(Default::default(), unresolved_mark),
+        )
+    },
     rest_in_top_level_arrow_nested_1,
     "
     const arrow = (...args) => (this, () => (...args) => {
       console.log(this, args);
     })
-    ",
-    "
-    var self1 = this;
-    const arrow = function() {
-        for(let _len1 = arguments.length, args = new Array(_len1), _key1 = 0; _key1 < _len1; \
-     _key1++){
-            args[_key1] = arguments[_key1];
-        }
-        return self1, ()=>{
-            var self = this;
-            return function() {
-                for(let _len = arguments.length, args = new Array(_len), _key = 0; _key < _len; \
-     _key++){
-                    args[_key] = arguments[_key];
-                }
-                console.log(self, args);
-            };
-        };
-    };
     "
 );
+
+test!(
+    syntax(),
+    |_| tr(Default::default()),
+    issue_2825,
+    "
+const foo = (...rest) => console.log(this, rest)
+const bar = () => this
+  "
+);
+
+test!(
+    syntax(),
+    |_| tr(Default::default()),
+    issue_2811,
+    "
+class Foo extends (function(){}) {
+constructor(){
+  var foo = (...rest) => [rest, this];
+
+  if (true){
+      console.log(super(), foo());
+  } else {
+      super();
+      console.log(foo());
+  }
+}
+}
+"
+);
+
+test!(
+    syntax(),
+    |_| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+        chain!(
+            resolver(unresolved_mark, top_level_mark, false),
+            parameters(Default::default(), unresolved_mark),
+        )
+    },
+    issue_3471,
+    "
+class A {
+  a = 1 + ((...a) => a)
+  b = (...b) => b + this
+  static c = (c = 123) => c + this
+}
+  "
+);
+
+test!(
+    syntax(),
+    |_| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+        chain!(
+            resolver(unresolved_mark, top_level_mark, false),
+            parameters(Default::default(), unresolved_mark),
+        )
+    },
+    issue_3569,
+    "
+export class TableView extends React.Component {
+  constructor(props){
+    super(props);
+    this.getSearchForm = (innerWidth = 0)=>{
+      this.getProps();
+    };
+  }
+}
+"
+);
+
+test!(
+    syntax(),
+    |_| tr(Config {
+        ignore_function_length: true
+    }),
+    fn_len_complex_assign,
+    "function test({a: b} = {}) {}"
+);
+
+test!(
+    syntax(),
+    |_| tr(Config {
+        ignore_function_length: true
+    }),
+    fn_len_default_array_destructuring,
+    "function t([,,a] = [1,2,3]) { return a }"
+);
+
+test_exec!(
+    syntax(),
+    |_| tr(Config {
+        ignore_function_length: true
+    }),
+    fn_len_default_array_destructuring_exec,
+    "function t([,,a] = [1,2,3]) { return a }
+
+  expect(t()).toBe(3);
+  expect(t([4,5,6])).toBe(6);"
+);
+
+test_exec!(
+    syntax(),
+    |_| tr(Config {
+        ignore_function_length: true
+    }),
+    fn_len_default_earlier_params,
+    "function f(a, b = a, c = b) { return c; }
+
+    expect(f(3)).toBe(3);"
+);
+
+test_exec!(
+    syntax(),
+    |_| tr(Config {
+        ignore_function_length: true
+    }),
+    fn_len_default_iife_1128,
+    "const bar = true;
+
+  function foo(a = bar, ...b) {
+    const bar = false;
+    expect(b[0]).toBe(2);
+    expect(b[1]).toBe(3);
+  }
+
+  foo(1, 2, 3);"
+);
+
+test_exec!(
+    syntax(),
+    |_| tr(Config {
+        ignore_function_length: true
+    }),
+    fn_len_default_iife_4253,
+    "class Ref {
+      static nextId = 0
+      constructor(id = ++Ref.nextId, n = id) {
+        this.id = n
+      }
+    }
+
+    expect(new Ref().id).toBe(1);
+    expect(new Ref().id).toBe(2);"
+);
+
+test_exec!(
+    syntax(),
+    |_| tr(Config {
+        ignore_function_length: true
+    }),
+    fn_len_default_iife_self,
+    "class Ref {
+      constructor(ref = Ref) {
+        this.ref = ref
+      }
+    }
+
+    expect(new Ref().ref).toBe(Ref);"
+);
+
+test!(
+    syntax(),
+    |_| tr(Config {
+        ignore_function_length: true
+    }),
+    fn_len_default_multiple,
+    r#"
+    var t = function (e = "foo", f = 5) {
+      return e + " bar " + f;
+    };
+
+    var a = function (e, f = 5) {
+      return e + " bar " + f;
+    };"#
+);
+
+test_exec!(
+    syntax(),
+    |_| tr(Config {
+        ignore_function_length: true
+    }),
+    fn_len_object_destructuring,
+    "function required(msg) {
+      throw new Error(msg);
+    }
+
+    function sum(
+      { arr = required('arr is required') } = { arr: arr = [] },
+      length = arr.length
+    ) {
+      let i = 0;
+      let acc = 0;
+      for (let item of arr) {
+        if (i >= length) return acc;
+        acc += item;
+        i++;
+      }
+      return acc;
+    }
+
+    expect(sum({arr:[1,2]})).toBe(3);"
+);
+
+test!(
+    syntax(),
+    |_| tr(Config {
+        ignore_function_length: true
+    }),
+    fn_len_rest_mix,
+    r#"
+    function fn(
+      a1,
+      a2 = 4,
+      {a3, a4},
+      a5,
+      {a6, a7} = {}) {
+
+    }"#
+);
+
+test_exec!(
+    syntax(),
+    |_| tr(Config {
+        ignore_function_length: true
+    }),
+    fn_len_rest,
+    "const a = 1;
+    function rest(b = a, ...a) {
+      expect(b).toBe(1);
+    }
+    rest(undefined, 2)
+
+    function rest2(b = a, ...a) {
+      expect(a[0]).toBe(2);
+    }
+    rest2(undefined, 2)
+
+    function rest3(b = a, ...a) {
+      expect(a).toHaveLength(1);
+    }
+    rest3(undefined, 2)"
+);
+
+test!(
+    syntax(),
+    |_| tr(Config {
+        ignore_function_length: true
+    }),
+    fn_len_default_single,
+    r#"
+    var t = function (f = "foo") {
+      return f + " bar";
+    };"#
+);
+
+test!(
+    syntax(),
+    |_| tr(Config {
+        ignore_function_length: true
+    }),
+    fn_len_destructing_rest,
+    r#"
+    function t(x = "default", { a, b }, ...args) {
+      console.log(x, a, b, args);
+    }"#
+);
+
+test_exec!(
+    syntax(),
+    |_| tr(Config {
+        ignore_function_length: true
+    }),
+    fn_len_overwrite_undefined,
+    "function t(undefined = 17, a = 3) {
+      return a;
+    }
+
+    expect(t()).toBe(3);"
+);
+
+test!(
+    syntax(),
+    |_| tr(Config {
+        ignore_function_length: true
+    }),
+    issue_5030,
+    r#"
+    let v0 = (Array, Int8Array, ...Int32Array) => (NaN + Infinity) * Int32Array.length;
+    console.log(v0(1, 2, 'hello', true, 7));
+  "#
+);
+
+#[testing::fixture("tests/parameters/**/input.js")]
+fn fixture(input: PathBuf) {
+    let output = input.with_file_name("output.js");
+
+    test_fixture(
+        Default::default(),
+        &|_| {
+            let unresolved_mark = Mark::new();
+            chain!(
+                resolver(unresolved_mark, Mark::new(), false),
+                parameters(Default::default(), unresolved_mark)
+            )
+        },
+        &input,
+        &output,
+        Default::default(),
+    );
+}

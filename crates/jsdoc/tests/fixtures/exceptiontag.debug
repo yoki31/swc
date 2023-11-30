@@ -2,70 +2,70 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                0,
+                1,
             ),
             hi: BytePos(
-                0,
+                1,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    0,
+                    1,
                 ),
                 hi: BytePos(
-                    0,
+                    1,
                 ),
                 ctxt: #0,
             },
-            value: Atom('' type=static),
+            value: "",
         },
         tags: [
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        0,
+                        1,
                     ),
                     hi: BytePos(
-                        6,
+                        7,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            0,
+                            1,
                         ),
                         hi: BytePos(
-                            6,
+                            7,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('throws' type=inline),
+                    value: "throws",
                 },
                 tag: Throw(
                     ThrowTag {
                         span: Span {
                             lo: BytePos(
-                                0,
+                                1,
                             ),
                             hi: BytePos(
-                                6,
+                                7,
                             ),
                             ctxt: #0,
                         },
                         text: Text {
                             span: Span {
                                 lo: BytePos(
-                                    0,
+                                    1,
                                 ),
                                 hi: BytePos(
-                                    26,
+                                    27,
                                 ),
                                 ctxt: #0,
                             },
-                            value: Atom('{InvalidArgumentException}' type=dynamic),
+                            value: "{InvalidArgumentException}",
                         },
                     },
                 ),
@@ -75,70 +75,70 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                68,
+                69,
             ),
             hi: BytePos(
-                68,
+                69,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    68,
+                    69,
                 ),
                 hi: BytePos(
-                    68,
+                    69,
                 ),
                 ctxt: #0,
             },
-            value: Atom('' type=static),
+            value: "",
         },
         tags: [
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        68,
+                        69,
                     ),
                     hi: BytePos(
-                        77,
+                        78,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            68,
+                            69,
                         ),
                         hi: BytePos(
-                            77,
+                            78,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('exception' type=dynamic),
+                    value: "exception",
                 },
                 tag: Unknown(
                     UnknownTag {
                         span: Span {
                             lo: BytePos(
-                                68,
+                                69,
                             ),
                             hi: BytePos(
-                                77,
+                                78,
                             ),
                             ctxt: #0,
                         },
                         extras: Text {
                             span: Span {
                                 lo: BytePos(
-                                    68,
+                                    69,
                                 ),
                                 hi: BytePos(
-                                    108,
+                                    109,
                                 ),
                                 ctxt: #0,
                             },
-                            value: Atom('Will throw an error if argument is null.' type=dynamic),
+                            value: "Will throw an error if argument is null.",
                         },
                     },
                 ),
@@ -148,70 +148,70 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                153,
+                154,
             ),
             hi: BytePos(
-                153,
+                154,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    153,
+                    154,
                 ),
                 hi: BytePos(
-                    153,
+                    154,
                 ),
                 ctxt: #0,
             },
-            value: Atom('' type=static),
+            value: "",
         },
         tags: [
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        153,
+                        154,
                     ),
                     hi: BytePos(
-                        162,
+                        163,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            153,
+                            154,
                         ),
                         hi: BytePos(
-                            162,
+                            163,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('exception' type=dynamic),
+                    value: "exception",
                 },
                 tag: Unknown(
                     UnknownTag {
                         span: Span {
                             lo: BytePos(
-                                153,
+                                154,
                             ),
                             hi: BytePos(
-                                162,
+                                163,
                             ),
                             ctxt: #0,
                         },
                         extras: Text {
                             span: Span {
                                 lo: BytePos(
-                                    153,
+                                    154,
                                 ),
                                 hi: BytePos(
-                                    196,
+                                    197,
                                 ),
                                 ctxt: #0,
                             },
-                            value: Atom('{DivideByZero} Argument x must be non-zero.' type=dynamic),
+                            value: "{DivideByZero} Argument x must be non-zero.",
                         },
                     },
                 ),
@@ -221,72 +221,70 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                241,
+                242,
             ),
             hi: BytePos(
-                241,
+                242,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    241,
+                    242,
                 ),
                 hi: BytePos(
-                    277,
+                    278,
                 ),
                 ctxt: #0,
             },
-            value: Atom('A description of the function.
-             *
-             *' type=dynamic),
+            value: "A description of the function.\n *\n *",
         },
         tags: [
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        241,
+                        242,
                     ),
                     hi: BytePos(
-                        250,
+                        251,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            241,
+                            242,
                         ),
                         hi: BytePos(
-                            250,
+                            251,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('exception' type=dynamic),
+                    value: "exception",
                 },
                 tag: Unknown(
                     UnknownTag {
                         span: Span {
                             lo: BytePos(
-                                241,
+                                242,
                             ),
                             hi: BytePos(
-                                250,
+                                251,
                             ),
                             ctxt: #0,
                         },
                         extras: Text {
                             span: Span {
                                 lo: BytePos(
-                                    241,
+                                    242,
                                 ),
                                 hi: BytePos(
-                                    281,
+                                    282,
                                 ),
                                 ctxt: #0,
                             },
-                            value: Atom('{Object} A description of the exception.' type=dynamic),
+                            value: "{Object} A description of the exception.",
                         },
                     },
                 ),

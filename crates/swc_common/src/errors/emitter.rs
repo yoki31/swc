@@ -8,8 +8,22 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use std::{
+    borrow::Cow,
+    cmp::{min, Reverse},
+    collections::HashMap,
+    io::{self, prelude::*},
+};
+
+#[cfg(feature = "tty-emitter")]
+use atty;
+#[cfg(feature = "tty-emitter")]
+use termcolor::{Buffer, BufferWriter, Color, ColorChoice, ColorSpec, StandardStream, WriteColor};
+use unicode_width;
+
 use self::Destination::*;
 use super::{
+    diagnostic::Message,
     snippet::{Annotation, AnnotationType, Line, MultilineAnnotation, Style, StyledString},
     styled_buffer::StyledBuffer,
     CodeSuggestion, DiagnosticBuilder, DiagnosticId, Level, SourceMapperDyn, SubDiagnostic,
@@ -18,18 +32,6 @@ use crate::{
     sync::Lrc,
     syntax_pos::{MultiSpan, SourceFile, Span},
 };
-#[cfg(feature = "tty-emitter")]
-use atty;
-use std::{
-    borrow::Cow,
-    cmp::{min, Reverse},
-    collections::HashMap,
-    io::{self, prelude::*},
-    ops::Range,
-};
-#[cfg(feature = "tty-emitter")]
-use termcolor::{Buffer, BufferWriter, Color, ColorChoice, ColorSpec, StandardStream, WriteColor};
-use unicode_width;
 
 const ANONYMIZED_LINE_NUM: &str = "LL";
 
@@ -87,11 +89,11 @@ impl Emitter for EmitterWriter {
 
         self.emit_messages_default(
             db.level,
-            &db.styled_message(),
+            db.styled_message(),
             &db.code,
             &primary_span,
             &children,
-            &suggestions,
+            suggestions,
         );
     }
 
@@ -150,6 +152,7 @@ struct FileWithAnnotatedLines {
 }
 
 #[cfg(feature = "tty-emitter")]
+#[cfg_attr(docsrs, doc(cfg(feature = "tty-emitter")))]
 impl EmitterWriter {
     pub fn stderr(
         color_config: ColorConfig,
@@ -292,7 +295,7 @@ impl EmitterWriter {
         }
 
         // Find overlapping multiline annotations, put them at different depths
-        multiline_annotations.sort_by_key(|&(_, ref ml)| (ml.line_start, ml.line_end));
+        multiline_annotations.sort_by_key(|(_, ml)| (ml.line_start, ml.line_end));
         for item in multiline_annotations.clone() {
             let ann = item.1;
             for item in multiline_annotations.iter_mut() {
@@ -380,7 +383,7 @@ impl EmitterWriter {
         // 4 | | }
         //   | |_^ test
         if line.annotations.len() == 1 {
-            if let Some(ref ann) = line.annotations.get(0) {
+            if let Some(ann) = line.annotations.first() {
                 if let AnnotationType::MultilineStart(depth) = ann.annotation_type {
                     if source_string
                         .chars()
@@ -692,7 +695,7 @@ impl EmitterWriter {
                 (pos + 2, annotation.start_col)
             };
             if let Some(ref label) = annotation.label {
-                buffer.puts(line_offset + pos, code_offset + col, &label, style);
+                buffer.puts(line_offset + pos, code_offset + col, label, style);
             }
         }
 
@@ -772,16 +775,13 @@ impl EmitterWriter {
     }
 
     fn get_max_line_num(&mut self, span: &MultiSpan, children: &[SubDiagnostic]) -> usize {
-        let mut max = 0;
-
         let primary = self.get_multispan_max_line_num(span);
-        max = if primary > max { primary } else { max };
-
-        for sub in children {
-            let sub_result = self.get_multispan_max_line_num(&sub.span);
-            max = if sub_result > max { primary } else { max };
-        }
-        max
+        children
+            .iter()
+            .map(|sub| self.get_multispan_max_line_num(&sub.span))
+            .max()
+            .unwrap_or(0)
+            .max(primary)
     }
 
     // This "fixes" MultiSpans that contain Spans that are pointing to locations
@@ -843,7 +843,7 @@ impl EmitterWriter {
         if spans_updated {
             children.push(SubDiagnostic {
                 level: Level::Note,
-                message: vec![(
+                message: vec![Message(
                     "this error originates in a macro outside of the current crate (in Nightly \
                      builds, run with -Z external-macro-backtrace for more info)"
                         .to_string(),
@@ -860,7 +860,7 @@ impl EmitterWriter {
     fn msg_to_buffer(
         &self,
         buffer: &mut StyledBuffer,
-        msg: &[(String, Style)],
+        msg: &[Message],
         padding: usize,
         label: &str,
         override_style: Option<Style>,
@@ -883,15 +883,13 @@ impl EmitterWriter {
         //    `max_line_num_len`
         let padding = " ".repeat(padding + label.len() + 5);
 
-        /// Return whether `style`, or the override if present and the style is
-        /// `NoStyle`.
-        fn style_or_override(style: Style, override_style: Option<Style>) -> Style {
-            if let Some(o) = override_style {
-                if style == Style::NoStyle {
-                    return o;
-                }
+        /// Returns `override` if it is present and `style` is `NoStyle` or
+        /// `style` otherwise
+        fn style_or_override(style: Style, override_: Option<Style>) -> Style {
+            match (style, override_) {
+                (Style::NoStyle, Some(override_)) => override_,
+                _ => style,
             }
-            style
         }
 
         let mut line_number = 0;
@@ -915,7 +913,7 @@ impl EmitterWriter {
         //                see how it *looks* with
         //                very *weird* formats
         //                see?
-        for &(ref text, ref style) in msg.iter() {
+        for Message(text, ref style) in msg.iter() {
             let lines = text.split('\n').collect::<Vec<_>>();
             if lines.len() > 1 {
                 for (i, line) in lines.iter().enumerate() {
@@ -931,11 +929,11 @@ impl EmitterWriter {
         }
     }
 
-    #[allow(clippy::cognitive_complexity)]
+    #[allow(clippy::cognitive_complexity, clippy::comparison_chain)]
     fn emit_message_default(
         &mut self,
         msp: &MultiSpan,
-        msg: &[(String, Style)],
+        msg: &[Message],
         code: &Option<DiagnosticId>,
         level: Level,
         max_line_num_len: usize,
@@ -972,13 +970,13 @@ impl EmitterWriter {
             // only render error codes, not lint codes
             if let Some(DiagnosticId::Error(ref code)) = *code {
                 buffer.append(0, "[", Style::Level(level));
-                buffer.append(0, &code, Style::Level(level));
+                buffer.append(0, code, Style::Level(level));
                 buffer.append(0, "]", Style::Level(level));
             }
             if !level_str.is_empty() {
                 buffer.append(0, ": ", header_style);
             }
-            for &(ref text, _) in msg.iter() {
+            for Message(text, _) in msg.iter() {
                 buffer.append(0, text, header_style);
             }
         }
@@ -989,7 +987,7 @@ impl EmitterWriter {
         let mut annotated_files = self.preprocess_annotations(msp);
 
         // Make sure our primary file comes first
-        let (primary_lo, sm) = if let (Some(sm), Some(ref primary_span)) =
+        let (primary_lo, sm) = if let (Some(sm), Some(primary_span)) =
             (self.sm.as_ref(), msp.primary_span().as_ref())
         {
             if !primary_span.is_dummy() {
@@ -1215,7 +1213,7 @@ impl EmitterWriter {
             }
             self.msg_to_buffer(
                 &mut buffer,
-                &[(suggestion.msg.to_owned(), Style::NoStyle)],
+                &[Message(suggestion.msg.to_owned(), Style::NoStyle)],
                 max_line_num_len,
                 "suggestion",
                 Some(Style::HeaderMsg),
@@ -1225,7 +1223,7 @@ impl EmitterWriter {
             let suggestions = suggestion.splice_lines(&**sm);
 
             let mut row_num = 2;
-            for &(ref complete, ref parts) in suggestions.iter().take(MAX_SUGGESTIONS) {
+            for (complete, parts) in suggestions.iter().take(MAX_SUGGESTIONS) {
                 // Only show underline if the suggestion spans a single line and doesn't cover
                 // the entirety of the code output. If you have multiple
                 // replacements in the same line of code, show the underline.
@@ -1335,7 +1333,7 @@ impl EmitterWriter {
     fn emit_messages_default(
         &mut self,
         level: Level,
-        message: &[(String, Style)],
+        message: &[Message],
         code: &Option<DiagnosticId>,
         span: &MultiSpan,
         children: &[SubDiagnostic],
@@ -1368,8 +1366,8 @@ impl EmitterWriter {
                     for child in children {
                         let span = child.render_span.as_ref().unwrap_or(&child.span);
                         if let Err(e) = self.emit_message_default(
-                            &span,
-                            &child.styled_message(),
+                            span,
+                            child.styled_message(),
                             &None,
                             child.level,
                             max_line_num_len,
@@ -1448,11 +1446,8 @@ fn num_overlap(
     b_end: usize,
     inclusive: bool,
 ) -> bool {
-    let extra = if inclusive { 1 } else { 0 };
-    fn contains(r: Range<usize>, value: usize) -> bool {
-        r.start < value && value <= r.end
-    }
-    contains(b_start..b_end + extra, a_start) || contains(a_start..a_end + extra, b_start)
+    let extra = usize::from(inclusive);
+    (b_start..b_end + extra).contains(&a_start) || (a_start..a_end + extra).contains(&b_start)
 }
 
 fn overlaps(a1: &Annotation, a2: &Annotation, padding: usize) -> bool {

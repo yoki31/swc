@@ -1,41 +1,60 @@
-use ansi_term::Color;
-use anyhow::{bail, Context, Error};
-use serde::de::DeserializeOwned;
-use sha1::{Digest, Sha1};
+#![deny(clippy::all)]
+#![deny(clippy::all)]
+#![deny(unused)]
+#![allow(clippy::result_unit_err)]
+
 use std::{
     env,
     fs::{self, create_dir_all, read_to_string, OpenOptions},
-    io::{self, Write},
+    io::Write,
     mem::take,
-    path::Path,
+    panic,
+    path::{Path, PathBuf},
     process::Command,
     rc::Rc,
-    sync::{Arc, RwLock},
 };
+
+use ansi_term::Color;
+use anyhow::Error;
+use serde::de::DeserializeOwned;
+use sha1::{Digest, Sha1};
 use swc_common::{
     chain,
     comments::SingleThreadedComments,
     errors::{Handler, HANDLER},
+    source_map::SourceMapGenConfig,
     sync::Lrc,
     util::take::Take,
-    FileName, SourceMap, DUMMY_SP,
+    FileName, Mark, SourceMap, DUMMY_SP,
 };
 use swc_ecma_ast::{Pat, *};
 use swc_ecma_codegen::Emitter;
 use swc_ecma_parser::{lexer::Lexer, Parser, StringInput, Syntax};
+use swc_ecma_testing::{exec_node_js, JsExecOptions};
 use swc_ecma_transforms_base::{
     fixer,
     helpers::{inject_helpers, HELPERS},
     hygiene,
+    pass::noop,
 };
-use swc_ecma_utils::{quote_ident, quote_str, DropSpan, ExprFactory};
+use swc_ecma_utils::{quote_ident, quote_str, ExprFactory};
 use swc_ecma_visit::{as_folder, noop_visit_mut_type, Fold, FoldWith, VisitMut, VisitMutWith};
 use tempfile::tempdir_in;
-use testing::{assert_eq, find_executable, NormalizedOutput};
+use testing::{
+    assert_eq, find_executable, NormalizedOutput, CARGO_TARGET_DIR, CARGO_WORKSPACE_ROOT,
+};
+
+pub mod babel_like;
 
 pub struct Tester<'a> {
     pub cm: Lrc<SourceMap>,
     pub handler: &'a Handler,
+    /// This will be changed to [SingleThreadedComments] once `cargo-mono`
+    /// supports correct bumping logic, or we need to make a breaking change in
+    /// a upstream crate of this crate.
+    ///
+    /// Although type is `Rc<SingleThreadedComments>`, it's fine to clone
+    /// `SingleThreadedComments` without `Rc`.
     pub comments: Rc<SingleThreadedComments>,
 }
 
@@ -99,17 +118,17 @@ impl<'a> Tester<'a> {
         op: F,
     ) -> Result<T, ()>
     where
-        F: FnOnce(&mut Parser<Lexer<StringInput>>) -> Result<T, swc_ecma_parser::error::Error>,
+        F: FnOnce(&mut Parser<Lexer>) -> Result<T, swc_ecma_parser::error::Error>,
     {
         let fm = self
             .cm
             .new_source_file(FileName::Real(file_name.into()), src.into());
 
         let mut p = Parser::new(syntax, StringInput::from(&*fm), Some(&self.comments));
-        let res = op(&mut p).map_err(|e| e.into_diagnostic(&self.handler).emit());
+        let res = op(&mut p).map_err(|e| e.into_diagnostic(self.handler).emit());
 
         for e in p.take_errors() {
-            e.into_diagnostic(&self.handler).emit()
+            e.into_diagnostic(self.handler).emit()
         }
 
         res
@@ -146,30 +165,32 @@ impl<'a> Tester<'a> {
             .new_source_file(FileName::Real(name.into()), src.into());
 
         let module = {
-            let mut p = Parser::new(syntax, StringInput::from(&*fm), Some(&self.comments));
+            let mut p = Parser::new_from(Lexer::new(
+                syntax,
+                EsVersion::latest(),
+                StringInput::from(&*fm),
+                Some(&self.comments),
+            ));
             let res = p
                 .parse_module()
-                .map_err(|e| e.into_diagnostic(&self.handler).emit());
+                .map_err(|e| e.into_diagnostic(self.handler).emit());
 
             for e in p.take_errors() {
-                e.into_diagnostic(&self.handler).emit()
+                e.into_diagnostic(self.handler).emit()
             }
 
             res?
         };
 
-        let module = module
+        let module = Program::Module(module)
             .fold_with(&mut tr)
-            .fold_with(&mut as_folder(DropSpan {
-                preserve_ctxt: true,
-            }))
             .fold_with(&mut as_folder(Normalizer));
 
-        Ok(module)
+        Ok(module.expect_module())
     }
 
     pub fn print(&mut self, module: &Module, comments: &Rc<SingleThreadedComments>) -> String {
-        let mut wr = Buf(Arc::new(RwLock::new(vec![])));
+        let mut buf = vec![];
         {
             let mut emitter = Emitter {
                 cfg: Default::default(),
@@ -177,18 +198,17 @@ impl<'a> Tester<'a> {
                 wr: Box::new(swc_ecma_codegen::text_writer::JsWriter::new(
                     self.cm.clone(),
                     "\n",
-                    &mut wr,
+                    &mut buf,
                     None,
                 )),
                 comments: Some(comments),
             };
 
             // println!("Emitting: {:?}", module);
-            emitter.emit_module(&module).unwrap();
+            emitter.emit_module(module).unwrap();
         }
 
-        let r = wr.0.read().unwrap();
-        let s = String::from_utf8_lossy(&*r);
+        let s = String::from_utf8_lossy(&buf);
         s.to_string()
     }
 }
@@ -199,43 +219,40 @@ impl VisitMut for RegeneratorHandler {
     noop_visit_mut_type!();
 
     fn visit_mut_module_item(&mut self, item: &mut ModuleItem) {
-        match item {
-            ModuleItem::ModuleDecl(ModuleDecl::Import(import)) => {
-                if &*import.src.value != "regenerator-runtime" {
-                    return;
-                }
-
-                let s = import.specifiers.iter().find_map(|v| match v {
-                    ImportSpecifier::Default(rt) => Some(rt.local.clone()),
-                    _ => None,
-                });
-
-                let s = match s {
-                    Some(v) => v,
-                    _ => return,
-                };
-
-                let init = Box::new(Expr::Call(CallExpr {
-                    span: DUMMY_SP,
-                    callee: quote_ident!("require").as_callee(),
-                    args: vec![quote_str!("regenerator-runtime").as_arg()],
-                    type_args: Default::default(),
-                }));
-
-                let decl = VarDeclarator {
-                    span: DUMMY_SP,
-                    name: Pat::Ident(s.into()),
-                    init: Some(init),
-                    definite: Default::default(),
-                };
-                *item = ModuleItem::Stmt(Stmt::Decl(Decl::Var(VarDecl {
-                    span: import.span,
-                    kind: VarDeclKind::Var,
-                    declare: false,
-                    decls: vec![decl],
-                })))
+        if let ModuleItem::ModuleDecl(ModuleDecl::Import(import)) = item {
+            if &*import.src.value != "regenerator-runtime" {
+                return;
             }
-            _ => {}
+
+            let s = import.specifiers.iter().find_map(|v| match v {
+                ImportSpecifier::Default(rt) => Some(rt.local.clone()),
+                _ => None,
+            });
+
+            let s = match s {
+                Some(v) => v,
+                _ => return,
+            };
+
+            let init = Box::new(Expr::Call(CallExpr {
+                span: DUMMY_SP,
+                callee: quote_ident!("require").as_callee(),
+                args: vec![quote_str!("regenerator-runtime").as_arg()],
+                type_args: Default::default(),
+            }));
+
+            let decl = VarDeclarator {
+                span: DUMMY_SP,
+                name: s.into(),
+                init: Some(init),
+                definite: Default::default(),
+            };
+            *item = ModuleItem::Stmt(Stmt::Decl(Decl::Var(Box::new(VarDecl {
+                span: import.span,
+                kind: VarDeclKind::Var,
+                declare: false,
+                decls: vec![decl],
+            }))))
         }
     }
 }
@@ -288,6 +305,9 @@ pub fn test_transform<F, P>(
         }
 
         let actual = actual
+            .fold_with(&mut as_folder(::swc_ecma_utils::DropSpan {
+                preserve_ctxt: true,
+            }))
             .fold_with(&mut hygiene::hygiene())
             .fold_with(&mut fixer::fixer(Some(&tester.comments)));
 
@@ -315,8 +335,9 @@ pub fn test_transform<F, P>(
             return Ok(());
         }
 
-        println!(">>>>> Orig <<<<<\n{}", input);
-        println!(">>>>> Code <<<<<\n{}", actual_src);
+        println!(">>>>> {} <<<<<\n{}", Color::Green.paint("Orig"), input);
+        println!(">>>>> {} <<<<<\n{}", Color::Green.paint("Code"), actual_src);
+
         if actual_src != expected_src {
             panic!(
                 r#"assertion failed: `(left == right)`
@@ -329,28 +350,71 @@ pub fn test_transform<F, P>(
     });
 }
 
+/// NOT A PUBLIC API. DO NOT USE.
+#[doc(hidden)]
+#[track_caller]
+pub fn test_inlined_transform<F, P>(
+    test_name: &str,
+    syntax: Syntax,
+    tr: F,
+    input: &str,
+    _always_ok_if_code_eq: bool,
+) where
+    F: FnOnce(&mut Tester) -> P,
+    P: Fold,
+{
+    let loc = panic::Location::caller();
+
+    let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
+
+    let test_file_path = CARGO_WORKSPACE_ROOT.join(loc.file());
+
+    let snapshot_dir = manifest_dir.join("tests").join("__swc_snapshots__").join(
+        test_file_path
+            .strip_prefix(&manifest_dir)
+            .expect("test_inlined_transform does not support paths outside of the crate root"),
+    );
+
+    test_fixture_inner(
+        syntax,
+        Box::new(move |tester| Box::new(tr(tester))),
+        input,
+        &snapshot_dir.join(format!("{test_name}.js")),
+        Default::default(),
+    )
+}
+
+/// NOT A PUBLIC API. DO NOT USE.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! test_location {
+    () => {{
+        $crate::TestLocation {}
+    }};
+}
+
 /// Test transformation.
 #[macro_export]
 macro_rules! test {
-    (ignore, $syntax:expr, $tr:expr, $test_name:ident, $input:expr, $expected:expr) => {
+    (ignore, $syntax:expr, $tr:expr, $test_name:ident, $input:expr) => {
         #[test]
         #[ignore]
         fn $test_name() {
-            $crate::test_transform($syntax, $tr, $input, $expected, false)
+            $crate::test_inlined_transform(stringify!($test_name), $syntax, $tr, $input, false)
         }
     };
 
-    ($syntax:expr, $tr:expr, $test_name:ident, $input:expr, $expected:expr) => {
+    ($syntax:expr, $tr:expr, $test_name:ident, $input:expr) => {
         #[test]
         fn $test_name() {
-            $crate::test_transform($syntax, $tr, $input, $expected, false)
+            $crate::test_inlined_transform(stringify!($test_name), $syntax, $tr, $input, false)
         }
     };
 
-    ($syntax:expr, $tr:expr, $test_name:ident, $input:expr, $expected:expr, ok_if_code_eq) => {
+    ($syntax:expr, $tr:expr, $test_name:ident, $input:expr, ok_if_code_eq) => {
         #[test]
         fn $test_name() {
-            $crate::test_transform($syntax, $tr, $input, $expected, true)
+            $crate::test_inlined_transform(stringify!($test_name), $syntax, $tr, $input, true)
         }
     };
 }
@@ -383,20 +447,20 @@ where
             .fold_with(&mut fixer::fixer(Some(&tester.comments)));
 
         let src_without_helpers = tester.print(&module, &tester.comments.clone());
-        module = module.fold_with(&mut inject_helpers());
+        module = module.fold_with(&mut inject_helpers(Mark::fresh(Mark::root())));
 
-        let transfromed_src = tester.print(&module, &tester.comments.clone());
+        let transformed_src = tester.print(&module, &tester.comments.clone());
 
         println!(
             "\t>>>>> Orig <<<<<\n{}\n\t>>>>> Code <<<<<\n{}",
             input, src_without_helpers
         );
 
-        let expected = stdout_of(&input).unwrap();
+        let expected = stdout_of(input).unwrap();
 
         println!("\t>>>>> Expected stdout <<<<<\n{}", expected);
 
-        let actual = stdout_of(&transfromed_src).unwrap();
+        let actual = stdout_of(&transformed_src).unwrap();
 
         assert_eq!(expected, actual);
 
@@ -405,7 +469,7 @@ where
 }
 
 /// Execute `jest` after transpiling `input` using `tr`.
-pub fn exec_tr<F, P>(test_name: &str, syntax: Syntax, tr: F, input: &str)
+pub fn exec_tr<F, P>(_test_name: &str, syntax: Syntax, tr: F, input: &str)
 where
     F: FnOnce(&mut Tester<'_>) -> P,
     P: Fold,
@@ -440,16 +504,19 @@ where
             .fold_with(&mut fixer::fixer(Some(&tester.comments)));
 
         let src_without_helpers = tester.print(&module, &tester.comments.clone());
-        module = module.fold_with(&mut inject_helpers());
+        module = module.fold_with(&mut inject_helpers(Mark::fresh(Mark::root())));
 
         let src = tester.print(&module, &tester.comments.clone());
 
         println!(
-            "\t>>>>> Orig <<<<<\n{}\n\t>>>>> Code <<<<<\n{}",
-            input, src_without_helpers
+            "\t>>>>> {} <<<<<\n{}\n\t>>>>> {} <<<<<\n{}",
+            Color::Green.paint("Orig"),
+            input,
+            Color::Green.paint("Code"),
+            src_without_helpers
         );
 
-        exec_with_jest(test_name, &src)
+        exec_with_node_test_runner(&src).map(|_| {})
     })
 }
 
@@ -461,11 +528,8 @@ fn calc_hash(s: &str) -> String {
     hex::encode(sum)
 }
 
-fn exec_with_jest(test_name: &str, src: &str) -> Result<(), ()> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("target")
-        .join("testing")
-        .join(test_name);
+fn exec_with_node_test_runner(src: &str) -> Result<(), ()> {
+    let root = CARGO_TARGET_DIR.join("swc-es-exec-testing");
 
     create_dir_all(&root).expect("failed to create parent directory for temp directory");
 
@@ -484,7 +548,7 @@ fn exec_with_jest(test_name: &str, src: &str) -> Result<(), ()> {
     let tmp_dir = tempdir_in(&root).expect("failed to create a temp directory");
     create_dir_all(&tmp_dir).unwrap();
 
-    let path = tmp_dir.path().join(format!("{}.test.js", test_name));
+    let path = tmp_dir.path().join(format!("{}.test.js", hash));
 
     let mut tmp = OpenOptions::new()
         .create(true)
@@ -494,50 +558,46 @@ fn exec_with_jest(test_name: &str, src: &str) -> Result<(), ()> {
     write!(tmp, "{}", src).expect("failed to write to temp file");
     tmp.flush().unwrap();
 
-    let jest_path = find_executable("jest").expect("failed to find `jest` from path");
+    let test_runner_path = find_executable("mocha").expect("failed to find `mocha` from path");
 
     let mut base_cmd = if cfg!(target_os = "windows") {
         let mut c = Command::new("cmd");
-        c.arg("/C").arg(&jest_path);
+        c.arg("/C").arg(&test_runner_path);
         c
     } else {
-        Command::new(&jest_path)
+        Command::new(&test_runner_path)
     };
 
-    // I hate windows.
-    if cfg!(target_os = "windows") && env::var("CI").is_ok() {
-        base_cmd.arg("--passWithNoTests");
-    }
-
-    let status = base_cmd
-        .args(&["--testMatch", &format!("{}", path.display())])
+    let output = base_cmd
+        .arg(&format!("{}", path.display()))
+        .arg("--color")
         .current_dir(root)
-        .status()
-        .expect("failed to run jest");
-    if status.success() {
+        .output()
+        .expect("failed to run mocha");
+
+    println!(">>>>> {} <<<<<", Color::Red.paint("Stdout"));
+    println!("{}", String::from_utf8_lossy(&output.stdout));
+    println!(">>>>> {} <<<<<", Color::Red.paint("Stderr"));
+    println!("{}", String::from_utf8_lossy(&output.stderr));
+
+    if output.status.success() {
         fs::write(&success_cache, "").unwrap();
         return Ok(());
     }
+    let dir_name = path.display().to_string();
     ::std::mem::forget(tmp_dir);
-    panic!("Execution failed")
+    panic!("Execution failed: {dir_name}")
 }
 
 fn stdout_of(code: &str) -> Result<String, Error> {
-    let actual_output = Command::new("node")
-        .arg("-e")
-        .arg(&code)
-        .output()
-        .context("failed to execute output of minifier")?;
-
-    if !actual_output.status.success() {
-        bail!(
-            "failed to execute:\n{}\n{}",
-            String::from_utf8_lossy(&actual_output.stdout),
-            String::from_utf8_lossy(&actual_output.stderr)
-        )
-    }
-
-    Ok(String::from_utf8_lossy(&actual_output.stdout).to_string())
+    exec_node_js(
+        code,
+        JsExecOptions {
+            cache: true,
+            module: false,
+            ..Default::default()
+        },
+    )
 }
 
 /// Test transformation.
@@ -575,36 +635,41 @@ macro_rules! compare_stdout {
     };
 }
 
-#[derive(Debug, Clone)]
-struct Buf(Arc<RwLock<Vec<u8>>>);
-impl Write for Buf {
-    fn write(&mut self, data: &[u8]) -> io::Result<usize> {
-        self.0.write().unwrap().write(data)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        self.0.write().unwrap().flush()
-    }
-}
-
 struct Normalizer;
 impl VisitMut for Normalizer {
     fn visit_mut_pat_or_expr(&mut self, node: &mut PatOrExpr) {
         node.visit_mut_children_with(self);
 
-        match node {
-            PatOrExpr::Pat(pat) => match &mut **pat {
-                Pat::Expr(e) => {
-                    *node = PatOrExpr::Expr(e.take());
-                }
-                _ => {}
-            },
-            _ => {}
+        if let PatOrExpr::Pat(pat) = node {
+            if let Pat::Expr(e) = &mut **pat {
+                *node = PatOrExpr::Expr(e.take());
+            }
+        }
+    }
+}
+
+/// Converts `foo#1` to `foo__1` so it can be verified by the test.
+pub struct HygieneTester;
+impl Fold for HygieneTester {
+    fn fold_ident(&mut self, ident: Ident) -> Ident {
+        Ident {
+            sym: format!("{}__{}", ident.sym, ident.span.ctxt.as_u32()).into(),
+            ..ident
         }
     }
 
-    fn visit_mut_str(&mut self, s: &mut Str) {
-        s.kind = Default::default();
+    fn fold_member_prop(&mut self, p: MemberProp) -> MemberProp {
+        match p {
+            MemberProp::Computed(..) => p.fold_children_with(self),
+            _ => p,
+        }
+    }
+
+    fn fold_prop_name(&mut self, p: PropName) -> PropName {
+        match p {
+            PropName::Computed(..) => p.fold_children_with(self),
+            _ => p,
+        }
     }
 }
 
@@ -618,62 +683,92 @@ impl Fold for HygieneVisualizer {
     }
 }
 
+/// Just like babel, walk up the directory tree and find a file named
+/// `options.json`.
 pub fn parse_options<T>(dir: &Path) -> T
 where
     T: DeserializeOwned,
 {
-    let mut s = String::from("{}");
+    type Map = serde_json::Map<String, serde_json::Value>;
 
-    fn check(dir: &Path) -> Option<String> {
+    let mut value = Map::default();
+
+    fn check(dir: &Path) -> Option<Map> {
         let file = dir.join("options.json");
-        match read_to_string(&file) {
-            Ok(v) => {
-                eprintln!("Using options.json at {}", file.display());
-                eprintln!("----- {} -----\n{}", Color::Green.paint("Options"), v);
+        if let Ok(v) = read_to_string(&file) {
+            eprintln!("Using options.json at {}", file.display());
+            eprintln!("----- {} -----\n{}", Color::Green.paint("Options"), v);
 
-                return Some(v);
-            }
-            Err(_) => {}
+            return Some(serde_json::from_str(&v).unwrap_or_else(|err| {
+                panic!("failed to deserialize options.json: {}\n{}", err, v)
+            }));
         }
 
-        dir.parent().and_then(check)
+        None
     }
 
-    if let Some(content) = check(dir) {
-        s = content;
+    let mut c = Some(dir);
+
+    while let Some(dir) = c {
+        if let Some(new) = check(dir) {
+            for (k, v) in new {
+                if !value.contains_key(&k) {
+                    value.insert(k, v);
+                }
+            }
+        }
+
+        c = dir.parent();
     }
 
-    serde_json::from_str(&s)
-        .unwrap_or_else(|err| panic!("failed to deserialize options.json: {}\n{}", err, s))
+    serde_json::from_value(serde_json::Value::Object(value.clone()))
+        .unwrap_or_else(|err| panic!("failed to deserialize options.json: {}\n{:?}", err, value))
 }
 
-pub fn test_fixture<P>(syntax: Syntax, tr: &dyn Fn(&mut Tester) -> P, input: &Path, output: &Path)
-where
-    P: Fold,
-{
-    test_fixture_inner(syntax, tr, input, output, false)
-}
+/// Config for [test_fixture]. See [test_fixture] for documentation.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct FixtureTestConfig {
+    /// If true, source map will be printed to the `.map` file.
+    ///
+    /// Defaults to false.
+    pub sourcemap: bool,
 
-pub fn test_fixture_allowing_error<P>(
+    /// If true, diagnostics written to [HANDLER] will be printed as a fixture,
+    /// with `.stderr` extension.
+    ///
+    /// If false, test will fail if diagnostics are emitted.
+    ///
+    /// Defaults to false.
+    pub allow_error: bool,
+}
+/// You can do `UPDATE=1 cargo test` to update fixtures.
+pub fn test_fixture<P>(
     syntax: Syntax,
     tr: &dyn Fn(&mut Tester) -> P,
     input: &Path,
     output: &Path,
+    config: FixtureTestConfig,
 ) where
     P: Fold,
 {
-    test_fixture_inner(syntax, tr, input, output, true)
+    let input = fs::read_to_string(input).unwrap();
+
+    test_fixture_inner(
+        syntax,
+        Box::new(|tester| Box::new(tr(tester))),
+        &input,
+        output,
+        config,
+    );
 }
 
-fn test_fixture_inner<P>(
+fn test_fixture_inner<'a>(
     syntax: Syntax,
-    tr: &dyn Fn(&mut Tester) -> P,
-    input: &Path,
+    tr: Box<dyn 'a + FnOnce(&mut Tester) -> Box<dyn 'a + Fold>>,
+    input: &str,
     output: &Path,
-    allow_error: bool,
-) where
-    P: Fold,
-{
+    config: FixtureTestConfig,
+) {
     let _logger = testing::init();
 
     let expected = read_to_string(output);
@@ -681,14 +776,7 @@ fn test_fixture_inner<P>(
     let expected = expected.unwrap_or_default();
 
     let expected_src = Tester::run(|tester| {
-        let expected_module = tester.apply_transform(
-            as_folder(::swc_ecma_utils::DropSpan {
-                preserve_ctxt: true,
-            }),
-            "expected.js",
-            syntax,
-            &expected,
-        )?;
+        let expected_module = tester.apply_transform(noop(), "expected.js", syntax, &expected)?;
 
         let expected_src = tester.print(&expected_module, &tester.comments.clone());
 
@@ -701,16 +789,18 @@ fn test_fixture_inner<P>(
         Ok(expected_src)
     });
 
+    let mut src_map = if config.sourcemap { Some(vec![]) } else { None };
+
+    let mut sourcemap = None;
+
     let (actual_src, stderr) = Tester::run_captured(|tester| {
-        let input_str = read_to_string(input).unwrap();
-        println!("----- {} -----\n{}", Color::Green.paint("Input"), input_str);
+        println!("----- {} -----\n{}", Color::Green.paint("Input"), input);
 
         let tr = tr(tester);
 
         println!("----- {} -----", Color::Green.paint("Actual"));
 
-        let actual =
-            tester.apply_transform(tr, "input.js", syntax, &read_to_string(&input).unwrap())?;
+        let actual = tester.apply_transform(tr, "input.js", syntax, input)?;
 
         match ::std::env::var("PRINT_HYGIENE") {
             Ok(ref s) if s == "1" => {
@@ -729,39 +819,102 @@ fn test_fixture_inner<P>(
 
         let actual = actual
             .fold_with(&mut crate::hygiene::hygiene())
-            .fold_with(&mut crate::fixer::fixer(Some(&tester.comments)))
-            .fold_with(&mut as_folder(DropSpan {
-                preserve_ctxt: false,
-            }));
+            .fold_with(&mut crate::fixer::fixer(Some(&tester.comments)));
 
-        let actual_src = tester.print(&actual, &tester.comments.clone());
+        let actual_src = {
+            let module = &actual;
+            let comments: &Rc<SingleThreadedComments> = &tester.comments.clone();
+            let mut buf = vec![];
+            {
+                let mut emitter = Emitter {
+                    cfg: Default::default(),
+                    cm: tester.cm.clone(),
+                    wr: Box::new(swc_ecma_codegen::text_writer::JsWriter::new(
+                        tester.cm.clone(),
+                        "\n",
+                        &mut buf,
+                        src_map.as_mut(),
+                    )),
+                    comments: Some(comments),
+                };
+
+                // println!("Emitting: {:?}", module);
+                emitter.emit_module(module).unwrap();
+            }
+
+            if let Some(src_map) = &mut src_map {
+                sourcemap = Some(tester.cm.build_source_map_with_config(
+                    src_map,
+                    None,
+                    SourceMapConfigImpl,
+                ));
+            }
+
+            let s = String::from_utf8_lossy(&buf);
+            s.to_string()
+        };
 
         Ok(actual_src)
     });
 
-    if allow_error {
-        NormalizedOutput::from(stderr)
+    if config.allow_error {
+        stderr
             .compare_to_file(output.with_extension("stderr"))
             .unwrap();
-    } else {
-        if !stderr.is_empty() {
-            panic!("stderr: {}", stderr);
-        }
+    } else if !stderr.is_empty() {
+        panic!("stderr: {}", stderr);
     }
 
-    match actual_src {
-        Some(actual_src) => {
-            println!("{}", actual_src);
+    if let Some(actual_src) = actual_src {
+        println!("{}", actual_src);
 
-            if actual_src == expected_src {
-                // Ignore `UPDATE`
-                return;
-            }
+        if let Some(sourcemap) = &sourcemap {
+            println!("----- ----- ----- ----- -----");
+            println!("SourceMap: {}", visualizer_url(&actual_src, sourcemap));
+        }
 
-            NormalizedOutput::from(actual_src.clone())
+        if actual_src != expected_src {
+            NormalizedOutput::from(actual_src)
                 .compare_to_file(output)
                 .unwrap();
         }
-        _ => {}
+    }
+
+    if let Some(sourcemap) = sourcemap {
+        let map = {
+            let mut buf = vec![];
+            sourcemap.to_writer(&mut buf).unwrap();
+            String::from_utf8(buf).unwrap()
+        };
+        NormalizedOutput::from(map)
+            .compare_to_file(output.with_extension("map"))
+            .unwrap();
+    }
+}
+
+/// Creates a url for https://evanw.github.io/source-map-visualization/
+fn visualizer_url(code: &str, map: &sourcemap::SourceMap) -> String {
+    let map = {
+        let mut buf = vec![];
+        map.to_writer(&mut buf).unwrap();
+        String::from_utf8(buf).unwrap()
+    };
+
+    let code_len = format!("{}\0", code.len());
+    let map_len = format!("{}\0", map.len());
+    let hash = base64::encode(format!("{}{}{}{}", code_len, code, map_len, map));
+
+    format!("https://evanw.github.io/source-map-visualization/#{}", hash)
+}
+
+struct SourceMapConfigImpl;
+
+impl SourceMapGenConfig for SourceMapConfigImpl {
+    fn file_name_to_source(&self, f: &swc_common::FileName) -> String {
+        f.to_string()
+    }
+
+    fn inline_sources_content(&self, _: &swc_common::FileName) -> bool {
+        true
     }
 }

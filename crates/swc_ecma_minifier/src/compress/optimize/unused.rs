@@ -1,154 +1,121 @@
-use super::Optimizer;
-use crate::{
-    compress::optimize::util::class_has_side_effect, debug::dump, mode::Mode,
-    option::PureGetterOption,
-};
-use swc_atoms::js_word;
-use swc_common::{util::take::Take, Span, DUMMY_SP};
+use rustc_hash::FxHashSet;
+use swc_atoms::JsWord;
+use swc_common::{util::take::Take, DUMMY_SP};
 use swc_ecma_ast::*;
-use swc_ecma_utils::{contains_ident_ref, ident::IdentLike};
-use swc_ecma_visit::{noop_visit_mut_type, VisitMut, VisitMutWith};
+use swc_ecma_usage_analyzer::util::is_global_var_with_pure_property_access;
+use swc_ecma_utils::{contains_ident_ref, ExprExt};
+use swc_ecma_visit::{noop_visit_type, Visit, VisitWith};
+
+use super::Optimizer;
+#[cfg(feature = "debug")]
+use crate::debug::dump;
+use crate::{compress::optimize::util::extract_class_side_effect, option::PureGetterOption};
+
+#[derive(Debug, Default, Clone, Copy)]
+pub(crate) struct PropertyAccessOpts {
+    pub allow_getter: bool,
+
+    pub only_ident: bool,
+}
 
 /// Methods related to the option `unused`.
-impl<M> Optimizer<'_, M>
-where
-    M: Mode,
-{
-    pub(super) fn drop_unused_var_declarator(&mut self, var: &mut VarDeclarator, prepend: bool) {
+impl Optimizer<'_> {
+    #[cfg_attr(feature = "debug", tracing::instrument(skip_all))]
+    pub(super) fn drop_unused_var_declarator(
+        &mut self,
+        var: &mut VarDeclarator,
+        storage_for_side_effects: &mut Option<Box<Expr>>,
+    ) {
         if var.name.is_invalid() {
             return;
         }
 
+        #[cfg(debug_assertions)]
+        let had_init = var.init.is_some();
+
         match &mut var.init {
             Some(init) => match &**init {
                 Expr::Invalid(..) => {
-                    var.init = None;
+                    self.drop_unused_vars(&mut var.name, None);
                 }
                 // I don't know why, but terser preserves this
-                Expr::Fn(FnExpr {
-                    function: Function { is_async: true, .. },
-                    ..
-                }) => {}
+                Expr::Fn(FnExpr { function, .. })
+                    if matches!(&**function, Function { is_async: true, .. }) => {}
                 _ => {
-                    self.drop_unused_vars(var.span, &mut var.name, Some(init));
+                    self.drop_unused_vars(&mut var.name, Some(init));
 
                     if var.name.is_invalid() {
-                        tracing::debug!("unused: Removing an unused variable declarator");
-                        let side_effects = self.ignore_return_value(init);
+                        report_change!("unused: Removing an unused variable declarator");
+                        let side_effects = self.ignore_return_value(init).map(Box::new);
                         if let Some(e) = side_effects {
-                            if prepend {
-                                self.prepend_stmts.push(Stmt::Expr(ExprStmt {
-                                    span: var.span,
-                                    expr: Box::new(e),
-                                }))
-                            } else {
-                                self.append_stmts.insert(
-                                    0,
-                                    Stmt::Expr(ExprStmt {
-                                        span: var.span,
-                                        expr: Box::new(e),
-                                    }),
-                                )
-                            }
+                            *storage_for_side_effects = Some(e);
                         }
                     }
                 }
             },
             None => {
-                self.drop_unused_vars(var.span, &mut var.name, var.init.as_deref_mut());
+                self.drop_unused_vars(&mut var.name, var.init.as_deref_mut());
+            }
+        }
+
+        if var.name.is_invalid() {
+            return;
+        }
+
+        #[cfg(debug_assertions)]
+        {
+            if let Some(VarDeclKind::Const | VarDeclKind::Let) = self.ctx.var_kind {
+                if had_init && var.init.is_none() {
+                    unreachable!("const/let variable without initializer: {:#?}", var);
+                }
             }
         }
     }
 
-    pub(super) fn drop_unused_param(&mut self, pat: &mut Pat) {
-        if !self.options.unused {
+    #[cfg_attr(feature = "debug", tracing::instrument(skip_all))]
+    pub(super) fn drop_unused_param(&mut self, pat: &mut Pat, ignore_fn_length: bool) {
+        if !self.options.unused && !self.options.reduce_fns {
             return;
         }
 
-        if let Some(scope) = self
-            .data
-            .as_ref()
-            .and_then(|data| data.scopes.get(&self.ctx.scope))
-        {
+        if let Some(scope) = self.data.scopes.get(&self.ctx.scope) {
             if scope.has_eval_call || scope.has_with_stmt {
                 return;
             }
         }
 
-        // Preserve `length` of function.
-        if pat.is_ident() {
-            return;
-        }
-
-        self.take_pat_if_unused(DUMMY_SP, pat, None)
-    }
-
-    pub(super) fn drop_unused_vars(
-        &mut self,
-        var_declarator_span: Span,
-        name: &mut Pat,
-        init: Option<&mut Expr>,
-    ) {
-        let has_mark = var_declarator_span.has_mark(self.marks.non_top_level);
-
-        if !has_mark {
-            if !self.options.unused
-                || self.ctx.in_var_decl_of_for_in_or_of_loop
-                || self.ctx.is_exported
-            {
+        if !ignore_fn_length {
+            // Preserve `length` of function.
+            if pat.is_ident() {
                 return;
             }
         }
 
-        if cfg!(feature = "debug") {
-            tracing::trace!("unused: drop_unused_vars({})", dump(&*name));
+        self.take_pat_if_unused(pat, None, false)
+    }
+
+    #[cfg_attr(feature = "debug", tracing::instrument(skip_all))]
+    pub(super) fn drop_unused_vars(&mut self, name: &mut Pat, init: Option<&mut Expr>) {
+        if self.ctx.is_exported || self.ctx.in_asm {
+            return;
         }
 
-        // Top-level
-        if !has_mark {
-            match self.ctx.var_kind {
-                Some(VarDeclKind::Var) => {
-                    if !self.options.top_level() && self.options.top_retain.is_empty() {
-                        if self.ctx.in_top_level() {
-                            if cfg!(feature = "debug") {
-                                tracing::trace!(
-                                    "unused: [X] Preserving `var` `{}` because it's top-level",
-                                    dump(&*name)
-                                );
-                            }
+        trace_op!("unused: drop_unused_vars({})", dump(&*name, false));
 
-                            return;
-                        }
-                    }
-                }
-                Some(VarDeclKind::Let) | Some(VarDeclKind::Const) => {
-                    if !self.options.top_level() && self.ctx.is_top_level_for_block_level_vars() {
-                        if cfg!(feature = "debug") {
-                            tracing::trace!(
-                                "unused: [X] Preserving block scoped var `{}` because it's \
-                                 top-level",
-                                dump(&*name)
-                            );
-                        }
-                        return;
-                    }
-                }
-                None => {}
-            }
+        if !self.options.unused && !self.options.side_effects {
+            return;
         }
 
-        if let Some(scope) = self
-            .data
-            .as_ref()
-            .and_then(|data| data.scopes.get(&self.ctx.scope))
-        {
+        if self.ctx.in_var_decl_of_for_in_or_of_loop {
+            return;
+        }
+
+        if let Some(scope) = self.data.scopes.get(&self.ctx.scope) {
             if scope.has_eval_call || scope.has_with_stmt {
-                if cfg!(feature = "debug") {
-                    tracing::trace!(
-                        "unused: [X] Preserving `{}` because of usages",
-                        dump(&*name)
-                    );
-                }
+                log_abort!(
+                    "unused: Preserving `{}` because of usages",
+                    dump(&*name, false)
+                );
                 return;
             }
         }
@@ -157,12 +124,13 @@ where
             return;
         }
 
-        self.take_pat_if_unused(var_declarator_span, name, init);
+        self.take_pat_if_unused(name, init, true);
     }
 
+    #[cfg_attr(feature = "debug", tracing::instrument(skip_all))]
     pub(super) fn drop_unused_params(&mut self, params: &mut Vec<Param>) {
         for param in params.iter_mut().rev() {
-            self.take_pat_if_unused(DUMMY_SP, &mut param.pat, None);
+            self.take_pat_if_unused(&mut param.pat, None, false);
 
             if !param.pat.is_invalid() {
                 return;
@@ -170,54 +138,165 @@ where
         }
     }
 
+    #[cfg_attr(feature = "debug", tracing::instrument(skip_all))]
+    fn take_ident_of_pat_if_unused(&mut self, i: &mut Ident, init: Option<&mut Expr>) {
+        trace_op!("unused: Checking identifier `{}`", i);
+
+        if !self.may_remove_ident(i) {
+            log_abort!("unused: Preserving var `{:#?}` because it's top-level", i);
+            return;
+        }
+
+        if let Some(v) = self.data.vars.get(&i.to_id()).cloned() {
+            if v.ref_count == 0
+                && v.usage_count == 0
+                && !v.reassigned
+                && v.property_mutation_count == 0
+                && !v.declared_as_catch_param
+            {
+                self.changed = true;
+                report_change!(
+                    "unused: Dropping a variable '{}{:?}' because it is not used",
+                    i.sym,
+                    i.span.ctxt
+                );
+                // This will remove variable.
+                i.take();
+                return;
+            }
+
+            if v.ref_count == 0 && v.usage_count == 0 {
+                if let Some(e) = init {
+                    if let Some(VarDeclKind::Const | VarDeclKind::Let) = self.ctx.var_kind {
+                        if let Expr::Lit(Lit::Null(..)) = e {
+                            return;
+                        }
+                    }
+
+                    let ret = self.ignore_return_value(e);
+                    if let Some(ret) = ret {
+                        *e = ret;
+                    } else {
+                        if let Some(VarDeclKind::Const | VarDeclKind::Let) = self.ctx.var_kind {
+                            *e = Null { span: DUMMY_SP }.into();
+                        } else {
+                            *e = Expr::Invalid(Invalid { span: DUMMY_SP });
+                        }
+                    }
+                }
+            }
+
+            log_abort!(
+                "unused: Cannot drop ({}) because it's used",
+                dump(&*i, false)
+            );
+        }
+    }
+
+    pub(crate) fn should_preserve_property_access(
+        &self,
+        e: &Expr,
+        opts: PropertyAccessOpts,
+    ) -> bool {
+        if opts.only_ident && !e.is_ident() {
+            return true;
+        }
+
+        match e {
+            Expr::Ident(e) => {
+                if e.span.ctxt.outer() == self.marks.unresolved_mark {
+                    if is_global_var_with_pure_property_access(&e.sym) {
+                        return false;
+                    }
+                }
+
+                if let Some(usage) = self.data.vars.get(&e.to_id()) {
+                    if !usage.declared {
+                        return true;
+                    }
+
+                    if !usage.mutated() && usage.no_side_effect_for_member_access {
+                        return false;
+                    }
+                }
+            }
+
+            Expr::Object(o) => {
+                // We should check properties
+                return o.props.iter().any(|p| match p {
+                    PropOrSpread::Spread(p) => self.should_preserve_property_access(&p.expr, opts),
+                    PropOrSpread::Prop(p) => match &**p {
+                        Prop::Assign(_) => true,
+                        Prop::Getter(_) => !opts.allow_getter,
+                        Prop::Shorthand(_) => false,
+                        Prop::KeyValue(..) => false,
+
+                        Prop::Setter(_) => false,
+                        Prop::Method(_) => false,
+                    },
+                });
+            }
+
+            Expr::Paren(p) => return self.should_preserve_property_access(&p.expr, opts),
+
+            Expr::Fn(..) | Expr::Arrow(..) | Expr::Array(..) | Expr::Class(..) => {
+                return false;
+            }
+
+            Expr::Seq(e) => {
+                if let Some(last) = e.exprs.last() {
+                    return self.should_preserve_property_access(last, opts);
+                }
+                return true;
+            }
+
+            _ => {}
+        }
+
+        true
+    }
+
     /// `parent_span` should be [Span] of [VarDeclarator] or [AssignExpr]
+    #[allow(clippy::only_used_in_recursion)]
+    #[cfg_attr(feature = "debug", tracing::instrument(skip_all))]
     pub(super) fn take_pat_if_unused(
         &mut self,
-        parent_span: Span,
         name: &mut Pat,
         mut init: Option<&mut Expr>,
+        is_var_decl: bool,
     ) {
-        let had_value = init.is_some();
-        let can_drop_children = had_value;
+        if self.ctx.is_exported {
+            return;
+        }
+
+        trace_op!("unused: take_pat_if_unused({})", dump(&*name, false));
 
         if !name.is_ident() {
             // TODO: Use smart logic
             if self.options.pure_getters != PureGetterOption::Bool(true) {
                 return;
             }
+
+            if let Some(init) = init.as_mut() {
+                if self.should_preserve_property_access(
+                    init,
+                    PropertyAccessOpts {
+                        allow_getter: false,
+                        only_ident: false,
+                    },
+                ) {
+                    return;
+                }
+            }
         }
 
         match name {
             Pat::Ident(i) => {
-                if !parent_span.has_mark(self.marks.non_top_level)
-                    && self.options.top_retain.contains(&i.id.sym)
-                {
-                    if cfg!(feature = "debug") {
-                        tracing::trace!("unused: [X] Top-retain")
-                    }
-                    return;
-                }
+                self.take_ident_of_pat_if_unused(&mut i.id, init);
 
-                if self
-                    .data
-                    .as_ref()
-                    .and_then(|data| data.vars.get(&i.to_id()))
-                    .map(|v| v.ref_count == 0)
-                    .unwrap_or(false)
-                {
-                    self.changed = true;
-                    tracing::debug!(
-                        "unused: Dropping a variable '{}{:?}' because it is not used",
-                        i.id.sym,
-                        i.id.span.ctxt
-                    );
-                    // This will remove variable.
+                // Removed
+                if i.id.is_dummy() {
                     name.take();
-                    return;
-                } else {
-                    if cfg!(feature = "debug") {
-                        tracing::trace!("unused: Cannot drop ({}) becaue it's used", dump(&*i));
-                    }
                 }
             }
 
@@ -233,24 +312,23 @@ where
                                 .as_mut()
                                 .and_then(|expr| self.access_numeric_property(expr, idx));
 
-                            self.take_pat_if_unused(parent_span, p, elem);
+                            self.take_pat_if_unused(p, elem, is_var_decl);
                         }
                         None => {}
                     }
                 }
 
-                arr.elems.retain(|elem| match elem {
-                    Some(Pat::Invalid(..)) => false,
-                    _ => true,
-                })
+                arr.elems
+                    .retain(|elem| !matches!(elem, Some(Pat::Invalid(..))))
             }
 
             Pat::Object(obj) => {
                 // If a rest pattern exists, we can't remove anything at current level.
-                if obj.props.iter().any(|p| match p {
-                    ObjectPatProp::Rest(_) => true,
-                    _ => false,
-                }) {
+                if obj
+                    .props
+                    .iter()
+                    .any(|p| matches!(p, ObjectPatProp::Rest(_)))
+                {
                     return;
                 }
 
@@ -261,18 +339,14 @@ where
                                 continue;
                             }
 
-                            let prop = init.as_mut().and_then(|value| {
-                                self.access_property_with_prop_name(value, &p.key)
-                            });
-
-                            if can_drop_children && prop.is_none() {
-                                continue;
-                            }
-
-                            self.take_pat_if_unused(parent_span, &mut p.value, prop);
+                            self.take_pat_if_unused(&mut p.value, None, is_var_decl);
                         }
-                        ObjectPatProp::Assign(_) => {}
-                        ObjectPatProp::Rest(_) => {}
+                        ObjectPatProp::Assign(AssignPatProp {
+                            key, value: None, ..
+                        }) => {
+                            self.take_ident_of_pat_if_unused(key, None);
+                        }
+                        _ => {}
                     }
                 }
 
@@ -283,12 +357,20 @@ where
                                 return false;
                             }
                         }
-                        ObjectPatProp::Assign(_) => {}
+                        ObjectPatProp::Assign(p) => {
+                            if p.key.is_dummy() {
+                                return false;
+                            }
+                        }
                         ObjectPatProp::Rest(_) => {}
                     }
 
                     true
-                })
+                });
+
+                if obj.props.is_empty() {
+                    name.take();
+                }
             }
 
             Pat::Rest(_) => {}
@@ -300,6 +382,7 @@ where
     }
 
     /// Creates an empty [VarDecl] if `decl` should be removed.
+    #[cfg_attr(feature = "debug", tracing::instrument(skip_all))]
     pub(super) fn drop_unused_decl(&mut self, decl: &mut Decl) {
         if self.ctx.is_exported {
             return;
@@ -313,73 +396,146 @@ where
             return;
         }
 
-        if let Some(scope) = self
-            .data
-            .as_ref()
-            .and_then(|data| data.scopes.get(&self.ctx.scope))
-        {
+        if let Some(scope) = self.data.scopes.get(&self.ctx.scope) {
             if scope.has_eval_call || scope.has_with_stmt {
                 return;
             }
         }
 
         match decl {
-            Decl::Class(c) => {
-                if class_has_side_effect(&c.class) {
+            Decl::Class(ClassDecl { ident, class, .. }) => {
+                if ident.sym == "arguments" {
                     return;
                 }
-            }
-            _ => {}
-        }
 
-        match decl {
-            Decl::Class(ClassDecl { ident, .. }) | Decl::Fn(FnDecl { ident, .. }) => {
-                // We should skip if the name of decl is arguments.
-                if ident.sym == js_word!("arguments") {
+                // Fix https://github.com/swc-project/swc/issues/5588
+                let may_have_side_effect = class.body.iter().any(|m| match m {
+                    ClassMember::ClassProp(ClassProp {
+                        is_static: true,
+                        value: Some(_),
+                        ..
+                    })
+                    | ClassMember::PrivateProp(PrivateProp {
+                        is_static: true,
+                        value: Some(_),
+                        ..
+                    }) => true,
+                    ClassMember::StaticBlock(StaticBlock {
+                        body: BlockStmt { stmts, .. },
+                        ..
+                    }) if !stmts.is_empty() => true,
+                    _ => false,
+                });
+                if may_have_side_effect {
                     return;
                 }
 
                 // If it is not used, drop it.
                 if self
                     .data
-                    .as_ref()
-                    .and_then(|data| data.vars.get(&ident.to_id()))
-                    .map(|v| v.ref_count == 0)
+                    .vars
+                    .get(&ident.to_id())
+                    .map(|v| v.usage_count == 0 && v.property_mutation_count == 0)
                     .unwrap_or(false)
                 {
                     self.changed = true;
-                    tracing::debug!(
+                    report_change!(
+                        "unused: Dropping a decl '{}{:?}' because it is not used",
+                        ident.sym,
+                        ident.span.ctxt
+                    );
+                    // This will remove the declaration.
+                    let class = decl.take().class().unwrap();
+                    let mut side_effects = extract_class_side_effect(&self.expr_ctx, *class.class);
+
+                    if !side_effects.is_empty() {
+                        self.prepend_stmts.push(Stmt::Expr(ExprStmt {
+                            span: DUMMY_SP,
+                            expr: if side_effects.len() > 1 {
+                                Expr::Seq(SeqExpr {
+                                    span: DUMMY_SP,
+                                    exprs: side_effects,
+                                })
+                                .into()
+                            } else {
+                                side_effects.remove(0)
+                            },
+                        }))
+                    }
+                }
+            }
+            Decl::Fn(FnDecl { ident, .. }) => {
+                // We should skip if the name of decl is arguments.
+                if ident.sym == "arguments" {
+                    return;
+                }
+
+                // If it is not used, drop it.
+                if self
+                    .data
+                    .vars
+                    .get(&ident.to_id())
+                    .map(|v| v.usage_count == 0 && v.property_mutation_count == 0)
+                    .unwrap_or(false)
+                {
+                    self.changed = true;
+                    report_change!(
                         "unused: Dropping a decl '{}{:?}' because it is not used",
                         ident.sym,
                         ident.span.ctxt
                     );
                     // This will remove the declaration.
                     decl.take();
-                    return;
                 }
             }
 
             Decl::Var(_) => {
                 // Variable declarations are handled by other functions.
-                return;
+            }
+
+            Decl::Using(..) => {
+                // TODO: Optimize
             }
 
             Decl::TsInterface(_) | Decl::TsTypeAlias(_) | Decl::TsEnum(_) | Decl::TsModule(_) => {
                 // Nothing to do. We might change this to unreachable!()
-                return;
             }
         }
     }
 
-    pub(super) fn drop_unused_assignments(&mut self, e: &mut Expr) {
-        let assign = match e {
-            Expr::Assign(e) => e,
+    /// This should be only called from ignore_return_value
+    #[cfg_attr(feature = "debug", tracing::instrument(skip_all))]
+    pub(super) fn drop_unused_update(&mut self, e: &mut Expr) {
+        if !self.options.unused {
+            return;
+        }
+
+        let update = match e {
+            Expr::Update(u) => u,
             _ => return,
         };
 
-        let has_mark = assign.span.has_mark(self.marks.non_top_level);
+        if let Expr::Ident(arg) = &*update.arg {
+            if let Some(var) = self.data.vars.get(&arg.to_id()) {
+                // Update is counted as usage
+                if var.declared && var.is_fn_local && var.usage_count == 1 {
+                    self.changed = true;
+                    report_change!(
+                        "unused: Dropping an update '{}{:?}' because it is not used",
+                        arg.sym,
+                        arg.span.ctxt
+                    );
+                    // This will remove the update.
+                    e.take();
+                }
+            }
+        }
+    }
 
-        if !has_mark && !self.options.unused {
+    /// This should be only called from ignore_return_value
+    #[cfg_attr(feature = "debug", tracing::instrument(skip_all))]
+    pub(super) fn drop_unused_op_assign(&mut self, e: &mut Expr) {
+        if !self.options.unused {
             return;
         }
 
@@ -387,82 +543,126 @@ where
             return;
         }
 
-        if self
-            .data
-            .as_ref()
-            .map(|v| v.top.has_eval_call || v.top.has_with_stmt)
-            .unwrap_or(false)
-        {
+        if self.data.top.has_eval_call || self.data.top.has_with_stmt {
             return;
         }
 
-        if cfg!(feature = "debug") {
-            tracing::trace!(
-                "unused: drop_unused_assignments: Target: `{}`",
-                dump(&assign.left)
-            )
-        }
+        let assign = match e {
+            Expr::Assign(AssignExpr { op: op!("="), .. }) => return,
+            // RHS may not be evaluated
+            Expr::Assign(AssignExpr { op, .. }) if op.may_short_circuit() => return,
+            Expr::Assign(e) => e,
+            _ => return,
+        };
+        assign.left.map_with_mut(|left| left.normalize_ident());
 
-        if !has_mark
-            && (!self.options.top_level() && self.options.top_retain.is_empty())
-            && self.ctx.in_top_level()
-        {
-            if cfg!(feature = "debug") {
-                tracing::trace!(
-                    "unused: Preserving assignment to `{}` because it's top-level",
-                    dump(&assign.left)
-                )
+        if let PatOrExpr::Pat(p) = &assign.left {
+            if let Pat::Ident(left) = &**p {
+                if let Some(var) = self.data.vars.get(&left.to_id()) {
+                    // TODO: We don't need fn_local check
+                    if var.declared && var.is_fn_local && var.usage_count == 1 {
+                        self.changed = true;
+                        report_change!(
+                            "unused: Dropping an op-assign '{}{:?}' because it is not used",
+                            left.id.sym,
+                            left.id.span.ctxt
+                        );
+                        // This will remove the op-assign.
+                        *e = *assign.right.take();
+                    }
+                }
             }
+        }
+    }
+
+    #[cfg_attr(feature = "debug", tracing::instrument(skip_all))]
+    pub(super) fn drop_unused_assignments(&mut self, e: &mut Expr) {
+        if self.ctx.is_delete_arg {
             return;
         }
+
+        if self.data.top.has_eval_call || self.data.top.has_with_stmt {
+            return;
+        }
+
+        let assign = match e {
+            Expr::Assign(e) => e,
+            _ => return,
+        };
+
+        if !self.options.unused {
+            return;
+        }
+
+        let used_arguments = self
+            .data
+            .scopes
+            .get(&self.ctx.scope)
+            .unwrap_or_else(|| {
+                unreachable!(
+                    "scope should exist\nScopes: {:?};\nCtxt: {:?}",
+                    self.data.scopes, self.ctx.scope
+                )
+            })
+            .used_arguments;
+
+        trace_op!(
+            "unused: drop_unused_assignments: Target: `{}`",
+            dump(&assign.left, false)
+        );
+
+        assign.left.map_with_mut(|v| v.normalize_ident());
 
         match &mut assign.left {
             PatOrExpr::Expr(_) => {
-                if cfg!(feature = "debug") {
-                    tracing::trace!(
-                        "unused: Preserving assignment to `{}` because it's an expression",
-                        dump(&assign.left)
-                    )
-                }
-                return;
+                log_abort!(
+                    "unused: Preserving assignment to `{}` because it's an expression",
+                    dump(&assign.left, false)
+                );
             }
-            PatOrExpr::Pat(left) => match &**left {
-                Pat::Ident(i) => {
-                    if self.options.top_retain.contains(&i.id.sym) {
+            PatOrExpr::Pat(left) => {
+                if let Pat::Ident(i) = &**left {
+                    if !self.may_remove_ident(&i.id) {
                         return;
                     }
 
-                    if let Some(var) = self
-                        .data
-                        .as_ref()
-                        .and_then(|data| data.vars.get(&i.to_id()))
-                    {
-                        if var.is_fn_local && var.usage_count == 0 && var.declared {
-                            tracing::debug!(
+                    if let Some(var) = self.data.vars.get(&i.to_id()) {
+                        // technically this is inline
+                        if !var.inline_prevented
+                            && !var.exported
+                            && var.usage_count == 0
+                            && var.declared
+                            && (!var.declared_as_fn_param || !used_arguments || self.ctx.in_strict)
+                        {
+                            report_change!(
                                 "unused: Dropping assignment to var '{}{:?}', which is never used",
                                 i.id.sym,
                                 i.id.span.ctxt
                             );
                             self.changed = true;
-                            *e = *assign.right.take();
-                            return;
-                        } else {
-                            if cfg!(feature = "debug") {
-                                tracing::trace!(
-                                    "unused: Preserving assignment to `{}` because of usage: {:?}",
-                                    dump(&assign.left),
-                                    var
-                                )
+                            if self.ctx.is_this_aware_callee {
+                                *e = Expr::Seq(SeqExpr {
+                                    span: DUMMY_SP,
+                                    exprs: vec![0.into(), assign.right.take()],
+                                })
+                            } else {
+                                *e = *assign.right.take();
                             }
+                        } else {
+                            log_abort!(
+                                "unused: Preserving assignment to `{}` because of usage: {:?}",
+                                dump(&assign.left, false),
+                                var
+                            )
                         }
                     }
                 }
-                _ => return,
-            },
+            }
         }
     }
 
     /// Make `name` [None] if the name is not used.
+    #[cfg_attr(feature = "debug", tracing::instrument(skip_all))]
     pub(super) fn remove_name_if_not_used(&mut self, name: &mut Option<Ident>) {
         if !self.options.unused {
             return;
@@ -473,139 +673,190 @@ where
         }
 
         if let Some(i) = &name {
-            if let Some(data) = &self.data {
-                let can_remove_ident = data
-                    .vars
-                    .get(&i.to_id())
-                    .map(|v| v.ref_count == 0 || v.var_kind.is_some())
-                    .unwrap_or(true);
+            let can_remove_ident = self
+                .data
+                .vars
+                .get(&i.to_id())
+                .map(|v| {
+                    (!v.used_recursively && v.ref_count == 0 && v.usage_count == 0)
+                        || v.var_kind.is_some()
+                })
+                .unwrap_or(false);
 
-                if can_remove_ident {
-                    self.changed = true;
-                    tracing::debug!("Removing ident of an class / function expression");
-                    *name = None;
-                }
+            if can_remove_ident {
+                self.changed = true;
+                report_change!("Removing ident of an class / function expression");
+                *name = None;
             }
         }
     }
 
+    pub(super) fn remove_duplicate_var_decls(&mut self, s: &mut Stmt) -> Option<()> {
+        if !self.options.unused {
+            return None;
+        }
+
+        let var = match s {
+            Stmt::Decl(Decl::Var(v)) => v,
+            _ => return None,
+        };
+
+        for d in var.decls.iter_mut() {
+            if d.init.is_none() {
+                if let Pat::Ident(name) = &d.name {
+                    if let Some(usage) = self.data.vars.get_mut(&name.to_id()) {
+                        if usage.is_fn_local
+                            && usage.declared_as_fn_param
+                            && usage.declared_count >= 2
+                        {
+                            d.name.take();
+                            usage.declared_count -= 1;
+
+                            report_change!(
+                                "Removing a variable statement because it's a function parameter"
+                            );
+                            self.changed = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        var.decls.retain(|v| !v.name.is_invalid());
+
+        None
+    }
+
     /// `var Parser = function Parser() {};` => `var Parser = function () {}`
-    pub(super) fn remove_duplicate_names(&mut self, v: &mut VarDeclarator) {
+    pub(super) fn remove_duplicate_name_of_function(&mut self, v: &mut VarDeclarator) {
         if !self.options.unused {
             return;
         }
 
-        match v.init.as_deref_mut() {
-            Some(Expr::Fn(f)) => {
-                if f.ident.is_none() {
-                    return;
-                }
-
-                if contains_ident_ref(&f.function.body, f.ident.as_ref().unwrap()) {
-                    return;
-                }
-
-                self.changed = true;
-                tracing::debug!(
-                    "unused: Removing the name of a function expression because it's not used by \
-                     it'"
-                );
-                f.ident = None;
+        if let Some(Expr::Fn(f)) = v.init.as_deref_mut() {
+            if f.ident.is_none() {
+                return;
             }
 
-            _ => {}
+            if contains_ident_ref(&f.function.body, &f.ident.as_ref().unwrap().to_id()) {
+                return;
+            }
+
+            self.changed = true;
+            report_change!(
+                "unused: Removing the name of a function expression because it's not used by it'"
+            );
+            f.ident = None;
         }
+    }
+
+    pub(super) fn drop_unused_properties(&mut self, v: &mut VarDeclarator) -> Option<()> {
+        if !self.options.hoist_props || self.ctx.is_exported {
+            return None;
+        }
+
+        if self.ctx.top_level && !self.options.top_level() {
+            return None;
+        }
+
+        let name = v.name.as_ident()?;
+        let obj = v.init.as_mut()?.as_mut_object()?;
+
+        let usage = self.data.vars.get(&name.to_id())?;
+
+        if usage.indexed_with_dynamic_key || usage.used_as_ref {
+            return None;
+        }
+
+        if obj.props.iter().any(|p| match p {
+            PropOrSpread::Spread(_) => true,
+            PropOrSpread::Prop(p) => match &**p {
+                Prop::Shorthand(_) => false,
+                Prop::KeyValue(p) => {
+                    p.key.is_computed() || p.value.may_have_side_effects(&self.expr_ctx)
+                }
+                Prop::Assign(_) => true,
+                Prop::Getter(p) => p.key.is_computed(),
+                Prop::Setter(p) => p.key.is_computed(),
+                Prop::Method(p) => p.key.is_computed(),
+            },
+        }) {
+            return None;
+        }
+
+        let properties_used_via_this = {
+            let mut v = ThisPropertyVisitor::default();
+            obj.visit_with(&mut v);
+            v.properties
+        };
+
+        let should_preserve_property = |sym: &JsWord| {
+            if let "toString" = &**sym {
+                return true;
+            }
+            !usage.accessed_props.contains_key(sym) && !properties_used_via_this.contains(sym)
+        };
+        let should_preserve = |key: &PropName| match key {
+            PropName::Ident(k) => should_preserve_property(&k.sym),
+            PropName::Str(k) => should_preserve_property(&k.value),
+            PropName::Num(..) => true,
+            PropName::Computed(..) => true,
+            PropName::BigInt(..) => true,
+        };
+
+        let len = obj.props.len();
+        obj.props.retain(|prop| match prop {
+            PropOrSpread::Spread(_) => {
+                unreachable!()
+            }
+            PropOrSpread::Prop(p) => match &**p {
+                Prop::Shorthand(p) => !should_preserve_property(&p.sym),
+                Prop::KeyValue(p) => !should_preserve(&p.key),
+                Prop::Assign(..) => {
+                    unreachable!()
+                }
+                Prop::Getter(p) => !should_preserve(&p.key),
+                Prop::Setter(p) => !should_preserve(&p.key),
+                Prop::Method(p) => !should_preserve(&p.key),
+            },
+        });
+
+        if obj.props.len() != len {
+            self.changed = true;
+            report_change!("unused: Removing unused properties");
+        }
+
+        None
     }
 }
 
-#[derive(Debug, Default)]
-pub(super) struct UnreachableHandler {
-    vars: Vec<Ident>,
-    in_var_name: bool,
-    in_hoisted_var: bool,
+#[derive(Default)]
+struct ThisPropertyVisitor {
+    properties: FxHashSet<JsWord>,
+
+    should_abort: bool,
 }
 
-impl UnreachableHandler {
-    /// Asssumes `s` is not reachable, and preserves variable declarations and
-    /// function declarations in `s`.
-    ///
-    /// Returns true if statement is chnged.
-    pub fn preserve_vars(s: &mut Stmt) -> bool {
-        if s.is_empty() {
-            return false;
+impl Visit for ThisPropertyVisitor {
+    noop_visit_type!();
+
+    fn visit_member_expr(&mut self, e: &MemberExpr) {
+        if self.should_abort {
+            return;
         }
-        match s {
-            Stmt::Decl(Decl::Var(v)) => {
-                let mut changed = false;
-                for decl in &mut v.decls {
-                    if decl.init.is_some() {
-                        decl.init = None;
-                        changed = true;
-                    }
+
+        e.visit_children_with(self);
+
+        if let Expr::This(..) = &*e.obj {
+            match &e.prop {
+                MemberProp::Ident(p) => {
+                    self.properties.insert(p.sym.clone());
                 }
-
-                return changed;
-            }
-            _ => {}
-        }
-
-        let mut v = Self::default();
-        s.visit_mut_with(&mut v);
-        if v.vars.is_empty() {
-            *s = Stmt::Empty(EmptyStmt { span: DUMMY_SP });
-        } else {
-            *s = Stmt::Decl(Decl::Var(VarDecl {
-                span: DUMMY_SP,
-                kind: VarDeclKind::Var,
-                declare: false,
-                decls: v
-                    .vars
-                    .into_iter()
-                    .map(BindingIdent::from)
-                    .map(Pat::Ident)
-                    .map(|name| VarDeclarator {
-                        span: DUMMY_SP,
-                        name,
-                        init: None,
-                        definite: false,
-                    })
-                    .collect(),
-            }))
-        }
-
-        true
-    }
-}
-
-impl VisitMut for UnreachableHandler {
-    noop_visit_mut_type!();
-
-    fn visit_mut_pat(&mut self, n: &mut Pat) {
-        n.visit_mut_children_with(self);
-
-        if self.in_var_name && self.in_hoisted_var {
-            match n {
-                Pat::Ident(i) => {
-                    self.vars.push(i.id.clone());
+                MemberProp::Computed(_) => {
+                    self.should_abort = true;
                 }
                 _ => {}
             }
         }
     }
-
-    fn visit_mut_var_decl(&mut self, n: &mut VarDecl) {
-        self.in_hoisted_var = n.kind == VarDeclKind::Var;
-        n.visit_mut_children_with(self);
-    }
-
-    fn visit_mut_var_declarator(&mut self, n: &mut VarDeclarator) {
-        self.in_var_name = true;
-        n.name.visit_mut_with(self);
-        self.in_var_name = false;
-        n.init.visit_mut_with(self);
-    }
-
-    fn visit_mut_arrow_expr(&mut self, _: &mut ArrowExpr) {}
-
-    fn visit_mut_function(&mut self, _: &mut Function) {}
 }

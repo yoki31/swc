@@ -1,5 +1,6 @@
-use swc_common::chain;
-use swc_ecma_transforms_compat::es2015::{block_scoping, parameters, spread, spread::Config};
+use swc_common::{chain, Mark};
+use swc_ecma_transforms_base::resolver;
+use swc_ecma_transforms_compat::es2015::{block_scoping, parameters, spread};
 use swc_ecma_transforms_testing::{test, test_exec};
 use swc_ecma_visit::Fold;
 
@@ -8,11 +9,13 @@ fn syntax() -> ::swc_ecma_parser::Syntax {
 }
 
 fn tr() -> impl Fold {
+    let unresolved_mark = Mark::new();
+    let top_level_mark = Mark::new();
+
     chain!(
-        parameters(),
-        spread(Config {
-            ..Default::default()
-        })
+        resolver(unresolved_mark, top_level_mark, false),
+        parameters(Default::default(), unresolved_mark),
+        spread(Default::default())
     )
 }
 
@@ -20,57 +23,49 @@ test!(
     ::swc_ecma_parser::Syntax::default(),
     |_| tr(),
     issue_270,
-    "instance[name](...args);",
-    "var _instance;
-(_instance = instance)[name].apply(_instance, _toConsumableArray(args));"
+    "instance[name](...args);"
 );
 
 test!(
     ::swc_ecma_parser::Syntax::default(),
     |_| tr(),
     custom_call,
-    "ca(a, b, c, ...d, e)",
-    "ca.apply(void 0, [a, b, c].concat(_toConsumableArray(d), [e]));"
+    "ca(a, b, c, ...d, e)"
 );
 
 test!(
     ::swc_ecma_parser::Syntax::default(),
     |_| tr(),
     custom_call_multi_spread,
-    "ca(a, b, ...d, e, f, ...h)",
-    "ca.apply(void 0, [a, b].concat(_toConsumableArray(d), [e, f], _toConsumableArray(h)));"
+    "ca(a, b, ...d, e, f, ...h)"
 );
 
 test!(
     ::swc_ecma_parser::Syntax::default(),
     |_| tr(),
     custom_call_noop,
-    "ca(a, b, c, d, e)",
-    "ca(a, b, c, d, e);"
+    "ca(a, b, c, d, e)"
 );
 
 test!(
     ::swc_ecma_parser::Syntax::default(),
     |_| tr(),
     custom_array,
-    "[a, b, c, ...d, e]",
-    "[a, b, c].concat(_toConsumableArray(d), [e])"
+    "[a, b, c, ...d, e]"
 );
 
 test!(
     ::swc_ecma_parser::Syntax::default(),
     |_| tr(),
     custom_array_empty,
-    "[a,, b, c, ...d,,, e]",
-    "[a,, b, c].concat(_toConsumableArray(d), [,, e])"
+    "[a,, b, c, ...d,,, e]"
 );
 
 test!(
     ::swc_ecma_parser::Syntax::default(),
     |_| tr(),
     custom_new_noop,
-    "new C(a, b, c, c, d, e)",
-    "new C(a, b, c, c, d, e);"
+    "new C(a, b, c, c, d, e)"
 );
 
 // this_context
@@ -86,15 +81,6 @@ var obj = {
   }
 }
 
-"#,
-    r#"
-var obj = {
-  foo: function foo() {
-    this.bar.apply(this, arguments);
-    this.blah.apply(this, arguments);
-  }
-};
-
 "#
 );
 
@@ -106,18 +92,6 @@ test!(
     r#"
 function foo() {
   return bar([...arguments]);
-}
-
-function bar(one, two, three) {
-  return [one, two, three];
-}
-
-foo("foo", "bar");
-
-"#,
-    r#"
-function foo() {
-  return bar(Array.prototype.slice.call(arguments));
 }
 
 function bar(one, two, three) {
@@ -162,18 +136,6 @@ function bar(one, two, three) {
 
 foo("foo", "bar");
 
-"#,
-    r#"
-function foo() {
-  return bar.apply(void 0, ["test"].concat(Array.prototype.slice.call(arguments)));
-}
-
-function bar(one, two, three) {
-  return [one, two, three];
-}
-
-foo("foo", "bar");
-
 "#
 );
 
@@ -189,15 +151,6 @@ class Foo {
 	}
 }
 
-"#,
-    r#"
-class Foo {
-  bar() {
-    super.bar.apply(this, [arg1, arg2].concat(_toConsumableArray(args)));
-  }
-
-}
-
 "#
 );
 
@@ -208,10 +161,6 @@ test!(
     array_literal_first,
     r#"
 var lyrics = [...parts, "head", "and", "toes"];
-
-"#,
-    r#"
-var lyrics = _toConsumableArray(parts).concat(['head', 'and', 'toes']);
 
 "#
 );
@@ -233,26 +182,6 @@ switch (true){
         break;
 }
 
-"#,
-    r#"
-
-function fn() {}
-
-var args = [1, 2, 3];
-var obj = {
-  obj: {
-    fn
-  }
-};
-
-switch (true) {
-  case true:
-    var _obj;
-    (_obj = obj.obj).fn.apply(_obj, _toConsumableArray(args));
-
-    break;
-}
-
 "#
 );
 
@@ -263,10 +192,6 @@ test!(
     method_call_middle,
     r#"
 add(foo, ...numbers, bar);
-
-"#,
-    r#"
-add.apply(void 0, [foo].concat(_toConsumableArray(numbers), [bar]));
 
 "#
 );
@@ -280,14 +205,6 @@ test!(
 foob.add(foo, bar, ...numbers);
 foob.test.add(foo, bar, ...numbers);
 
-"#,
-    r#"
-var _foob, _test;
-
-(_foob = foob).add.apply(_foob, [foo, bar].concat(_toConsumableArray(numbers)));
-
-(_test = foob.test).add.apply(_test, [foo, bar].concat(_toConsumableArray(numbers)));
-
 "#
 );
 
@@ -298,12 +215,6 @@ test!(
     contexted_computed_method_call_multiple_args,
     r#"
 obj[method](foo, bar, ...args);
-
-"#,
-    r#"
-var _obj;
-
-(_obj = obj)[method].apply(_obj, [foo, bar].concat(_toConsumableArray(args)));
 
 "#
 );
@@ -318,10 +229,6 @@ test!(
     r#"
 add(foo, bar, ...numbers);
 
-"#,
-    r#"
-add.apply(void 0, [foo, bar].concat(_toConsumableArray(numbers)));
-
 "#
 );
 
@@ -333,10 +240,6 @@ test!(
     r#"
 var a = [b, ...c, d];
 
-"#,
-    r#"
-var a = [b].concat(_toConsumableArray(c), [d]);
-
 "#
 );
 
@@ -347,10 +250,6 @@ test!(
     array_literal_with_hole,
     r#"
 var arr = [ 'a',, 'b', ...c ];
-
-"#,
-    r#"
-var arr = ['a',, 'b'].concat(_toConsumableArray(c));
 
 "#
 );
@@ -368,16 +267,6 @@ arr.concat = () => {
 };
 
 const x = [...arr];
-
-"#,
-    r#"
-const arr = [];
-
-arr.concat = () => {
-  throw new Error('Should not be called');
-};
-
-const x = _toConsumableArray(arr);
 
 "#
 );
@@ -398,16 +287,6 @@ arr.concat = () => {
 
 const x = [...arr];
 
-"#,
-    r#"
-const arr = [];
-
-arr.concat = () => {
-  throw new Error('Should not be called');
-};
-
-const x = [].concat(arr);
-
 "#
 );
 
@@ -418,10 +297,6 @@ test!(
     method_call_multiple,
     r#"
 add(foo, ...numbers, bar, what, ...test);
-
-"#,
-    r#"
-add.apply(void 0, [foo].concat(_toConsumableArray(numbers), [bar, what], _toConsumableArray(test)));
 
 "#
 );
@@ -434,18 +309,6 @@ test!(
     r#"
 function foo() {
   return bar(...arguments);
-}
-
-function bar(one, two, three) {
-  return [one, two, three];
-}
-
-foo("foo", "bar");
-
-"#,
-    r#"
-function foo() {
-  return bar.apply(void 0, arguments);
 }
 
 function bar(one, two, three) {
@@ -486,10 +349,6 @@ test!(
     r#"
 var a = [b, ...c, d, e, ...f];
 
-"#,
-    r#"
-var a = [b].concat(_toConsumableArray(c), [d, e], _toConsumableArray(f));
-
 "#
 );
 
@@ -520,10 +379,6 @@ test!(
     r#"
 var lyrics = ["head", "and", "toes", ...parts];
 
-"#,
-    r#"
-var lyrics = ["head", "and", "toes"].concat(_toConsumableArray(parts));
-
 "#
 );
 
@@ -538,11 +393,6 @@ test!(
 new Numbers(...nums);
 new Numbers(1, ...nums);
 
-"#,
-    r#"
-_construct(Numbers, _toConsumableArray(nums));
-_construct(Numbers, [1].concat(_toConsumableArray(nums)));
-
 "#
 );
 
@@ -553,10 +403,6 @@ test!(
     spread_array_literal_with_hole,
     r#"
 var arr = [ 'a',, 'b', ...c ];
-
-"#,
-    r#"
-var arr = ['a',, 'b'].concat(_toConsumableArray(c));
 
 "#
 );
@@ -587,11 +433,6 @@ test!(
 foob.add(foo, bar, ...numbers);
 foob.test.add(foo, bar, ...numbers);
 
-"#,
-    r#"
-var _foob, _test;
-(_foob = foob).add.apply(_foob, [foo, bar].concat(_toConsumableArray(numbers)));
-(_test = foob.test).add.apply(_test, [foo, bar].concat(_toConsumableArray(numbers)))
 "#
 );
 
@@ -602,10 +443,6 @@ test!(
     spread_method_call_array_literal,
     r#"
 f(...[1, 2, 3]);
-
-"#,
-    r#"
-f.apply(void 0, [1, 2, 3]);
 
 "#
 );
@@ -618,10 +455,6 @@ test!(
     r#"
 add(...numbers);
 
-"#,
-    r#"
-add.apply(void 0, _toConsumableArray(numbers));
-
 "#
 );
 
@@ -630,21 +463,21 @@ test!(
     // Cost is too high.
     ignore,
     syntax(),
-    |_| chain!(tr(), block_scoping()),
+    |_| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, false),
+            parameters(Default::default(), unresolved_mark),
+            spread(Default::default()),
+            block_scoping(unresolved_mark)
+        )
+    },
     spread_known_rest,
     r#"
 function foo(...bar) {
   return [...bar];
-}
-
-"#,
-    r#"
-function foo() {
-  for (var _len = arguments.length, bar = new Array(_len), _key = 0; _key < _len; _key++) {
-    bar[_key] = arguments[_key];
-  }
-
-  return [].concat(bar);
 }
 
 "#
@@ -658,10 +491,6 @@ test!(
     r#"
 add(foo, ...numbers, bar);
 
-"#,
-    r#"
-add.apply(void 0, [foo].concat(_toConsumableArray(numbers), [bar]));
-
 "#
 );
 
@@ -672,10 +501,6 @@ test!(
     spread_method_call_first,
     r#"
 add(...numbers, foo, bar);
-
-"#,
-    r#"
-add.apply(void 0, _toConsumableArray(numbers).concat([foo, bar]));
 
 "#
 );
@@ -692,15 +517,6 @@ class Foo {
 	}
 }
 
-"#,
-    r#"
-class Foo {
-  bar() {
-    super.bar.apply(this, _toConsumableArray(args));
-  }
-
-}
-
 "#
 );
 
@@ -713,11 +529,6 @@ test!(
 foob.add(...numbers);
 foob.test.add(...numbers);
 
-"#,
-    r#"
-var _foob, _test;
-(_foob = foob).add.apply(_foob, _toConsumableArray(numbers));
-(_test = foob.test).add.apply(_test, _toConsumableArray(numbers));
 "#
 );
 
@@ -729,10 +540,6 @@ test!(
     r#"
 var a = [b, ...c, d];
 
-"#,
-    r#"
-var a = [b].concat(_toConsumableArray(c), [d]);
-
 "#
 );
 
@@ -743,10 +550,6 @@ test!(
     spread_array_literals,
     r#"
 var lyrics = ["head", "and", "toes", ...parts];
-
-"#,
-    r#"
-var lyrics = ["head", "and", "toes"].concat(_toConsumableArray(parts));
 
 "#
 );
@@ -763,14 +566,6 @@ export default function () {
   const someVar = E_ARR;
   return [...someVar];
 }
-"#,
-    r#"
-const E_ARR = [];
-export default function () {
-  const someVar = E_ARR;
-  return _toConsumableArray(someVar);
-}
-
 "#
 );
 
@@ -781,10 +576,6 @@ test!(
     spread_method_call_multiple,
     r#"
 add(foo, ...numbers, bar, what, ...test);
-
-"#,
-    r#"
-add.apply(void 0, [foo].concat(_toConsumableArray(numbers), [bar, what], _toConsumableArray(test)));
 
 "#
 );
@@ -797,18 +588,6 @@ test!(
     r#"
 function foo() {
   return bar(...arguments);
-}
-
-function bar(one, two, three) {
-  return [one, two, three];
-}
-
-foo("foo", "bar");
-
-"#,
-    r#"
-function foo() {
-  return bar.apply(void 0, arguments);
 }
 
 function bar(one, two, three) {
@@ -832,15 +611,6 @@ class Foo {
 	}
 }
 
-"#,
-    r#"
-class Foo {
-  bar() {
-    super.bar.apply(this, [arg1, arg2].concat(_toConsumableArray(args)));
-  }
-
-}
-
 "#
 );
 
@@ -851,12 +621,6 @@ test!(
     spread_contexted_computed_method_call_single_arg,
     r#"
 obj[method](...args);
-
-"#,
-    r#"
-var _obj;
-
-(_obj = obj)[method].apply(_obj, _toConsumableArray(args));
 
 "#
 );
@@ -877,17 +641,43 @@ function bar(one, two, three) {
 
 foo("foo", "bar");
 
-"#,
-    r#"
-function foo() {
-  return bar.apply(void 0, ["test"].concat(Array.prototype.slice.call(arguments)));
-}
-
-function bar(one, two, three) {
-  return [one, two, three];
-}
-
-foo("foo", "bar");
-
 "#
+);
+
+test!(
+    syntax(),
+    |_| tr(),
+    spread_string_literial,
+    "
+    String.raw({ raw: 'abcd' }, ...'___');
+    "
+);
+
+test!(
+    syntax(),
+    |_| tr(),
+    spread_string_literial_2,
+    "
+    f({ x: 0 }, ...[1, 2], [3], ...'456');
+    "
+);
+
+test!(
+    syntax(),
+    |_| tr(),
+    spread_literial,
+    r#"
+    f(1, ...[2, 3], ...[...[4, 5]], ...[6, ...[7]]);
+    f(1, ..."123", ...[..."456", ..."789"]);
+    "#
+);
+
+test!(
+    syntax(),
+    |_| tr(),
+    spread_literial_init_hole,
+    r#"
+    f(1, ...[2, , 3], ...[...[4, ,]]);
+    f(...[2, , 3], ...[...[4, ,]]);
+    "#
 );

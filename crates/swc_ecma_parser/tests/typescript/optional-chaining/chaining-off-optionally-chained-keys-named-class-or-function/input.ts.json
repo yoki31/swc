@@ -1,300 +1,53 @@
 {
   "type": "Script",
   "span": {
-    "start": 0,
-    "end": 71,
+    "start": 1,
+    "end": 72,
     "ctxt": 0
   },
   "body": [
     {
       "type": "ExpressionStatement",
       "span": {
-        "start": 0,
-        "end": 14,
-        "ctxt": 0
-      },
-      "expression": {
-        "type": "MemberExpression",
-        "span": {
-          "start": 0,
-          "end": 14,
-          "ctxt": 0
-        },
-        "object": {
-          "type": "OptionalChainingExpression",
-          "span": {
-            "start": 0,
-            "end": 10,
-            "ctxt": 0
-          },
-          "questionDotToken": {
-            "start": 3,
-            "end": 4,
-            "ctxt": 0
-          },
-          "expr": {
-            "type": "MemberExpression",
-            "span": {
-              "start": 0,
-              "end": 10,
-              "ctxt": 0
-            },
-            "object": {
-              "type": "Identifier",
-              "span": {
-                "start": 0,
-                "end": 3,
-                "ctxt": 0
-              },
-              "value": "foo",
-              "optional": false
-            },
-            "property": {
-              "type": "Identifier",
-              "span": {
-                "start": 5,
-                "end": 10,
-                "ctxt": 0
-              },
-              "value": "class",
-              "optional": false
-            },
-            "computed": false
-          }
-        },
-        "property": {
-          "type": "Identifier",
-          "span": {
-            "start": 11,
-            "end": 14,
-            "ctxt": 0
-          },
-          "value": "bar",
-          "optional": false
-        },
-        "computed": false
-      }
-    },
-    {
-      "type": "ExpressionStatement",
-      "span": {
-        "start": 15,
-        "end": 32,
-        "ctxt": 0
-      },
-      "expression": {
-        "type": "MemberExpression",
-        "span": {
-          "start": 15,
-          "end": 32,
-          "ctxt": 0
-        },
-        "object": {
-          "type": "OptionalChainingExpression",
-          "span": {
-            "start": 15,
-            "end": 28,
-            "ctxt": 0
-          },
-          "questionDotToken": {
-            "start": 18,
-            "end": 19,
-            "ctxt": 0
-          },
-          "expr": {
-            "type": "MemberExpression",
-            "span": {
-              "start": 15,
-              "end": 28,
-              "ctxt": 0
-            },
-            "object": {
-              "type": "Identifier",
-              "span": {
-                "start": 15,
-                "end": 18,
-                "ctxt": 0
-              },
-              "value": "foo",
-              "optional": false
-            },
-            "property": {
-              "type": "Identifier",
-              "span": {
-                "start": 20,
-                "end": 28,
-                "ctxt": 0
-              },
-              "value": "function",
-              "optional": false
-            },
-            "computed": false
-          }
-        },
-        "property": {
-          "type": "Identifier",
-          "span": {
-            "start": 29,
-            "end": 32,
-            "ctxt": 0
-          },
-          "value": "bar",
-          "optional": false
-        },
-        "computed": false
-      }
-    },
-    {
-      "type": "ExpressionStatement",
-      "span": {
-        "start": 33,
-        "end": 52,
-        "ctxt": 0
-      },
-      "expression": {
-        "type": "MemberExpression",
-        "span": {
-          "start": 33,
-          "end": 52,
-          "ctxt": 0
-        },
-        "object": {
-          "type": "OptionalChainingExpression",
-          "span": {
-            "start": 33,
-            "end": 48,
-            "ctxt": 0
-          },
-          "questionDotToken": {
-            "start": 41,
-            "end": 42,
-            "ctxt": 0
-          },
-          "expr": {
-            "type": "MemberExpression",
-            "span": {
-              "start": 33,
-              "end": 48,
-              "ctxt": 0
-            },
-            "object": {
-              "type": "OptionalChainingExpression",
-              "span": {
-                "start": 33,
-                "end": 41,
-                "ctxt": 0
-              },
-              "questionDotToken": {
-                "start": 36,
-                "end": 37,
-                "ctxt": 0
-              },
-              "expr": {
-                "type": "MemberExpression",
-                "span": {
-                  "start": 33,
-                  "end": 41,
-                  "ctxt": 0
-                },
-                "object": {
-                  "type": "Identifier",
-                  "span": {
-                    "start": 33,
-                    "end": 36,
-                    "ctxt": 0
-                  },
-                  "value": "foo",
-                  "optional": false
-                },
-                "property": {
-                  "type": "Identifier",
-                  "span": {
-                    "start": 38,
-                    "end": 41,
-                    "ctxt": 0
-                  },
-                  "value": "bar",
-                  "optional": false
-                },
-                "computed": false
-              }
-            },
-            "property": {
-              "type": "Identifier",
-              "span": {
-                "start": 43,
-                "end": 48,
-                "ctxt": 0
-              },
-              "value": "class",
-              "optional": false
-            },
-            "computed": false
-          }
-        },
-        "property": {
-          "type": "Identifier",
-          "span": {
-            "start": 49,
-            "end": 52,
-            "ctxt": 0
-          },
-          "value": "bar",
-          "optional": false
-        },
-        "computed": false
-      }
-    },
-    {
-      "type": "ExpressionStatement",
-      "span": {
-        "start": 53,
-        "end": 71,
+        "start": 1,
+        "end": 15,
         "ctxt": 0
       },
       "expression": {
         "type": "OptionalChainingExpression",
         "span": {
-          "start": 53,
-          "end": 71,
+          "start": 1,
+          "end": 15,
           "ctxt": 0
         },
-        "questionDotToken": {
-          "start": 66,
-          "end": 67,
-          "ctxt": 0
-        },
-        "expr": {
+        "optional": false,
+        "base": {
           "type": "MemberExpression",
           "span": {
-            "start": 53,
-            "end": 71,
+            "start": 1,
+            "end": 15,
             "ctxt": 0
           },
           "object": {
             "type": "OptionalChainingExpression",
             "span": {
-              "start": 53,
-              "end": 66,
+              "start": 1,
+              "end": 11,
               "ctxt": 0
             },
-            "questionDotToken": {
-              "start": 56,
-              "end": 57,
-              "ctxt": 0
-            },
-            "expr": {
+            "optional": true,
+            "base": {
               "type": "MemberExpression",
               "span": {
-                "start": 53,
-                "end": 66,
+                "start": 1,
+                "end": 11,
                 "ctxt": 0
               },
               "object": {
                 "type": "Identifier",
                 "span": {
-                  "start": 53,
-                  "end": 56,
+                  "start": 1,
+                  "end": 4,
                   "ctxt": 0
                 },
                 "value": "foo",
@@ -303,27 +56,268 @@
               "property": {
                 "type": "Identifier",
                 "span": {
-                  "start": 58,
-                  "end": 66,
+                  "start": 6,
+                  "end": 11,
                   "ctxt": 0
                 },
-                "value": "function",
+                "value": "class",
                 "optional": false
-              },
-              "computed": false
+              }
             }
           },
           "property": {
             "type": "Identifier",
             "span": {
-              "start": 68,
-              "end": 71,
+              "start": 12,
+              "end": 15,
               "ctxt": 0
             },
             "value": "bar",
             "optional": false
+          }
+        }
+      }
+    },
+    {
+      "type": "ExpressionStatement",
+      "span": {
+        "start": 16,
+        "end": 33,
+        "ctxt": 0
+      },
+      "expression": {
+        "type": "OptionalChainingExpression",
+        "span": {
+          "start": 16,
+          "end": 33,
+          "ctxt": 0
+        },
+        "optional": false,
+        "base": {
+          "type": "MemberExpression",
+          "span": {
+            "start": 16,
+            "end": 33,
+            "ctxt": 0
           },
-          "computed": false
+          "object": {
+            "type": "OptionalChainingExpression",
+            "span": {
+              "start": 16,
+              "end": 29,
+              "ctxt": 0
+            },
+            "optional": true,
+            "base": {
+              "type": "MemberExpression",
+              "span": {
+                "start": 16,
+                "end": 29,
+                "ctxt": 0
+              },
+              "object": {
+                "type": "Identifier",
+                "span": {
+                  "start": 16,
+                  "end": 19,
+                  "ctxt": 0
+                },
+                "value": "foo",
+                "optional": false
+              },
+              "property": {
+                "type": "Identifier",
+                "span": {
+                  "start": 21,
+                  "end": 29,
+                  "ctxt": 0
+                },
+                "value": "function",
+                "optional": false
+              }
+            }
+          },
+          "property": {
+            "type": "Identifier",
+            "span": {
+              "start": 30,
+              "end": 33,
+              "ctxt": 0
+            },
+            "value": "bar",
+            "optional": false
+          }
+        }
+      }
+    },
+    {
+      "type": "ExpressionStatement",
+      "span": {
+        "start": 34,
+        "end": 53,
+        "ctxt": 0
+      },
+      "expression": {
+        "type": "OptionalChainingExpression",
+        "span": {
+          "start": 34,
+          "end": 53,
+          "ctxt": 0
+        },
+        "optional": false,
+        "base": {
+          "type": "MemberExpression",
+          "span": {
+            "start": 34,
+            "end": 53,
+            "ctxt": 0
+          },
+          "object": {
+            "type": "OptionalChainingExpression",
+            "span": {
+              "start": 34,
+              "end": 49,
+              "ctxt": 0
+            },
+            "optional": true,
+            "base": {
+              "type": "MemberExpression",
+              "span": {
+                "start": 34,
+                "end": 49,
+                "ctxt": 0
+              },
+              "object": {
+                "type": "OptionalChainingExpression",
+                "span": {
+                  "start": 34,
+                  "end": 42,
+                  "ctxt": 0
+                },
+                "optional": true,
+                "base": {
+                  "type": "MemberExpression",
+                  "span": {
+                    "start": 34,
+                    "end": 42,
+                    "ctxt": 0
+                  },
+                  "object": {
+                    "type": "Identifier",
+                    "span": {
+                      "start": 34,
+                      "end": 37,
+                      "ctxt": 0
+                    },
+                    "value": "foo",
+                    "optional": false
+                  },
+                  "property": {
+                    "type": "Identifier",
+                    "span": {
+                      "start": 39,
+                      "end": 42,
+                      "ctxt": 0
+                    },
+                    "value": "bar",
+                    "optional": false
+                  }
+                }
+              },
+              "property": {
+                "type": "Identifier",
+                "span": {
+                  "start": 44,
+                  "end": 49,
+                  "ctxt": 0
+                },
+                "value": "class",
+                "optional": false
+              }
+            }
+          },
+          "property": {
+            "type": "Identifier",
+            "span": {
+              "start": 50,
+              "end": 53,
+              "ctxt": 0
+            },
+            "value": "bar",
+            "optional": false
+          }
+        }
+      }
+    },
+    {
+      "type": "ExpressionStatement",
+      "span": {
+        "start": 54,
+        "end": 72,
+        "ctxt": 0
+      },
+      "expression": {
+        "type": "OptionalChainingExpression",
+        "span": {
+          "start": 54,
+          "end": 72,
+          "ctxt": 0
+        },
+        "optional": true,
+        "base": {
+          "type": "MemberExpression",
+          "span": {
+            "start": 54,
+            "end": 72,
+            "ctxt": 0
+          },
+          "object": {
+            "type": "OptionalChainingExpression",
+            "span": {
+              "start": 54,
+              "end": 67,
+              "ctxt": 0
+            },
+            "optional": true,
+            "base": {
+              "type": "MemberExpression",
+              "span": {
+                "start": 54,
+                "end": 67,
+                "ctxt": 0
+              },
+              "object": {
+                "type": "Identifier",
+                "span": {
+                  "start": 54,
+                  "end": 57,
+                  "ctxt": 0
+                },
+                "value": "foo",
+                "optional": false
+              },
+              "property": {
+                "type": "Identifier",
+                "span": {
+                  "start": 59,
+                  "end": 67,
+                  "ctxt": 0
+                },
+                "value": "function",
+                "optional": false
+              }
+            }
+          },
+          "property": {
+            "type": "Identifier",
+            "span": {
+              "start": 69,
+              "end": 72,
+              "ctxt": 0
+            },
+            "value": "bar",
+            "optional": false
+          }
         }
       }
     }

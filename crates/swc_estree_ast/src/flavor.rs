@@ -1,13 +1,10 @@
-use crate::Loc;
-use scoped_tls::scoped_thread_local;
-
-scoped_thread_local!(static FLAVOR: Flavor);
+better_scoped_tls::scoped_tls!(static FLAVOR: Flavor);
 
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub enum Flavor {
     Babel,
-    Acorn,
+    Acorn { extra_comments: bool },
 }
 
 impl Default for Flavor {
@@ -21,7 +18,7 @@ impl Flavor {
     where
         F: FnOnce() -> Ret,
     {
-        FLAVOR.set(&self, || op())
+        FLAVOR.set(&self, op)
     }
 
     pub fn current() -> Self {
@@ -33,29 +30,26 @@ impl Flavor {
     }
 
     pub fn emit_loc(&self) -> bool {
-        matches!(Self::current(), Flavor::Babel)
+        true
     }
 
-    pub(crate) fn skip_range(_: &Option<[usize; 2]>) -> bool {
+    pub(crate) fn skip_range(_: &Option<[u32; 2]>) -> bool {
         matches!(Self::current(), Flavor::Babel)
-    }
-
-    pub(crate) fn skip_loc(_: &Option<Loc>) -> bool {
-        !Self::current().emit_loc()
     }
 
     pub(crate) fn skip_empty<T>(v: &T) -> bool
     where
         T: IsEmpty,
     {
-        matches!(Self::current(), Flavor::Acorn) && v.is_empty()
+        matches!(Self::current(), Flavor::Acorn { .. }) && v.is_empty()
     }
 
     pub(crate) fn skip_none<T>(v: &Option<T>) -> bool {
-        matches!(Self::current(), Flavor::Acorn) && v.is_none()
+        matches!(Self::current(), Flavor::Acorn { .. }) && v.is_none()
     }
+
     pub(crate) fn skip_none_and_false(v: &Option<bool>) -> bool {
-        matches!(Self::current(), Flavor::Acorn) && matches!(v, None | Some(false))
+        matches!(Self::current(), Flavor::Acorn { .. }) && matches!(v, None | Some(false))
     }
 }
 

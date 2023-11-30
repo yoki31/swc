@@ -1,3 +1,8 @@
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use swc_atoms::Atom;
+use swc_common::ast_serde;
+
 use crate::{
     class::ClassDeclaration,
     comment::Comment,
@@ -8,10 +13,6 @@ use crate::{
     stmt::Statement,
     typescript::TSDeclareFunction,
 };
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use swc_atoms::JsWord;
-use swc_common::ast_serde;
 
 #[derive(Debug, Clone, PartialEq)]
 #[ast_serde]
@@ -66,16 +67,16 @@ pub struct File {
     pub tokens: Option<Vec<Value>>, // TODO: is this the right way to model any?
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type")]
 pub struct InterpreterDirective {
     #[serde(flatten)]
     pub base: BaseNode,
     #[serde(default)]
-    pub value: JsWord,
+    pub value: Atom,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum SrcType {
     Script,
@@ -89,6 +90,8 @@ pub struct Program {
     #[serde(flatten)]
     pub base: BaseNode,
     pub body: Vec<Statement>,
+    #[serde(default, skip_serializing_if = "crate::ser::skip_comments_on_program")]
+    pub comments: Vec<Comment>,
     #[serde(default, skip_serializing_if = "crate::flavor::Flavor::skip_empty")]
     pub directives: Vec<Directive>,
     pub source_type: SrcType,
@@ -98,7 +101,7 @@ pub struct Program {
     pub source_file: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum ExportKind {
     Type,
@@ -111,8 +114,8 @@ pub enum ExportKind {
 pub struct ExportSpecifier {
     #[serde(flatten)]
     pub base: BaseNode,
-    pub local: Identifier,
-    pub exported: IdOrString,
+    pub local: ModuleExportNameType,
+    pub exported: ModuleExportNameType,
     pub export_kind: ExportKind,
 }
 
@@ -129,7 +132,7 @@ pub struct ExportDefaultSpecifier {
 pub struct ExportNamespaceSpecifier {
     #[serde(flatten)]
     pub base: BaseNode,
-    pub exported: Identifier,
+    pub exported: ModuleExportNameType,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -140,7 +143,7 @@ pub struct ExportAllDeclaration {
     pub base: BaseNode,
     pub source: StringLiteral,
     #[serde(default)]
-    pub assertions: Option<Vec<ImportAttribute>>,
+    pub with: Option<Vec<ImportAttribute>>,
     #[serde(default)]
     pub export_kind: Option<ExportKind>,
 }
@@ -189,12 +192,12 @@ pub struct ExportNamedDeclaration {
     #[serde(default)]
     pub source: Option<StringLiteral>,
     #[serde(default)]
-    pub assertions: Option<Vec<ImportAttribute>>,
+    pub with: Option<Vec<ImportAttribute>>,
     #[serde(default)]
     pub export_kind: Option<ExportKind>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type")]
 pub struct Import {
     #[serde(flatten)]
@@ -217,7 +220,7 @@ pub struct ImportSpecifier {
     #[serde(flatten)]
     pub base: BaseNode,
     pub local: Identifier,
-    pub imported: IdOrString,
+    pub imported: ModuleExportNameType,
     #[serde(default)]
     pub import_kind: Option<ImportKind>,
 }
@@ -249,7 +252,7 @@ pub enum ImportSpecifierType {
     Namespace(ImportNamespaceSpecifier),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum ImportKind {
     Type,
@@ -267,7 +270,16 @@ pub struct ImportDeclaration {
     pub specifiers: Vec<ImportSpecifierType>,
     pub source: StringLiteral,
     #[serde(default)]
-    pub assertions: Option<Vec<ImportAttribute>>,
+    pub with: Option<Vec<ImportAttribute>>,
     #[serde(default)]
     pub import_kind: Option<ImportKind>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+#[ast_serde]
+pub enum ModuleExportNameType {
+    #[tag("Identifier")]
+    Ident(Identifier),
+    #[tag("StringLiteral")]
+    Str(StringLiteral),
 }

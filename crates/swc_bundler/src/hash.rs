@@ -1,12 +1,14 @@
-use anyhow::{Context, Error};
-use crc::{crc64, crc64::Digest, Hasher64};
 use std::io;
-use swc_common::{sync::Lrc, SourceMap, Span};
-use swc_ecma_ast::{EsVersion, Module};
+
+use anyhow::{Context, Error};
+use crc::{Crc, Digest, CRC_64_ECMA_182};
+use swc_common::{sync::Lrc, BytePos, SourceMap, Span};
+use swc_ecma_ast::Module;
 use swc_ecma_codegen::{text_writer::WriteJs, Emitter};
 
 pub(crate) fn calc_hash(cm: Lrc<SourceMap>, m: &Module) -> Result<String, Error> {
-    let digest = crc64::Digest::new(crc64::ECMA);
+    let crc = Crc::<u64>::new(&CRC_64_ECMA_182);
+    let digest = crc.digest();
     let mut buf = Hasher { digest };
 
     {
@@ -18,30 +20,26 @@ pub(crate) fn calc_hash(cm: Lrc<SourceMap>, m: &Module) -> Result<String, Error>
         };
 
         emitter
-            .emit_module(&m)
+            .emit_module(m)
             .context("failed to emit module to calculate hash")?;
     }
     //
 
-    let result = buf.digest.sum64();
+    let result = buf.digest.finalize();
     Ok(radix_fmt::radix(result, 36).to_string())
 }
 
-struct Hasher {
-    digest: Digest,
+struct Hasher<'a> {
+    digest: Digest<'a, u64>,
 }
 
-impl Hasher {
+impl Hasher<'_> {
     fn w(&mut self, s: &str) {
-        self.digest.write(s.as_bytes());
+        self.digest.update(s.as_bytes());
     }
 }
 
-impl WriteJs for &mut Hasher {
-    fn target(&self) -> EsVersion {
-        EsVersion::latest()
-    }
-
+impl WriteJs for &mut Hasher<'_> {
     fn increase_indent(&mut self) -> io::Result<()> {
         Ok(())
     }
@@ -90,7 +88,7 @@ impl WriteJs for &mut Hasher {
         Ok(())
     }
 
-    fn write_comment(&mut self, _: Span, s: &str) -> io::Result<()> {
+    fn write_comment(&mut self, s: &str) -> io::Result<()> {
         self.w(s);
         Ok(())
     }
@@ -118,5 +116,18 @@ impl WriteJs for &mut Hasher {
     #[inline]
     fn care_about_srcmap(&self) -> bool {
         false
+    }
+
+    #[inline]
+    fn add_srcmap(&mut self, _: BytePos) -> io::Result<()> {
+        Ok(())
+    }
+
+    fn commit_pending_semi(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+
+    fn can_ignore_invalid_unicodes(&mut self) -> bool {
+        true
     }
 }

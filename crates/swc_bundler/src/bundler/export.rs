@@ -1,14 +1,15 @@
+use indexmap::IndexMap;
+use swc_atoms::JsWord;
+use swc_common::{collections::ARandomState, FileName, SyntaxContext};
+use swc_ecma_ast::*;
+use swc_ecma_utils::find_pat_ids;
+use swc_ecma_visit::{noop_visit_mut_type, VisitMut, VisitMutWith};
+
 use super::{
     load::{Source, Specifier},
     Bundler,
 };
 use crate::{id::Id, load::Load, resolve::Resolve};
-use indexmap::IndexMap;
-use swc_atoms::{js_word, JsWord};
-use swc_common::{FileName, SyntaxContext};
-use swc_ecma_ast::*;
-use swc_ecma_utils::find_ids;
-use swc_ecma_visit::{noop_visit_mut_type, VisitMut, VisitMutWith};
 
 impl<L, R> Bundler<'_, L, R>
 where
@@ -41,7 +42,7 @@ where
 #[derive(Debug, Default)]
 pub(super) struct RawExports {
     /// Key is None if it's exported from the module itself.
-    pub items: IndexMap<Option<Str>, Vec<Specifier>, ahash::RandomState>,
+    pub items: IndexMap<Option<Str>, Vec<Specifier>, ARandomState>,
 }
 
 #[derive(Debug, Default)]
@@ -155,7 +156,7 @@ where
                         Decl::Class(ref c) => &c.ident,
                         Decl::Fn(ref f) => &f.ident,
                         Decl::Var(ref var) => {
-                            let ids: Vec<Id> = find_ids(&var.decls);
+                            let ids: Vec<Id> = find_pat_ids(&var.decls);
                             for id in ids {
                                 v.push(Specifier::Specific {
                                     local: id,
@@ -164,6 +165,9 @@ where
                             }
                             return;
                         }
+                        Decl::TsEnum(ref e) => &e.id,
+                        Decl::TsInterface(ref i) => &i.id,
+                        Decl::TsTypeAlias(ref a) => &a.id,
                         _ => unreachable!("Decl in ExportDecl: {:?}", decl.decl),
                     };
                     Specifier::Specific {
@@ -171,8 +175,6 @@ where
                         alias: None,
                     }
                 });
-
-                return;
             }
 
             ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultDecl(_decl)) => {
@@ -181,11 +183,9 @@ where
                     .entry(None)
                     .or_default()
                     .push(Specifier::Specific {
-                        local: Id::new(js_word!("default"), SyntaxContext::empty()),
+                        local: Id::new("default".into(), SyntaxContext::empty()),
                         alias: None,
                     });
-
-                return;
             }
 
             ModuleItem::ModuleDecl(ModuleDecl::ExportDefaultExpr(_expr)) => {
@@ -194,11 +194,9 @@ where
                     .entry(None)
                     .or_default()
                     .push(Specifier::Specific {
-                        local: Id::new(js_word!("default"), SyntaxContext::empty()),
+                        local: Id::new("default".into(), SyntaxContext::empty()),
                         alias: None,
                     });
-
-                return;
             }
 
             ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(named)) => {
@@ -209,50 +207,76 @@ where
                     .and_then(|src| self.ctxt_for(src));
                 let mut need_wrapping = false;
 
-                let v = self.info.items.entry(named.src.clone()).or_default();
+                let v = self
+                    .info
+                    .items
+                    .entry(named.src.clone().map(|v| *v))
+                    .or_default();
                 for s in &mut named.specifiers {
                     match s {
                         ExportSpecifier::Namespace(n) => {
-                            n.name.span.ctxt = self.export_ctxt;
+                            match &mut n.name {
+                                ModuleExportName::Ident(name) => {
+                                    name.span.ctxt = self.export_ctxt;
 
-                            need_wrapping = true;
-                            v.push(Specifier::Namespace {
-                                local: n.name.clone().into(),
-                                all: true,
-                            })
+                                    need_wrapping = true;
+                                    v.push(Specifier::Namespace {
+                                        local: name.clone().into(),
+                                        all: true,
+                                    })
+                                }
+                                ModuleExportName::Str(..) => {
+                                    unimplemented!("module string names unimplemented")
+                                }
+                            };
                         }
                         ExportSpecifier::Default(d) => {
                             v.push(Specifier::Specific {
                                 local: d.exported.clone().into(),
-                                alias: Some(Id::new(js_word!("default"), SyntaxContext::empty())),
+                                alias: Some(Id::new("default".into(), SyntaxContext::empty())),
                             });
                         }
                         ExportSpecifier::Named(n) => {
+                            let orig = match &mut n.orig {
+                                ModuleExportName::Ident(ident) => ident,
+                                ModuleExportName::Str(..) => {
+                                    unimplemented!("module string names unimplemented")
+                                }
+                            };
                             if let Some((_, export_ctxt)) = ctxt {
-                                n.orig.span.ctxt = export_ctxt;
+                                orig.span.ctxt = export_ctxt;
                             }
 
                             match &mut n.exported {
-                                Some(exported) => {
+                                Some(ModuleExportName::Ident(exported)) => {
                                     exported.span.ctxt = self.export_ctxt;
                                 }
+                                Some(ModuleExportName::Str(..)) => {
+                                    unimplemented!("module string names unimplemented")
+                                }
                                 None => {
-                                    let mut exported: Ident = n.orig.clone();
+                                    let mut exported: Ident = orig.clone();
                                     exported.span.ctxt = self.export_ctxt;
-                                    n.exported = Some(exported);
+                                    n.exported = Some(ModuleExportName::Ident(exported));
                                 }
                             }
 
-                            if let Some(exported) = &n.exported {
-                                v.push(Specifier::Specific {
-                                    local: exported.clone().into(),
-                                    alias: Some(n.orig.clone().into()),
-                                });
-                            } else {
-                                v.push(Specifier::Specific {
-                                    local: n.orig.clone().into(),
-                                    alias: None,
-                                });
+                            match &n.exported {
+                                Some(ModuleExportName::Ident(exported)) => {
+                                    v.push(Specifier::Specific {
+                                        local: exported.clone().into(),
+                                        alias: Some(orig.clone().into()),
+                                    });
+                                }
+                                Some(ModuleExportName::Str(..)) => {
+                                    unimplemented!("module string names unimplemented")
+                                }
+                                _ => {
+                                    v.push(Specifier::Specific {
+                                        local: orig.clone().into(),
+                                        alias: None,
+                                    });
+                                }
                             }
                         }
                     }
@@ -261,8 +285,6 @@ where
                 if need_wrapping {
                     self.mark_as_wrapping_required(&named.src.as_ref().unwrap().value);
                 }
-
-                return;
             }
 
             ModuleItem::ModuleDecl(ModuleDecl::ExportAll(all)) => {
@@ -271,7 +293,7 @@ where
                     all.span.ctxt = export_ctxt;
                 }
 
-                self.info.items.entry(Some(all.src.clone())).or_default();
+                self.info.items.entry(Some(*all.src.clone())).or_default();
             }
             _ => {}
         }

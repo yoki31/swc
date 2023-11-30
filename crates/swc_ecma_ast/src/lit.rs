@@ -1,13 +1,14 @@
-use crate::jsx::JSXText;
-use num_bigint::BigInt as BigIntValue;
-use serde::{Deserialize, Serialize};
 use std::{
+    borrow::Cow,
     fmt::{self, Display, Formatter},
     hash::{Hash, Hasher},
-    mem,
 };
-use swc_atoms::{js_word, JsWord};
+
+use num_bigint::BigInt as BigIntValue;
+use swc_atoms::{js_word, Atom};
 use swc_common::{ast_node, util::take::Take, EqIgnoreSpan, Span, DUMMY_SP};
+
+use crate::jsx::JSXText;
 
 #[ast_node]
 #[derive(Eq, Hash, EqIgnoreSpan)]
@@ -35,36 +36,137 @@ pub enum Lit {
     JSXText(JSXText),
 }
 
-#[ast_node("BigIntLiteral")]
-#[derive(Eq, Hash, EqIgnoreSpan)]
-pub struct BigInt {
-    pub span: Span,
-    pub value: BigIntValue,
+macro_rules! bridge_lit_from {
+    ($bridge: ty, $src:ty) => {
+        bridge_expr_from!(crate::Lit, $src);
+        bridge_from!(Lit, $bridge, $src);
+    };
 }
 
-#[cfg(feature = "arbitrary")]
-impl<'a> arbitrary::Arbitrary<'a> for BigInt {
-    fn arbitrary(u: &mut arbitrary::Unstructured<'_>) -> arbitrary::Result<Self> {
-        let span = u.arbitrary()?;
-        let value = u.arbitrary::<usize>()?.into();
+bridge_expr_from!(Lit, Str);
+bridge_expr_from!(Lit, Bool);
+bridge_expr_from!(Lit, Number);
+bridge_expr_from!(Lit, BigInt);
+bridge_expr_from!(Lit, Regex);
+bridge_expr_from!(Lit, Null);
+bridge_expr_from!(Lit, JSXText);
 
-        Ok(Self { span, value })
+bridge_lit_from!(Str, &'_ str);
+bridge_lit_from!(Str, Atom);
+bridge_lit_from!(Str, Cow<'_, str>);
+bridge_lit_from!(Str, String);
+bridge_lit_from!(Bool, bool);
+bridge_lit_from!(Number, f64);
+bridge_lit_from!(Number, usize);
+bridge_lit_from!(BigInt, BigIntValue);
+
+#[ast_node("BigIntLiteral")]
+#[derive(Eq, Hash)]
+pub struct BigInt {
+    pub span: Span,
+    #[cfg_attr(any(feature = "rkyv-impl"), with(EncodeBigInt))]
+    pub value: Box<BigIntValue>,
+
+    /// Use `None` value only for transformations to avoid recalculate
+    /// characters in big integer
+    pub raw: Option<Atom>,
+}
+
+impl EqIgnoreSpan for BigInt {
+    fn eq_ignore_span(&self, other: &Self) -> bool {
+        self.value == other.value
     }
 }
 
+#[cfg(feature = "rkyv-impl")]
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "rkyv-impl", derive(rkyv::bytecheck::CheckBytes))]
+#[cfg_attr(feature = "rkyv-impl", repr(C))]
+pub struct EncodeBigInt;
+
+#[cfg(feature = "rkyv-impl")]
+impl rkyv::with::ArchiveWith<Box<BigIntValue>> for EncodeBigInt {
+    type Archived = rkyv::Archived<String>;
+    type Resolver = rkyv::Resolver<String>;
+
+    unsafe fn resolve_with(
+        field: &Box<BigIntValue>,
+        pos: usize,
+        resolver: Self::Resolver,
+        out: *mut Self::Archived,
+    ) {
+        use rkyv::Archive;
+
+        let s = field.to_string();
+        s.resolve(pos, resolver, out);
+    }
+}
+
+#[cfg(feature = "rkyv-impl")]
+impl<S> rkyv::with::SerializeWith<Box<BigIntValue>, S> for EncodeBigInt
+where
+    S: ?Sized + rkyv::ser::Serializer,
+{
+    fn serialize_with(
+        field: &Box<BigIntValue>,
+        serializer: &mut S,
+    ) -> Result<Self::Resolver, S::Error> {
+        let field = field.to_string();
+        rkyv::string::ArchivedString::serialize_from_str(&field, serializer)
+    }
+}
+
+#[cfg(feature = "rkyv-impl")]
+impl<D> rkyv::with::DeserializeWith<rkyv::Archived<String>, Box<BigIntValue>, D> for EncodeBigInt
+where
+    D: ?Sized + rkyv::Fallible,
+{
+    fn deserialize_with(
+        field: &rkyv::Archived<String>,
+        deserializer: &mut D,
+    ) -> Result<Box<BigIntValue>, D::Error> {
+        use rkyv::Deserialize;
+
+        let s: String = field.deserialize(deserializer)?;
+
+        Ok(Box::new(s.parse().unwrap()))
+    }
+}
+
+#[cfg(feature = "arbitrary")]
+#[cfg_attr(docsrs, doc(cfg(feature = "arbitrary")))]
+impl<'a> arbitrary::Arbitrary<'a> for BigInt {
+    fn arbitrary(u: &mut arbitrary::Unstructured<'_>) -> arbitrary::Result<Self> {
+        let span = u.arbitrary()?;
+        let value = Box::new(u.arbitrary::<usize>()?.into());
+        let raw = Some(u.arbitrary::<String>()?.into());
+
+        Ok(Self { span, value, raw })
+    }
+}
+
+impl From<BigIntValue> for BigInt {
+    #[inline]
+    fn from(value: BigIntValue) -> Self {
+        BigInt {
+            span: DUMMY_SP,
+            value: Box::new(value),
+            raw: None,
+        }
+    }
+}
+
+/// A string literal.
 #[ast_node("StringLiteral")]
-#[derive(Eq, Hash, EqIgnoreSpan)]
+#[derive(Eq, Hash)]
 pub struct Str {
     pub span: Span,
 
-    pub value: JsWord,
+    pub value: Atom,
 
-    /// This includes line escape.
-    #[serde(default)]
-    pub has_escape: bool,
-
-    #[serde(default)]
-    pub kind: StrKind,
+    /// Use `None` value only for transformations to avoid recalculate escaped
+    /// characters in strings
+    pub raw: Option<Atom>,
 }
 
 impl Take for Str {
@@ -72,61 +174,20 @@ impl Take for Str {
         Str {
             span: DUMMY_SP,
             value: js_word!(""),
-            has_escape: Default::default(),
-            kind: Default::default(),
+            raw: None,
         }
     }
 }
 
-/// THis enum determines how string literal should be printed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(tag = "type")]
-pub enum StrKind {
-    /// Span of string points to original source code, and codegen should use
-    /// it.
-    //
-    /// **Note**: Giving wrong value to this field will result in invalid
-    /// codegen.
-    #[serde(rename = "normal")]
-    Normal {
-        /// Does span of this string literal contains quote?
-        ///
-        /// True for string literals generated by parser, false for string
-        /// literals generated by various passes.
-        #[serde(rename = "containsQuote")]
-        contains_quote: bool,
-    },
-    /// If the span of string does not point a string literal, mainly because
-    /// this string is synthesized, this variant should be used.
-    #[serde(rename = "synthesized")]
-    Synthesized,
-}
-
-/// Always returns true as this is not a data of a string literal.
-impl EqIgnoreSpan for StrKind {
-    fn eq_ignore_span(&self, _: &Self) -> bool {
-        true
-    }
-}
-
-impl Default for StrKind {
-    fn default() -> Self {
-        Self::Synthesized
-    }
-}
-
 #[cfg(feature = "arbitrary")]
+#[cfg_attr(docsrs, doc(cfg(feature = "arbitrary")))]
 impl<'a> arbitrary::Arbitrary<'a> for Str {
     fn arbitrary(u: &mut arbitrary::Unstructured<'_>) -> arbitrary::Result<Self> {
         let span = u.arbitrary()?;
         let value = u.arbitrary::<String>()?.into();
+        let raw = Some(u.arbitrary::<String>()?.into());
 
-        Ok(Self {
-            span,
-            value,
-            has_escape: false,
-            kind: Default::default(),
-        })
+        Ok(Self { span, value, raw })
     }
 }
 
@@ -137,6 +198,36 @@ impl Str {
     }
 }
 
+impl EqIgnoreSpan for Str {
+    fn eq_ignore_span(&self, other: &Self) -> bool {
+        self.value == other.value
+    }
+}
+
+impl From<Atom> for Str {
+    #[inline]
+    fn from(value: Atom) -> Self {
+        Str {
+            span: DUMMY_SP,
+            value,
+            raw: None,
+        }
+    }
+}
+
+bridge_from!(Str, Atom, &'_ str);
+bridge_from!(Str, Atom, String);
+bridge_from!(Str, Atom, Cow<'_, str>);
+
+/// A boolean literal.
+///
+///
+/// # Creation
+///
+/// If you are creating a boolean literal with a dummy span, please use
+/// `true.into()` or `false.into()`, instead of creating this struct directly.
+///
+/// All of `Box<Expr>`, `Expr`, `Lit`, `Bool` implements `From<bool>`.
 #[ast_node("BooleanLiteral")]
 #[derive(Copy, Eq, Hash, EqIgnoreSpan)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
@@ -150,6 +241,16 @@ impl Take for Bool {
         Bool {
             span: DUMMY_SP,
             value: false,
+        }
+    }
+}
+
+impl From<bool> for Bool {
+    #[inline]
+    fn from(value: bool) -> Self {
+        Bool {
+            span: DUMMY_SP,
+            value,
         }
     }
 }
@@ -172,14 +273,25 @@ impl Take for Null {
 pub struct Regex {
     pub span: Span,
 
-    #[serde(rename = "pattern")]
-    pub exp: JsWord,
+    #[cfg_attr(feature = "serde-impl", serde(rename = "pattern"))]
+    pub exp: Atom,
 
-    #[serde(default)]
-    pub flags: JsWord,
+    #[cfg_attr(feature = "serde-impl", serde(default))]
+    pub flags: Atom,
+}
+
+impl Take for Regex {
+    fn dummy() -> Self {
+        Self {
+            span: DUMMY_SP,
+            exp: Default::default(),
+            flags: Default::default(),
+        }
+    }
 }
 
 #[cfg(feature = "arbitrary")]
+#[cfg_attr(docsrs, doc(cfg(feature = "arbitrary")))]
 impl<'a> arbitrary::Arbitrary<'a> for Regex {
     fn arbitrary(u: &mut arbitrary::Unstructured<'_>) -> arbitrary::Result<Self> {
         let span = u.arbitrary()?;
@@ -190,24 +302,44 @@ impl<'a> arbitrary::Arbitrary<'a> for Regex {
     }
 }
 
+/// A numeric literal.
+///
+///
+/// # Creation
+///
+/// If you are creating a numeric literal with a dummy span, please use
+/// `literal.into()`, instead of creating this struct directly.
+///
+/// All of `Box<Expr>`, `Expr`, `Lit`, `Number` implements `From<64>` and
+/// `From<usize>`.
+
 #[ast_node("NumericLiteral")]
-#[derive(Copy, EqIgnoreSpan)]
-#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct Number {
     pub span: Span,
     /// **Note**: This should not be `NaN`. Use [crate::Ident] to represent NaN.
     ///
     /// If you store `NaN` in this field, a hash map will behave strangely.
-    #[use_eq]
     pub value: f64,
+
+    /// Use `None` value only for transformations to avoid recalculate
+    /// characters in number literal
+    pub raw: Option<Atom>,
 }
 
 impl Eq for Number {}
 
+impl EqIgnoreSpan for Number {
+    fn eq_ignore_span(&self, other: &Self) -> bool {
+        self.value == other.value && self.value.is_sign_positive() == other.value.is_sign_positive()
+    }
+}
+
+#[allow(clippy::derived_hash_with_manual_eq)]
+#[allow(clippy::transmute_float_to_int)]
 impl Hash for Number {
     fn hash<H: Hasher>(&self, state: &mut H) {
         fn integer_decode(val: f64) -> (u64, i16, i8) {
-            let bits: u64 = unsafe { mem::transmute(val) };
+            let bits: u64 = val.to_bits();
             let sign: i8 = if bits >> 63 == 0 { 1 } else { -1 };
             let mut exponent: i16 = ((bits >> 52) & 0x7ff) as i16;
             let mantissa = if exponent == 0 {
@@ -222,6 +354,7 @@ impl Hash for Number {
 
         self.span.hash(state);
         integer_decode(self.value).hash(state);
+        self.raw.hash(state);
     }
 }
 
@@ -235,6 +368,40 @@ impl Display for Number {
             }
         } else {
             Display::fmt(&self.value, f)
+        }
+    }
+}
+
+#[cfg(feature = "arbitrary")]
+#[cfg_attr(docsrs, doc(cfg(feature = "arbitrary")))]
+impl<'a> arbitrary::Arbitrary<'a> for Number {
+    fn arbitrary(u: &mut arbitrary::Unstructured<'_>) -> arbitrary::Result<Self> {
+        let span = u.arbitrary()?;
+        let value = u.arbitrary::<f64>()?;
+        let raw = Some(u.arbitrary::<String>()?.into());
+
+        Ok(Self { span, value, raw })
+    }
+}
+
+impl From<f64> for Number {
+    #[inline]
+    fn from(value: f64) -> Self {
+        Number {
+            span: DUMMY_SP,
+            value,
+            raw: None,
+        }
+    }
+}
+
+impl From<usize> for Number {
+    #[inline]
+    fn from(value: usize) -> Self {
+        Number {
+            span: DUMMY_SP,
+            value: value as _,
+            raw: None,
         }
     }
 }

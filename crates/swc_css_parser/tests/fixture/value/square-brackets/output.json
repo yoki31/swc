@@ -1,59 +1,67 @@
 {
   "type": "Stylesheet",
   "span": {
-    "start": 0,
-    "end": 157,
+    "start": 1,
+    "end": 208,
     "ctxt": 0
   },
   "rules": [
     {
       "type": "QualifiedRule",
       "span": {
-        "start": 0,
-        "end": 156,
+        "start": 1,
+        "end": 207,
         "ctxt": 0
       },
       "prelude": {
         "type": "SelectorList",
         "span": {
-          "start": 0,
-          "end": 3,
+          "start": 1,
+          "end": 4,
           "ctxt": 0
         },
         "children": [
           {
             "type": "ComplexSelector",
             "span": {
-              "start": 0,
-              "end": 3,
+              "start": 1,
+              "end": 4,
               "ctxt": 0
             },
             "children": [
               {
                 "type": "CompoundSelector",
                 "span": {
-                  "start": 0,
-                  "end": 3,
+                  "start": 1,
+                  "end": 4,
                   "ctxt": 0
                 },
                 "nestingSelector": null,
                 "typeSelector": {
-                  "type": "TypeSelector",
+                  "type": "TagNameSelector",
                   "span": {
-                    "start": 0,
-                    "end": 3,
+                    "start": 1,
+                    "end": 4,
                     "ctxt": 0
                   },
-                  "prefix": null,
                   "name": {
-                    "type": "Identifier",
+                    "type": "WqName",
                     "span": {
-                      "start": 0,
-                      "end": 3,
+                      "start": 1,
+                      "end": 4,
                       "ctxt": 0
                     },
-                    "value": "div",
-                    "raw": "div"
+                    "prefix": null,
+                    "value": {
+                      "type": "Ident",
+                      "span": {
+                        "start": 1,
+                        "end": 4,
+                        "ctxt": 0
+                      },
+                      "value": "div",
+                      "raw": "div"
+                    }
                   }
                 },
                 "subclassSelectors": []
@@ -63,25 +71,34 @@
         ]
       },
       "block": {
-        "type": "Block",
+        "type": "SimpleBlock",
         "span": {
-          "start": 4,
-          "end": 156,
+          "start": 5,
+          "end": 207,
           "ctxt": 0
         },
-        "items": [
+        "name": {
+          "type": "PreservedToken",
+          "span": {
+            "start": 5,
+            "end": 6,
+            "ctxt": 0
+          },
+          "token": "LBrace"
+        },
+        "value": [
           {
             "type": "Declaration",
             "span": {
-              "start": 10,
-              "end": 19,
+              "start": 11,
+              "end": 20,
               "ctxt": 0
             },
-            "property": {
-              "type": "Identifier",
+            "name": {
+              "type": "Ident",
               "span": {
-                "start": 10,
-                "end": 14,
+                "start": 11,
+                "end": 15,
                 "ctxt": 0
               },
               "value": "prop",
@@ -89,13 +106,22 @@
             },
             "value": [
               {
-                "type": "SquareBracketBlock",
+                "type": "SimpleBlock",
                 "span": {
-                  "start": 17,
-                  "end": 19,
+                  "start": 18,
+                  "end": 20,
                   "ctxt": 0
                 },
-                "children": []
+                "name": {
+                  "type": "PreservedToken",
+                  "span": {
+                    "start": 18,
+                    "end": 19,
+                    "ctxt": 0
+                  },
+                  "token": "LBracket"
+                },
+                "value": []
               }
             ],
             "important": null
@@ -103,15 +129,15 @@
           {
             "type": "Declaration",
             "span": {
-              "start": 25,
-              "end": 35,
+              "start": 26,
+              "end": 36,
               "ctxt": 0
             },
-            "property": {
-              "type": "Identifier",
+            "name": {
+              "type": "Ident",
               "span": {
-                "start": 25,
-                "end": 29,
+                "start": 26,
+                "end": 30,
                 "ctxt": 0
               },
               "value": "prop",
@@ -119,13 +145,22 @@
             },
             "value": [
               {
-                "type": "SquareBracketBlock",
+                "type": "SimpleBlock",
                 "span": {
-                  "start": 32,
-                  "end": 35,
+                  "start": 33,
+                  "end": 36,
                   "ctxt": 0
                 },
-                "children": []
+                "name": {
+                  "type": "PreservedToken",
+                  "span": {
+                    "start": 33,
+                    "end": 34,
+                    "ctxt": 0
+                  },
+                  "token": "LBracket"
+                },
+                "value": []
               }
             ],
             "important": null
@@ -133,15 +168,15 @@
           {
             "type": "Declaration",
             "span": {
-              "start": 41,
-              "end": 60,
+              "start": 42,
+              "end": 61,
               "ctxt": 0
             },
-            "property": {
-              "type": "Identifier",
+            "name": {
+              "type": "Ident",
               "span": {
-                "start": 41,
-                "end": 45,
+                "start": 42,
+                "end": 46,
                 "ctxt": 0
               },
               "value": "prop",
@@ -149,18 +184,27 @@
             },
             "value": [
               {
-                "type": "SquareBracketBlock",
+                "type": "SimpleBlock",
                 "span": {
-                  "start": 48,
-                  "end": 60,
+                  "start": 49,
+                  "end": 61,
                   "ctxt": 0
                 },
-                "children": [
+                "name": {
+                  "type": "PreservedToken",
+                  "span": {
+                    "start": 49,
+                    "end": 50,
+                    "ctxt": 0
+                  },
+                  "token": "LBracket"
+                },
+                "value": [
                   {
-                    "type": "Identifier",
+                    "type": "Ident",
                     "span": {
-                      "start": 49,
-                      "end": 59,
+                      "start": 50,
+                      "end": 60,
                       "ctxt": 0
                     },
                     "value": "row1-start",
@@ -174,15 +218,15 @@
           {
             "type": "Declaration",
             "span": {
-              "start": 66,
-              "end": 88,
+              "start": 67,
+              "end": 111,
               "ctxt": 0
             },
-            "property": {
-              "type": "Identifier",
+            "name": {
+              "type": "Ident",
               "span": {
-                "start": 66,
-                "end": 70,
+                "start": 67,
+                "end": 71,
                 "ctxt": 0
               },
               "value": "prop",
@@ -190,54 +234,114 @@
             },
             "value": [
               {
-                "type": "SquareBracketBlock",
+                "type": "SimpleBlock",
                 "span": {
-                  "start": 73,
-                  "end": 88,
+                  "start": 74,
+                  "end": 111,
                   "ctxt": 0
                 },
-                "children": [
+                "name": {
+                  "type": "PreservedToken",
+                  "span": {
+                    "start": 74,
+                    "end": 75,
+                    "ctxt": 0
+                  },
+                  "token": "LBracket"
+                },
+                "value": [
                   {
-                    "type": "Identifier",
+                    "type": "Ident",
                     "span": {
-                      "start": 74,
-                      "end": 77,
+                      "start": 78,
+                      "end": 107,
+                      "ctxt": 0
+                    },
+                    "value": "row1-start-with-spaces-around",
+                    "raw": "row1-start-with-spaces-around"
+                  }
+                ]
+              }
+            ],
+            "important": null
+          },
+          {
+            "type": "Declaration",
+            "span": {
+              "start": 117,
+              "end": 139,
+              "ctxt": 0
+            },
+            "name": {
+              "type": "Ident",
+              "span": {
+                "start": 117,
+                "end": 121,
+                "ctxt": 0
+              },
+              "value": "prop",
+              "raw": "prop"
+            },
+            "value": [
+              {
+                "type": "SimpleBlock",
+                "span": {
+                  "start": 124,
+                  "end": 139,
+                  "ctxt": 0
+                },
+                "name": {
+                  "type": "PreservedToken",
+                  "span": {
+                    "start": 124,
+                    "end": 125,
+                    "ctxt": 0
+                  },
+                  "token": "LBracket"
+                },
+                "value": [
+                  {
+                    "type": "Ident",
+                    "span": {
+                      "start": 125,
+                      "end": 128,
                       "ctxt": 0
                     },
                     "value": "red",
                     "raw": "red"
                   },
                   {
-                    "type": "HashValue",
+                    "type": "HexColor",
                     "span": {
-                      "start": 78,
-                      "end": 82,
+                      "start": 129,
+                      "end": 133,
                       "ctxt": 0
                     },
                     "value": "fff",
                     "raw": "fff"
                   },
                   {
-                    "type": "UnitValue",
+                    "type": "Length",
                     "span": {
-                      "start": 83,
-                      "end": 87,
+                      "start": 134,
+                      "end": 138,
                       "ctxt": 0
                     },
                     "value": {
                       "type": "Number",
                       "span": {
-                        "start": 83,
-                        "end": 85,
+                        "start": 134,
+                        "end": 136,
                         "ctxt": 0
                       },
                       "value": 12.0,
                       "raw": "12"
                     },
                     "unit": {
+                      "type": "Ident",
                       "span": {
-                        "start": 85,
-                        "end": 87,
+                        "start": 136,
+                        "end": 138,
                         "ctxt": 0
                       },
                       "value": "px",
@@ -252,15 +356,15 @@
           {
             "type": "Declaration",
             "span": {
-              "start": 94,
-              "end": 153,
+              "start": 145,
+              "end": 204,
               "ctxt": 0
             },
-            "property": {
-              "type": "Identifier",
+            "name": {
+              "type": "Ident",
               "span": {
-                "start": 94,
-                "end": 98,
+                "start": 145,
+                "end": 149,
                 "ctxt": 0
               },
               "value": "prop",
@@ -268,18 +372,27 @@
             },
             "value": [
               {
-                "type": "SquareBracketBlock",
+                "type": "SimpleBlock",
                 "span": {
-                  "start": 100,
-                  "end": 112,
+                  "start": 151,
+                  "end": 163,
                   "ctxt": 0
                 },
-                "children": [
+                "name": {
+                  "type": "PreservedToken",
+                  "span": {
+                    "start": 151,
+                    "end": 152,
+                    "ctxt": 0
+                  },
+                  "token": "LBracket"
+                },
+                "value": [
                   {
-                    "type": "Identifier",
+                    "type": "Ident",
                     "span": {
-                      "start": 101,
-                      "end": 111,
+                      "start": 152,
+                      "end": 162,
                       "ctxt": 0
                     },
                     "value": "row1-start",
@@ -288,17 +401,17 @@
                 ]
               },
               {
-                "type": "PercentValue",
+                "type": "Percentage",
                 "span": {
-                  "start": 113,
-                  "end": 116,
+                  "start": 164,
+                  "end": 167,
                   "ctxt": 0
                 },
                 "value": {
                   "type": "Number",
                   "span": {
-                    "start": 113,
-                    "end": 115,
+                    "start": 164,
+                    "end": 166,
                     "ctxt": 0
                   },
                   "value": 25.0,
@@ -306,28 +419,37 @@
                 }
               },
               {
-                "type": "SquareBracketBlock",
+                "type": "SimpleBlock",
                 "span": {
-                  "start": 117,
-                  "end": 138,
+                  "start": 168,
+                  "end": 189,
                   "ctxt": 0
                 },
-                "children": [
+                "name": {
+                  "type": "PreservedToken",
+                  "span": {
+                    "start": 168,
+                    "end": 169,
+                    "ctxt": 0
+                  },
+                  "token": "LBracket"
+                },
+                "value": [
                   {
-                    "type": "Identifier",
+                    "type": "Ident",
                     "span": {
-                      "start": 118,
-                      "end": 126,
+                      "start": 169,
+                      "end": 177,
                       "ctxt": 0
                     },
                     "value": "row1-end",
                     "raw": "row1-end"
                   },
                   {
-                    "type": "Identifier",
+                    "type": "Ident",
                     "span": {
-                      "start": 127,
-                      "end": 137,
+                      "start": 178,
+                      "end": 188,
                       "ctxt": 0
                     },
                     "value": "row2-start",
@@ -336,17 +458,17 @@
                 ]
               },
               {
-                "type": "PercentValue",
+                "type": "Percentage",
                 "span": {
-                  "start": 139,
-                  "end": 142,
+                  "start": 190,
+                  "end": 193,
                   "ctxt": 0
                 },
                 "value": {
                   "type": "Number",
                   "span": {
-                    "start": 139,
-                    "end": 141,
+                    "start": 190,
+                    "end": 192,
                     "ctxt": 0
                   },
                   "value": 25.0,
@@ -354,18 +476,27 @@
                 }
               },
               {
-                "type": "SquareBracketBlock",
+                "type": "SimpleBlock",
                 "span": {
-                  "start": 143,
-                  "end": 153,
+                  "start": 194,
+                  "end": 204,
                   "ctxt": 0
                 },
-                "children": [
+                "name": {
+                  "type": "PreservedToken",
+                  "span": {
+                    "start": 194,
+                    "end": 195,
+                    "ctxt": 0
+                  },
+                  "token": "LBracket"
+                },
+                "value": [
                   {
-                    "type": "Identifier",
+                    "type": "Ident",
                     "span": {
-                      "start": 144,
-                      "end": 152,
+                      "start": 195,
+                      "end": 203,
                       "ctxt": 0
                     },
                     "value": "row2-end",

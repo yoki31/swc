@@ -1,12 +1,15 @@
 # Built files
 /*.js
-!jest.config.js
+!node-swc/jest.config.js
 /*.map
 /*.d.ts
 native/artifacts.json
 artifacts.json
 *.node
-
+*.tmp_node_swc_fixture_test
+/scripts/npm/**/swc
+/scripts/npm/**/swc.exe
+.yarn/
 
 target/
 **/*.bk
@@ -21,10 +24,11 @@ target/
 
 .DS_Store
 
-node_modules/
+/node_modules/
 
 # Flamegraph
 *.html
+!crates/swc_html*/**/*.html
 *.svg
 package-lock.json
 *.data
@@ -38,7 +42,6 @@ package-lock.json
 .COVERAGE_DIR
 
 **/*~
-**/node_modules
 **/.DS_Store
 
 pkg/
@@ -51,3 +54,11 @@ pkg/
 
 # Used to see output of babel.
 /lab
+
+*.mm_profdata
+.tsbuildinfo
+.swc/
+
+# Used by scripts
+*.tmp.txt
+swc-core-*.tgz

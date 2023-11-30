@@ -1,5 +1,5 @@
 {
-  "mappings": ";;AAAA,MAAM,SAAS,QAAQ,CAACA,UAAU,CAAC,KAAQ,EAAE,CAAC;QAATC,IAAI,GAAN,KAAQ,CAANA,IAAI;IACrC,MAAM,mCAAEC,CAAG,YAAED,IAAI,CAACE,GAAG;AACzB,CAAC;AAED,MAAM,UAAgBC,cAAc;WAAdA,eAAc;;SAAdA,eAAc;IAAdA,eAAc,uDAA7B,QAAQ,WAAwB,CAAC;;;;iDAC7B,CAAC;wBACJC,KAAK,EAAE,CAAC;4BACJJ,IAAI,EAAE,CAAC;gCACHE,GAAG,EAAE,CAAK;4BACd,CAAC;wBACL,CAAC;oBACL,CAAC;;;;;;IACL,CAAC;WARqBC,eAAc",
+  "mappings": ";;AAAA,eAAe,SAASA,WAAW,KAAQ;QAAR,AAAEC,OAAF,MAAEA;IACjC,qBAAO,oBAACC,aAAKD,KAAKE,GAAG;AACzB;AAEA,gBAAsBC;WAAAA;;SAAAA;IAAAA,kBAAf,oBAAA;;YACH;;gBAAO;oBACHC,OAAO;wBACHJ,MAAM;4BACFE,KAAK;wBACT;oBACJ;gBACJ;;;IACJ;WARsBC",
   "names": [
     "StaticPage",
     "data",
@@ -12,7 +12,7 @@
     "../../input/index.js"
   ],
   "sourcesContent": [
-    "export default function StaticPage({ data }) {\n    return <div>{data.foo}</div>\n}\n\nexport async function getStaticProps() {\n    return {\n        props: {\n            data: {\n                foo: 'bar',\n            },\n        },\n    }\n}"
+    "export default function StaticPage({ data }) {\n    return <div>{data.foo}</div>;\n}\n\nexport async function getStaticProps() {\n    return {\n        props: {\n            data: {\n                foo: \"bar\",\n            },\n        },\n    };\n}\n"
   ],
   "version": 3
 }

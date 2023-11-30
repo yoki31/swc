@@ -1,8 +1,10 @@
-use crate::{common::BaseNode, expr::Expression, flavor::Flavor, typescript::TSType};
-use serde::{ser::SerializeMap, Deserialize, Serialize};
 use std::borrow::Cow;
-use swc_atoms::JsWord;
+
+use serde::{ser::SerializeMap, Deserialize, Serialize};
+use swc_atoms::{Atom, JsWord};
 use swc_common::ast_serde;
+
+use crate::{common::BaseNode, expr::Expression, flavor::Flavor, typescript::TSType};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Literal {
@@ -43,16 +45,16 @@ impl Serialize for Literal {
                 };
                 BabelLiteral::serialize(&b, serializer)
             }
-            Flavor::Acorn => {
+            Flavor::Acorn { .. } => {
                 let (base, value, raw) = match self {
                     Literal::String(l) => (
                         &l.base,
                         AcornLiteralValue::String(l.value.clone()),
-                        Cow::Borrowed(&*l.value),
+                        Cow::Owned(l.raw.to_string()),
                     ),
                     Literal::Numeric(l) => (
                         &l.base,
-                        AcornLiteralValue::Numeric(l.value.clone()),
+                        AcornLiteralValue::Numeric(l.value),
                         Cow::Owned(l.value.to_string()),
                     ),
                     Literal::Null(l) => (
@@ -62,7 +64,7 @@ impl Serialize for Literal {
                     ),
                     Literal::Boolean(l) => (
                         &l.base,
-                        AcornLiteralValue::Boolean(l.value.clone()),
+                        AcornLiteralValue::Boolean(l.value),
                         if l.value {
                             Cow::Borrowed("true")
                         } else {
@@ -171,15 +173,16 @@ enum AcornLiteralValue {
     Null(Option<()>),
     Boolean(bool),
     BigInt(String),
-    Decimal(JsWord),
+    Decimal(Atom),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type")]
 pub struct StringLiteral {
     #[serde(flatten)]
     pub base: BaseNode,
     pub value: JsWord,
+    pub raw: Atom,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -199,14 +202,14 @@ pub struct NumberLiteral {
     pub value: f64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type")]
 pub struct NullLiteral {
     #[serde(flatten)]
     pub base: BaseNode,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type")]
 pub struct BooleanLiteral {
     #[serde(flatten)]
@@ -214,18 +217,18 @@ pub struct BooleanLiteral {
     pub value: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type")]
 pub struct RegExpLiteral {
     #[serde(flatten)]
     pub base: BaseNode,
-    pub pattern: JsWord,
+    pub pattern: Atom,
     #[serde(default)]
-    pub flags: JsWord,
+    pub flags: Atom,
 }
 
 /// Deprecated. Use RegExpLiteral instead.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type")]
 pub struct RegexLiteral {
     #[serde(flatten)]
@@ -235,15 +238,15 @@ pub struct RegexLiteral {
     pub flags: JsWord,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TemplateElVal {
     #[serde(default)]
-    pub raw: JsWord,
+    pub raw: Atom,
     #[serde(default)]
-    pub cooked: Option<JsWord>,
+    pub cooked: Option<Atom>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type")]
 pub struct TemplateElement {
     #[serde(flatten)]
@@ -307,20 +310,22 @@ pub struct TemplateLiteral {
     pub expressions: Vec<TemplateLiteralExpr>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type")]
 pub struct BigIntLiteral {
     #[serde(flatten)]
     pub base: BaseNode,
     #[serde(default)]
     pub value: String,
+    #[serde(default)]
+    pub raw: Atom,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type")]
 pub struct DecimalLiteral {
     #[serde(flatten)]
     pub base: BaseNode,
     #[serde(default)]
-    pub value: JsWord,
+    pub value: Atom,
 }

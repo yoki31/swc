@@ -1,18 +1,18 @@
-function a1() {
+function a() {
     var a = [
         1
     ];
     var [b] = a;
     f(b);
 }
-function b1() {
+function b() {
     var a = {
         b: 1
     };
     var { b: b  } = a;
     f(b);
 }
-function c1() {
+function c() {
     var a = [
         [
             1
@@ -30,7 +30,7 @@ function d() {
     var { b: { b: b  }  } = a;
     f(b);
 }
-function e1() {
+function e() {
     var a = [
         1,
         2,
@@ -49,7 +49,7 @@ function e1() {
         h: 1
     };
     var [b, ...c] = a;
-    var [...[e, f]] = x;
+    var [...[e, f1]] = x;
     var [...{ g: h  }] = y;
-    f(b, c, e, f, g);
+    f1(b, c, e, f1, g);
 }

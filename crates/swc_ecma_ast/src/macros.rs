@@ -1,4 +1,5 @@
-/// Creates a corresponding operator.
+/// Creates a corresponding operator. This macro is used to make code more
+/// readable.
 ///
 /// This can used to represent [UnaryOp](crate::UnaryOp),
 /// [BinaryOp](crate::BinaryOp), or [AssignOp](crate::AssignOp).
@@ -177,8 +178,60 @@ macro_rules! op {
 macro_rules! test_de {
     ($name:ident, $T:path, $s:literal) => {
         #[test]
+        #[cfg(feature = "serde-impl")]
         fn $name() {
             let _var: $T = ::serde_json::from_str(&$s).expect("failed to parse json");
         }
+    };
+}
+
+/// Implement `From<$src>` for `$dst`, by using implementation of `From<$src>`
+/// for `$bridge`.
+///
+/// - `$dst` must implement `From<$bridge>`.
+/// - `$bridge` must implement `From<$src>`.
+///
+///
+/// e.g. For `&str` -> `Box<Expr>`, we convert it by `&str` -> `Atom` -> `Str`
+/// -> `Lit` -> `Expr` -> `Box<Expr>`.
+macro_rules! bridge_from {
+    ($dst:ty, $bridge:ty, $src:ty) => {
+        impl From<$src> for $dst {
+            #[cfg_attr(not(debug_assertions), inline(always))]
+            fn from(src: $src) -> $dst {
+                let src: $bridge = src.into();
+                src.into()
+            }
+        }
+    };
+}
+
+macro_rules! bridge_expr_from {
+    ($bridge:ty, $src:ty) => {
+        bridge_from!(crate::Expr, $bridge, $src);
+        bridge_from!(Box<crate::Expr>, crate::Expr, $src);
+    };
+}
+
+macro_rules! bridge_pat_from {
+    ($bridge:ty, $src:ty) => {
+        bridge_from!(crate::Pat, $bridge, $src);
+        bridge_from!(crate::Param, crate::Pat, $src);
+        bridge_from!(Box<crate::Pat>, crate::Pat, $src);
+    };
+}
+
+macro_rules! bridge_stmt_from {
+    ($bridge:ty, $src:ty) => {
+        bridge_from!(crate::Stmt, $bridge, $src);
+        bridge_from!(crate::ModuleItem, crate::Stmt, $src);
+    };
+}
+
+macro_rules! bridge_decl_from {
+    ($bridge:ty, $src:ty) => {
+        bridge_from!(crate::Decl, $bridge, $src);
+        bridge_from!(crate::Stmt, crate::Decl, $src);
+        bridge_from!(crate::ModuleItem, crate::Stmt, $src);
     };
 }

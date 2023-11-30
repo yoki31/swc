@@ -1,6 +1,7 @@
-use super::*;
 use swc_common::{sync::Lrc, FilePathMapping};
 use swc_ecma_transforms_testing::{test, test_exec};
+
+use super::*;
 
 fn tr() -> impl Fold {
     let cm = Lrc::new(SourceMap::new(FilePathMapping::empty()));
@@ -40,7 +41,6 @@ test!(
     }),
     |_| tr(),
     no_jsx,
-    r#"var x = 42;"#,
     r#"var x = 42;"#
 );
 

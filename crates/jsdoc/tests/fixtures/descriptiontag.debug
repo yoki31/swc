@@ -2,71 +2,70 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                0,
+                1,
             ),
             hi: BytePos(
-                0,
+                1,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    0,
+                    1,
                 ),
                 hi: BytePos(
-                    17,
+                    18,
                 ),
                 ctxt: #0,
             },
-            value: Atom('Blah Blah Blah
-             *' type=dynamic),
+            value: "Blah Blah Blah\n *",
         },
         tags: [
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        0,
+                        1,
                     ),
                     hi: BytePos(
-                        4,
+                        5,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            0,
+                            1,
                         ),
                         hi: BytePos(
-                            4,
+                            5,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('desc' type=inline),
+                    value: "desc",
                 },
                 tag: Description(
                     DescriptionTag {
                         span: Span {
                             lo: BytePos(
-                                0,
+                                1,
                             ),
                             hi: BytePos(
-                                4,
+                                5,
                             ),
                             ctxt: #0,
                         },
                         text: Text {
                             span: Span {
                                 lo: BytePos(
-                                    0,
+                                    1,
                                 ),
                                 hi: BytePos(
-                                    14,
+                                    15,
                                 ),
                                 ctxt: #0,
                             },
-                            value: Atom('halb halb halb' type=dynamic),
+                            value: "halb halb halb",
                         },
                     },
                 ),
@@ -76,56 +75,56 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                55,
+                56,
             ),
             hi: BytePos(
-                63,
+                64,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    55,
+                    56,
                 ),
                 hi: BytePos(
-                    55,
+                    56,
                 ),
                 ctxt: #0,
             },
-            value: Atom('' type=static),
+            value: "",
         },
         tags: [
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        55,
+                        56,
                     ),
                     hi: BytePos(
-                        66,
+                        67,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            55,
+                            56,
                         ),
                         hi: BytePos(
-                            66,
+                            67,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('description' type=dynamic),
+                    value: "description",
                 },
                 tag: Description(
                     DescriptionTag {
                         span: Span {
                             lo: BytePos(
-                                55,
+                                56,
                             ),
                             hi: BytePos(
-                                66,
+                                67,
                             ),
                             ctxt: #0,
                         },
@@ -139,7 +138,7 @@
                                 ),
                                 ctxt: #0,
                             },
-                            value: Atom('' type=static),
+                            value: "",
                         },
                     },
                 ),

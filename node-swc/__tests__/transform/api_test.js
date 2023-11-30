@@ -10,7 +10,7 @@ it("should handle minify", () => {
                 minify: true
             })
             .code.trim()
-    ).toBe(`import foo,{bar}from"foo"`);
+    ).toBe(`import foo,{bar}from"foo";`);
 });
 
 it("should handle sourceMaps = false", () => {
@@ -33,7 +33,7 @@ it("should handle exportNamespaceFrom", () => {
         }
     });
 
-    expect(out.code).toContain("import * as _Foo from 'bar';");
+    expect(out.code).toContain("import * as _Foo from \"bar\";");
     expect(out.code).toContain("export { _Foo as Foo }");
 });
 
@@ -98,7 +98,7 @@ it("(async) should handle dynamic import", async () => {
         }
     });
 
-    expect(out.code.replace(/;/g, "").trim()).toBe(`import('foo')`);
+    expect(out.code.replace(/;/g, "").trim()).toBe(`import("foo")`);
 });
 
 it("should handle nullish coalescing", async () => {
@@ -111,7 +111,7 @@ it("should handle nullish coalescing", async () => {
         }
     });
 
-    expect(out.code).toBe(`a !== null && a !== void 0 ? a : 'foo';
+    expect(out.code).toBe(`a !== null && a !== void 0 ? a : "foo";
 `);
 });
 
@@ -135,7 +135,7 @@ it("should respect isModule = false", async () => {
         }
     );
 
-    expect(out.code.trim()).toEqual(`var five = 5;`)
+    expect(out.code.trim()).toEqual(`var five = 005;`)
 });
 
 it("should respect isModule = true", async () => {
@@ -176,18 +176,16 @@ it("should respect `error.filename = false`", async () => {
 
 });
 
-it("should merge parser config", async () => {
+it("should support overring `jsc.externalHelpers` using js api", async () => {
     const filename = path.resolve(
-        __dirname + "/../../tests/issue-2546/input.ts"
+        __dirname + "/../../tests/issue-3834/input.js"
     );
 
     const { code } = await swc.transformFile(filename, {
         jsc: {
-            parser: {
-                syntax: "typescript",
-            }
+            externalHelpers: false,
         }
     })
 
-    expect(code).not.toBeFalsy()
+    expect(code).toContain('function _class_call_check')
 });

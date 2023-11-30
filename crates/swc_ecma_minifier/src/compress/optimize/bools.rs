@@ -1,28 +1,27 @@
-use super::Optimizer;
-use crate::{
-    compress::{optimize::Ctx, util::negate_cost},
-    debug::dump,
-    mode::Mode,
-};
-use swc_atoms::js_word;
-use swc_common::{util::take::Take, Spanned};
+use swc_common::{util::take::Take, EqIgnoreSpan, Span, Spanned, DUMMY_SP};
 use swc_ecma_ast::*;
-use swc_ecma_utils::{ident::IdentLike, undefined, ExprExt, Type, Value::Known};
+use swc_ecma_utils::{
+    undefined, ExprExt, Type,
+    Value::{self, Known},
+};
+
+use super::Optimizer;
+use crate::compress::{optimize::Ctx, util::negate_cost};
+#[cfg(feature = "debug")]
+use crate::debug::dump;
 
 /// Methods related to the options `bools` and `bool_as_ints`.
-impl<M> Optimizer<'_, M>
-where
-    M: Mode,
-{
+impl Optimizer<'_> {
     /// **This negates bool**.
     ///
     /// Returns true if it's negated.
+    #[cfg_attr(feature = "debug", tracing::instrument(skip(self, expr)))]
     pub(super) fn optimize_bang_within_logical_ops(
         &mut self,
         expr: &mut Expr,
         is_ret_val_ignored: bool,
     ) -> bool {
-        let cost = negate_cost(&expr, is_ret_val_ignored, is_ret_val_ignored).unwrap_or(isize::MAX);
+        let cost = negate_cost(&self.expr_ctx, expr, is_ret_val_ignored, is_ret_val_ignored);
         if cost >= 0 {
             return false;
         }
@@ -56,13 +55,14 @@ where
         //  =>
         //
         // `_ || 'undefined' == typeof require`
-        tracing::debug!(
+        report_change!(
             is_return_value_ignored = is_ret_val_ignored,
             negate_cost = cost,
             "bools: Negating: (!a && !b) => !(a || b) (because both expression are good for \
              negation)",
         );
-        let start = dump(&*e);
+        #[cfg(feature = "debug")]
+        let start = dump(&*e, false);
 
         e.op = if e.op == op!("&&") {
             op!("||")
@@ -75,19 +75,16 @@ where
             ..self.ctx
         };
 
-        self.changed = true;
-        self.with_ctx(ctx).negate(&mut e.left);
-        self.with_ctx(ctx).negate(&mut e.right);
+        self.with_ctx(ctx).negate(&mut e.left, false);
+        self.with_ctx(ctx).negate(&mut e.right, is_ret_val_ignored);
 
-        if cfg!(feature = "debug") {
-            tracing::debug!("[Change] {} => {}", start, dump(&*e));
-        }
+        dump_change_detail!("{} => {}", start, dump(&*e, false));
 
         true
     }
 
     pub(super) fn compress_if_stmt_as_expr(&mut self, s: &mut Stmt) {
-        if !self.options.bools {
+        if !self.options.conditionals && !self.options.bools {
             return;
         }
 
@@ -96,56 +93,43 @@ where
             _ => return,
         };
 
-        match &stmt.alt {
-            Some(..) => {}
-            None => match &mut *stmt.cons {
-                Stmt::Expr(cons) => {
-                    self.changed = true;
-                    tracing::debug!("conditionals: `if (foo) bar;` => `foo && bar`");
-                    *s = Stmt::Expr(ExprStmt {
-                        span: stmt.span,
-                        expr: Box::new(Expr::Bin(BinExpr {
-                            span: stmt.test.span(),
-                            op: op!("&&"),
-                            left: stmt.test.take(),
-                            right: cons.expr.take(),
-                        })),
-                    });
-                    return;
-                }
-                _ => {}
-            },
+        if stmt.alt.is_none() {
+            if let Stmt::Expr(cons) = &mut *stmt.cons {
+                self.changed = true;
+                report_change!("conditionals: `if (foo) bar;` => `foo && bar`");
+                *s = Stmt::Expr(ExprStmt {
+                    span: stmt.span,
+                    expr: Box::new(Expr::Bin(BinExpr {
+                        span: stmt.test.span(),
+                        op: op!("&&"),
+                        left: stmt.test.take(),
+                        right: cons.expr.take(),
+                    })),
+                });
+            }
         }
     }
 
     ///
     /// - `"undefined" == typeof value;` => `void 0 === value`
     pub(super) fn compress_typeof_undefined(&mut self, e: &mut BinExpr) {
-        fn opt<M>(o: &mut Optimizer<M>, l: &mut Expr, r: &mut Expr) -> bool {
+        fn opt(o: &mut Optimizer, l: &mut Expr, r: &mut Expr) -> bool {
             match (&mut *l, &mut *r) {
                 (
-                    Expr::Lit(Lit::Str(Str {
-                        value: js_word!("undefined"),
-                        ..
-                    })),
+                    Expr::Lit(Lit::Str(Str { value: l_v, .. })),
                     Expr::Unary(UnaryExpr {
                         op: op!("typeof"),
                         arg,
                         ..
                     }),
-                ) => {
+                ) if &**l_v == "undefined" => {
                     // TODO?
-                    match &**arg {
-                        Expr::Ident(arg) => {
-                            if let Some(usage) =
-                                o.data.as_ref().and_then(|data| data.vars.get(&arg.to_id()))
-                            {
-                                if !usage.declared {
-                                    return false;
-                                }
+                    if let Expr::Ident(arg) = &**arg {
+                        if let Some(usage) = o.data.vars.get(&arg.to_id()) {
+                            if !usage.declared {
+                                return false;
                             }
                         }
-                        _ => {}
                     }
 
                     *l = *undefined(l.span());
@@ -172,5 +156,148 @@ where
                 _ => e.op,
             };
         }
+    }
+
+    ///
+    /// - `a === undefined || a === null` => `a == null`
+    pub(super) fn optimize_cmp_with_null_or_undefined(&mut self, e: &mut BinExpr) {
+        if e.op == op!("||") || e.op == op!("&&") {
+            {
+                let res = self.optimize_cmp_with_null_or_undefined_inner(
+                    e.span,
+                    e.op,
+                    &mut e.left,
+                    &mut e.right,
+                );
+                if let Some(res) = res {
+                    self.changed = true;
+                    *e = res;
+                    return;
+                }
+            }
+
+            if let (Expr::Bin(left), right) = (&mut *e.left, &mut *e.right) {
+                if e.op == left.op {
+                    let res = self.optimize_cmp_with_null_or_undefined_inner(
+                        right.span(),
+                        e.op,
+                        &mut left.right,
+                        &mut *right,
+                    );
+                    if let Some(res) = res {
+                        self.changed = true;
+                        *e = BinExpr {
+                            span: e.span,
+                            op: e.op,
+                            left: left.left.take(),
+                            right: Box::new(Expr::Bin(res)),
+                        };
+                    }
+                }
+            }
+        }
+    }
+
+    fn optimize_cmp_with_null_or_undefined_inner(
+        &mut self,
+        span: Span,
+        top_op: BinaryOp,
+        e_left: &mut Expr,
+        e_right: &mut Expr,
+    ) -> Option<BinExpr> {
+        let (cmp, op, left, right) = match &mut *e_left {
+            Expr::Bin(left_bin) => {
+                if left_bin.op != op!("===") && left_bin.op != op!("!==") {
+                    return None;
+                }
+
+                if top_op == op!("&&") && left_bin.op == op!("===") {
+                    return None;
+                }
+                if top_op == op!("||") && left_bin.op == op!("!==") {
+                    return None;
+                }
+
+                match &*left_bin.right {
+                    Expr::Ident(..) | Expr::Lit(..) => {}
+                    Expr::Member(MemberExpr {
+                        obj,
+                        prop: MemberProp::Ident(..),
+                        ..
+                    }) => {
+                        if self.should_preserve_property_access(
+                            obj,
+                            super::unused::PropertyAccessOpts {
+                                allow_getter: false,
+                                only_ident: false,
+                            },
+                        ) {
+                            return None;
+                        }
+                    }
+                    _ => {
+                        return None;
+                    }
+                }
+
+                let right = match &mut *e_right {
+                    Expr::Bin(right_bin) => {
+                        if right_bin.op != left_bin.op {
+                            return None;
+                        }
+
+                        if !right_bin.right.eq_ignore_span(&left_bin.right) {
+                            return None;
+                        }
+
+                        &mut *right_bin.left
+                    }
+                    _ => return None,
+                };
+
+                (
+                    &mut left_bin.right,
+                    left_bin.op,
+                    &mut *left_bin.left,
+                    &mut *right,
+                )
+            }
+            _ => return None,
+        };
+
+        let lt = left.get_type();
+        let rt = right.get_type();
+        if let Value::Known(lt) = lt {
+            if let Value::Known(rt) = rt {
+                match (lt, rt) {
+                    (Type::Undefined, Type::Null) | (Type::Null, Type::Undefined) => {
+                        if op == op!("===") {
+                            report_change!(
+                                "Reducing `!== null || !== undefined` check to `!= null`"
+                            );
+                            return Some(BinExpr {
+                                span,
+                                op: op!("=="),
+                                left: cmp.take(),
+                                right: Box::new(Expr::Lit(Lit::Null(Null { span: DUMMY_SP }))),
+                            });
+                        } else {
+                            report_change!(
+                                "Reducing `=== null || === undefined` check to `== null`"
+                            );
+                            return Some(BinExpr {
+                                span,
+                                op: op!("!="),
+                                left: cmp.take(),
+                                right: Box::new(Expr::Lit(Lit::Null(Null { span: DUMMY_SP }))),
+                            });
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        None
     }
 }

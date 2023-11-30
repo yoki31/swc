@@ -1,25 +1,25 @@
 //! Parser for object literal.
 
-use super::*;
-use crate::{lexer::TokenContext, parser::class_and_fn::is_not_this, token::Keyword};
-use swc_atoms::js_word;
 use swc_common::Spanned;
 
-impl<'a, I: Tokens> Parser<I> {
+use super::*;
+use crate::parser::class_and_fn::is_not_this;
+
+impl<I: Tokens> Parser<I> {
     /// Parse a object literal or object pattern.
     pub(super) fn parse_object<T>(&mut self) -> PResult<T>
     where
         Self: ParseObject<T>,
     {
         let ctx = Context {
-            is_direct_child_of_cond: false,
-            dont_parse_colon_as_type_ann: false,
+            will_expect_colon_for_cond: false,
             ..self.ctx()
         };
         self.with_ctx(ctx).parse_with(|p| {
             trace_cur!(p, parse_object);
 
             let start = cur_pos!(p);
+            let mut trailing_comma = None;
             assert_and_bump!(p, '{');
 
             let mut props = vec![];
@@ -29,10 +29,13 @@ impl<'a, I: Tokens> Parser<I> {
 
                 if !is!(p, '}') {
                     expect!(p, ',');
+                    if is!(p, '}') {
+                        trailing_comma = Some(p.input.prev_span());
+                    }
                 }
             }
 
-            p.make_object(span!(p, start), props)
+            p.make_object(span!(p, start), props, trailing_comma)
         })
     }
 
@@ -50,44 +53,31 @@ impl<'a, I: Tokens> Parser<I> {
 
             let v = match *cur!(p, true)? {
                 Token::Str { .. } => match bump!(p) {
-                    Token::Str { value, has_escape } => PropName::Str(Str {
+                    Token::Str { value, raw } => PropName::Str(Str {
                         span: span!(p, start),
                         value,
-                        has_escape,
-                        kind: StrKind::Normal {
-                            contains_quote: true,
-                        },
+                        raw: Some(raw),
                     }),
                     _ => unreachable!(),
                 },
-                Token::Num(_) => match bump!(p) {
-                    Token::Num(value) => PropName::Num(Number {
+                Token::Num { .. } => match bump!(p) {
+                    Token::Num { value, raw } => PropName::Num(Number {
                         span: span!(p, start),
                         value,
+                        raw: Some(raw),
                     }),
                     _ => unreachable!(),
                 },
-                Token::BigInt(_) => match bump!(p) {
-                    Token::BigInt(value) => PropName::BigInt(BigInt {
+                Token::BigInt { .. } => match bump!(p) {
+                    Token::BigInt { value, raw } => PropName::BigInt(BigInt {
                         span: span!(p, start),
                         value,
+                        raw: Some(raw),
                     }),
                     _ => unreachable!(),
                 },
                 Word(..) => match bump!(p) {
-                    Word(w) => {
-                        match w {
-                            Word::Keyword(Keyword::Function) => {
-                                // See https://github.com/swc-project/swc/issues/2075
-                                let ctx = p.input.token_context_mut();
-                                let token_ctx = ctx.pop();
-
-                                debug_assert_eq!(token_ctx, Some(TokenContext::FnExpr));
-                            }
-                            _ => {}
-                        }
-                        PropName::Ident(Ident::new(w.into(), span!(p, start)))
-                    }
+                    Word(w) => PropName::Ident(Ident::new(w.into(), span!(p, start))),
                     _ => unreachable!(),
                 },
                 tok!('[') => {
@@ -135,7 +125,15 @@ impl<'a, I: Tokens> Parser<I> {
 impl<I: Tokens> ParseObject<Box<Expr>> for Parser<I> {
     type Prop = PropOrSpread;
 
-    fn make_object(&mut self, span: Span, props: Vec<Self::Prop>) -> PResult<Box<Expr>> {
+    fn make_object(
+        &mut self,
+        span: Span,
+        props: Vec<Self::Prop>,
+        trailing_comma: Option<Span>,
+    ) -> PResult<Box<Expr>> {
+        if let Some(trailing_comma) = trailing_comma {
+            self.state.trailing_commas.insert(span.lo, trailing_comma);
+        }
         Ok(Box::new(Expr::Object(ObjectLit { span, props })))
     }
 
@@ -156,10 +154,13 @@ impl<I: Tokens> ParseObject<Box<Expr>> for Parser<I> {
         }
 
         if eat!(self, '*') {
-            let span_of_gen = span!(self, start);
-
             let name = self.parse_prop_name()?;
             return self
+                .with_ctx(Context {
+                    allow_direct_super: true,
+                    in_class_field: false,
+                    ..self.ctx()
+                })
                 .parse_fn_args_body(
                     // no decorator in an object literal
                     vec![],
@@ -184,11 +185,7 @@ impl<I: Tokens> ParseObject<Box<Expr>> for Parser<I> {
         if self.input.syntax().typescript()
             && !is_one_of!(self, '(', '[', ':', ',', '?', '=', '*', IdentName, Str, Num)
             && !(self.input.syntax().typescript() && is!(self, '<'))
-            && !(is!(self, '}')
-                && match key {
-                    PropName::Ident(..) => true,
-                    _ => false,
-                })
+            && !(is!(self, '}') && matches!(key, PropName::Ident(..)))
         {
             trace_cur!(self, parse_object_prop_error);
 
@@ -216,6 +213,11 @@ impl<I: Tokens> ParseObject<Box<Expr>> for Parser<I> {
         // Handle `a(){}` (and async(){} / get(){} / set(){})
         if (self.input.syntax().typescript() && is!(self, '<')) || is!(self, '(') {
             return self
+                .with_ctx(Context {
+                    allow_direct_super: true,
+                    in_class_field: false,
+                    ..self.ctx()
+                })
                 .parse_fn_args_body(
                     // no decorator in an object literal
                     vec![],
@@ -261,126 +263,135 @@ impl<I: Tokens> ParseObject<Box<Expr>> for Parser<I> {
         // set a(v){}
         // async a(){}
 
-        match ident.sym {
-            js_word!("get") | js_word!("set") | js_word!("async") => {
+        match &*ident.sym {
+            "get" | "set" | "async" => {
                 trace_cur!(self, parse_object_prop__after_accessor);
 
                 if has_modifiers {
                     self.emit_err(modifiers_span, SyntaxError::TS1042);
                 }
 
-                let is_generator = ident.sym == js_word!("async") && eat!(self, '*');
+                let is_generator = ident.sym == "async" && eat!(self, '*');
                 let key = self.parse_prop_name()?;
                 let key_span = key.span();
+                self.with_ctx(Context {
+                    allow_direct_super: true,
+                    in_class_field: false,
+                    ..self.ctx()
+                })
+                .parse_with(|parser| {
+                    match &*ident.sym {
+                        "get" => parser
+                            .parse_fn_args_body(
+                                // no decorator in an object literal
+                                vec![],
+                                start,
+                                |p| {
+                                    let params = p.parse_formal_params()?;
 
-                match ident.sym {
-                    js_word!("get") => self
-                        .parse_fn_args_body(
-                            // no decorator in an object literal
-                            vec![],
-                            start,
-                            |p| {
-                                let params = p.parse_formal_params()?;
-
-                                if params.iter().filter(|p| is_not_this(p)).count() != 0 {
-                                    p.emit_err(key_span, SyntaxError::TS1094);
-                                }
-
-                                Ok(params)
-                            },
-                            false,
-                            false,
-                        )
-                        .map(
-                            |Function {
-                                 body,
-                                 type_params,
-                                 return_type,
-                                 ..
-                             }| {
-                                if type_params.is_some() {
-                                    self.emit_err(type_params.unwrap().span(), SyntaxError::TS1094);
-                                }
-
-                                if self.input.syntax().typescript()
-                                    && self.input.target() == EsVersion::Es3
-                                {
-                                    self.emit_err(key_span, SyntaxError::TS1056);
-                                }
-
-                                PropOrSpread::Prop(Box::new(Prop::Getter(GetterProp {
-                                    span: span!(self, start),
-                                    key,
-                                    type_ann: return_type,
-                                    body,
-                                })))
-                            },
-                        ),
-                    js_word!("set") => self
-                        .parse_fn_args_body(
-                            // no decorator in an object literal
-                            vec![],
-                            start,
-                            |p| {
-                                let params = p.parse_formal_params()?;
-
-                                if params.iter().filter(|p| is_not_this(p)).count() != 1 {
-                                    p.emit_err(key_span, SyntaxError::TS1094);
-                                }
-
-                                if !params.is_empty() {
-                                    if let Pat::Rest(..) = params[0].pat {
-                                        p.emit_err(params[0].span(), SyntaxError::RestPatInSetter);
+                                    if params.iter().filter(|p| is_not_this(p)).count() != 0 {
+                                        p.emit_err(key_span, SyntaxError::GetterParam);
                                     }
-                                }
 
-                                if p.input.syntax().typescript()
-                                    && p.input.target() == EsVersion::Es3
-                                {
-                                    p.emit_err(key_span, SyntaxError::TS1056);
-                                }
+                                    Ok(params)
+                                },
+                                false,
+                                false,
+                            )
+                            .map(|v| *v)
+                            .map(
+                                |Function {
+                                     body, return_type, ..
+                                 }| {
+                                    if parser.input.syntax().typescript()
+                                        && parser.input.target() == EsVersion::Es3
+                                    {
+                                        parser.emit_err(key_span, SyntaxError::TS1056);
+                                    }
 
-                                Ok(params)
-                            },
-                            false,
-                            false,
-                        )
-                        .map(
-                            |Function {
-                                 params,
-                                 body,
-                                 type_params,
-                                 ..
-                             }| {
-                                if type_params.is_some() {
-                                    self.emit_err(type_params.unwrap().span(), SyntaxError::TS1094);
-                                }
+                                    PropOrSpread::Prop(Box::new(Prop::Getter(GetterProp {
+                                        span: span!(parser, start),
+                                        key,
+                                        type_ann: return_type,
+                                        body,
+                                    })))
+                                },
+                            ),
+                        "set" => {
+                            parser
+                                .parse_fn_args_body(
+                                    // no decorator in an object literal
+                                    vec![],
+                                    start,
+                                    |p| {
+                                        let params = p.parse_formal_params()?;
 
-                                // debug_assert_eq!(params.len(), 1);
-                                PropOrSpread::Prop(Box::new(Prop::Setter(SetterProp {
-                                    span: span!(self, start),
+                                        if params.iter().filter(|p| is_not_this(p)).count() != 1 {
+                                            p.emit_err(key_span, SyntaxError::SetterParam);
+                                        }
+
+                                        if !params.is_empty() {
+                                            if let Pat::Rest(..) = params[0].pat {
+                                                p.emit_err(
+                                                    params[0].span(),
+                                                    SyntaxError::RestPatInSetter,
+                                                );
+                                            }
+                                        }
+
+                                        if p.input.syntax().typescript()
+                                            && p.input.target() == EsVersion::Es3
+                                        {
+                                            p.emit_err(key_span, SyntaxError::TS1056);
+                                        }
+
+                                        Ok(params)
+                                    },
+                                    false,
+                                    false,
+                                )
+                                .map(|v| *v)
+                                .map(
+                                    |Function {
+                                         mut params, body, ..
+                                     }| {
+                                        params.retain(|p| match &p.pat {
+                                            Pat::Ident(p) => p.sym != "this",
+                                            _ => true,
+                                        });
+
+                                        // debug_assert_eq!(params.len(), 1);
+                                        PropOrSpread::Prop(Box::new(Prop::Setter(SetterProp {
+                                            span: span!(parser, start),
+                                            key,
+                                            body,
+                                            param: Box::new(
+                                                params.into_iter().map(|p| p.pat).next().unwrap_or(
+                                                    Pat::Invalid(Invalid { span: key_span }),
+                                                ),
+                                            ),
+                                        })))
+                                    },
+                                )
+                        }
+                        "async" => parser
+                            .parse_fn_args_body(
+                                // no decorator in an object literal
+                                vec![],
+                                start,
+                                |p| p.parse_unique_formal_params(),
+                                true,
+                                is_generator,
+                            )
+                            .map(|function| {
+                                PropOrSpread::Prop(Box::new(Prop::Method(MethodProp {
                                     key,
-                                    body,
-                                    param: params.into_iter().map(|p| p.pat).next().unwrap_or_else(
-                                        || Pat::Invalid(Invalid { span: key_span }),
-                                    ),
+                                    function,
                                 })))
-                            },
-                        ),
-                    js_word!("async") => self
-                        .parse_fn_args_body(
-                            // no decorator in an object literal
-                            vec![],
-                            start,
-                            |p| p.parse_unique_formal_params(),
-                            true,
-                            is_generator,
-                        )
-                        .map(|function| {
-                            PropOrSpread::Prop(Box::new(Prop::Method(MethodProp { key, function })))
-                        }),
-                    _ => unreachable!(),
-                }
+                            }),
+                        _ => unreachable!(),
+                    }
+                })
             }
             _ => {
                 if self.input.syntax().typescript() {
@@ -400,13 +411,22 @@ impl<I: Tokens> ParseObject<Box<Expr>> for Parser<I> {
 impl<I: Tokens> ParseObject<Pat> for Parser<I> {
     type Prop = ObjectPatProp;
 
-    fn make_object(&mut self, span: Span, props: Vec<Self::Prop>) -> PResult<Pat> {
+    fn make_object(
+        &mut self,
+        span: Span,
+        props: Vec<Self::Prop>,
+        trailing_comma: Option<Span>,
+    ) -> PResult<Pat> {
         let len = props.len();
         for (i, p) in props.iter().enumerate() {
             if i == len - 1 {
                 if let ObjectPatProp::Rest(ref rest) = p {
                     match *rest.arg {
-                        Pat::Ident(..) => {}
+                        Pat::Ident(..) => {
+                            if let Some(trailing_comma) = trailing_comma {
+                                self.emit_err(trailing_comma, SyntaxError::CommaAfterRestElement);
+                            }
+                        }
                         _ => syntax_error!(self, p.span(), SyntaxError::DotsWithoutIdentifier),
                     }
                 }
@@ -414,9 +434,7 @@ impl<I: Tokens> ParseObject<Pat> for Parser<I> {
             }
 
             if let ObjectPatProp::Rest(..) = p {
-                if self.syntax().early_errors() {
-                    syntax_error!(self, p.span(), SyntaxError::NonLastRestParam)
-                }
+                self.emit_err(p.span(), SyntaxError::NonLastRestParam)
             }
         }
 

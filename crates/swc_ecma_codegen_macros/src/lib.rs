@@ -9,14 +9,14 @@ mod fold;
 
 #[proc_macro_attribute]
 pub fn emitter(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    let item: ImplItemMethod = syn::parse(item).expect("failed to parse input as an item");
-    let item = fold::InjectSelf { parser: None }.fold_impl_item_method(item);
+    let item: ImplItemFn = syn::parse(item).expect("failed to parse input as an item");
+    let item = fold::InjectSelf { parser: None }.fold_impl_item_fn(item);
     let item = expand(item);
 
     print("emitter", item.dump())
 }
 
-fn expand(i: ImplItemMethod) -> ImplItemMethod {
+fn expand(i: ImplItemFn) -> ImplItemFn {
     let mtd_name = i.sig.ident.clone();
     assert!(
         format!("{}", i.sig.ident).starts_with("emit_"),
@@ -60,9 +60,10 @@ fn (&mut self, node: Node) -> Result;
                 {
                     {
                         impl crate::Node for NodeType {
-                            fn emit_with<W>(&self, e: &mut crate::Emitter<'_, W>) -> Result
+                            fn emit_with<W, S: swc_common::SourceMapper>(&self, e: &mut crate::Emitter<'_, W, S>) -> Result
                             where
                                 W: crate::text_writer::WriteJs,
+                                S: swc_ecma_ast::SourceMapperExt
                             {
                                 e.mtd_name(self)
                             }
@@ -82,5 +83,5 @@ fn (&mut self, node: Node) -> Result;
             .parse()
     };
 
-    ImplItemMethod { block, ..i }
+    ImplItemFn { block, ..i }
 }

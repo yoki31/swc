@@ -1,5 +1,3 @@
-#![feature(bench_black_box)]
-
 use std::{
     env,
     fs::read_to_string,
@@ -7,13 +5,15 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, RwLock},
 };
+
 use swc_common::comments::SingleThreadedComments;
+use swc_ecma_ast::EsVersion;
 use swc_ecma_codegen::{self, text_writer::WriteJs, Emitter};
-use swc_ecma_parser::{lexer::Lexer, Parser, StringInput, Syntax};
+use swc_ecma_parser::{lexer::Lexer, Parser, Syntax};
 use testing::NormalizedOutput;
 
 const IGNORED_PASS_TESTS: &[&str] = &[
-    // Temporalily ignored
+    // Temporally ignored
     "431ecef8c85d4d24.js",
     "8386fbff927a9e0e.js",
     "5654d4106d7025c2.js",
@@ -86,7 +86,7 @@ fn do_test(entry: &Path, minify: bool) {
         .expect("to_str() failed")
         .to_string();
 
-    let input = read_to_string(&entry).unwrap();
+    let input = read_to_string(entry).unwrap();
 
     let ignore = IGNORED_PASS_TESTS.contains(&&*file_name);
 
@@ -96,8 +96,6 @@ fn do_test(entry: &Path, minify: bool) {
 
     let module = file_name.contains("module");
 
-    let ref_dir = ref_dir.clone();
-
     let msg = format!(
         "\n\n========== Running codegen test {}\nSource:\n{}\n",
         file_name, input
@@ -105,7 +103,7 @@ fn do_test(entry: &Path, minify: bool) {
     let mut wr = Buf(Arc::new(RwLock::new(vec![])));
 
     ::testing::run_test(false, |cm, handler| {
-        let src = cm.load_file(&entry).expect("failed to load file");
+        let src = cm.load_file(entry).expect("failed to load file");
         eprintln!(
             "{}\nPos: {:?} ~ {:?} (L{})",
             msg,
@@ -121,7 +119,7 @@ fn do_test(entry: &Path, minify: bool) {
             (&*src).into(),
             Some(&comments),
         );
-        let mut parser: Parser<Lexer<StringInput>> = Parser::new_from(lexer);
+        let mut parser: Parser<Lexer> = Parser::new_from(lexer);
 
         {
             let mut wr = Box::new(swc_ecma_codegen::text_writer::JsWriter::new(
@@ -136,8 +134,10 @@ fn do_test(entry: &Path, minify: bool) {
             }
 
             let mut emitter = Emitter {
-                cfg: swc_ecma_codegen::Config { minify },
-                cm: cm.clone(),
+                cfg: swc_ecma_codegen::Config::default()
+                    .with_minify(minify)
+                    .with_target(EsVersion::Es5),
+                cm,
                 wr,
                 comments: if minify { None } else { Some(&comments) },
             };

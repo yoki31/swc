@@ -1,11 +1,12 @@
-export default function(c, e) {
+export default function(s, c) {
+    var a, r;
     try {
-        if ("string" == typeof c && c.length > 0) return (function(a) {
-            if ((a = String(a)).length > 100) throw new Error("Value exceeds the maximum length of 100 characters.");
-            var b = /^(-?(?:\d+)?\.?\d+) *(milliseconds?|msecs?|ms|seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h|days?|d|weeks?|w|years?|yrs?|y)?$/i.exec(a);
-            if (!b) return NaN;
-            var c = parseFloat(b[1]), d = (b[2] || "ms").toLowerCase();
-            switch(d){
+        if ("string" == typeof s && s.length > 0) return function(e) {
+            if ((e = String(e)).length > 100) throw Error("Value exceeds the maximum length of 100 characters.");
+            var s = /^(-?(?:\d+)?\.?\d+) *(milliseconds?|msecs?|ms|seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h|days?|d|weeks?|w|years?|yrs?|y)?$/i.exec(e);
+            if (!s) return NaN;
+            var c = parseFloat(s[1]), a = (s[2] || "ms").toLowerCase();
+            switch(a){
                 case "years":
                 case "year":
                 case "yrs":
@@ -45,27 +46,15 @@ export default function(c, e) {
                 case "ms":
                     return c;
                 default:
-                    throw new Error("The unit ".concat(d, " was matched, but no matching case exists."));
+                    throw Error("The unit ".concat(a, " was matched, but no matching case exists."));
             }
-        })(c);
-        if ("number" == typeof c && isFinite(c)) return (null == e ? void 0 : e.long) ? b(c) : a(c);
-        throw new Error("Value is not a string or number.");
-    } catch (f) {
-        var g = d(f) ? "".concat(f.message, ". value=").concat(JSON.stringify(c)) : "An unknown error has occured.";
-        throw new Error(g);
+        }(s);
+        if ("number" == typeof s && isFinite(s)) return (null == c ? void 0 : c.long) ? (a = Math.abs(s)) >= 86400000 ? e(s, a, 86400000, "day") : a >= 3600000 ? e(s, a, 3600000, "hour") : a >= 60000 ? e(s, a, 60000, "minute") : a >= 1000 ? e(s, a, 1000, "second") : "".concat(s, " ms") : (r = Math.abs(s)) >= 86400000 ? "".concat(Math.round(s / 86400000), "d") : r >= 3600000 ? "".concat(Math.round(s / 3600000), "h") : r >= 60000 ? "".concat(Math.round(s / 60000), "m") : r >= 1000 ? "".concat(Math.round(s / 1000), "s") : "".concat(s, "ms");
+        throw Error("Value is not a string or number.");
+    } catch (e) {
+        throw Error("object" == typeof e && null !== e && "message" in e ? "".concat(e.message, ". value=").concat(JSON.stringify(s)) : "An unknown error has occurred.");
     }
-};
-function a(a) {
-    var b = Math.abs(a);
-    return b >= 86400000 ? "".concat(Math.round(a / 86400000), "d") : b >= 3600000 ? "".concat(Math.round(a / 3600000), "h") : b >= 60000 ? "".concat(Math.round(a / 60000), "m") : b >= 1000 ? "".concat(Math.round(a / 1000), "s") : "".concat(a, "ms");
 }
-function b(a) {
-    var b = Math.abs(a);
-    return b >= 86400000 ? c(a, b, 86400000, "day") : b >= 3600000 ? c(a, b, 3600000, "hour") : b >= 60000 ? c(a, b, 60000, "minute") : b >= 1000 ? c(a, b, 1000, "second") : "".concat(a, " ms");
-}
-function c(a, b, c, d) {
-    return "".concat(Math.round(a / c), " ").concat(d).concat(b >= 1.5 * c ? "s" : "");
-}
-function d(a) {
-    return "object" == typeof a && null !== a && "message" in a;
+function e(e, s, c, a) {
+    return "".concat(Math.round(e / c), " ").concat(a).concat(s >= 1.5 * c ? "s" : "");
 }

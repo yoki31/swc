@@ -1,10 +1,12 @@
+use std::sync::atomic::{AtomicBool, Ordering};
+
+use swc_common::{sync::Lrc, FileName};
+
 use super::load::TransformedModule;
 use crate::{
     id::{Id, ModuleId, ModuleIdGenerator},
     util::CloneMap,
 };
-use std::sync::atomic::{AtomicBool, Ordering};
-use swc_common::{sync::Lrc, FileName};
 
 #[derive(Debug, Default)]
 pub(super) struct Scope {
@@ -37,7 +39,7 @@ impl Scope {
     }
 
     pub fn get_module(&self, id: ModuleId) -> Option<TransformedModule> {
-        Some(self.transformed_modules.get(&id)?.clone())
+        self.transformed_modules.get(&id)
     }
 
     pub fn is_cjs(&self, id: ModuleId) -> bool {

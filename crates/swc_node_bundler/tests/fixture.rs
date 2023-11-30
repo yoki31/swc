@@ -1,4 +1,3 @@
-use anyhow::Error;
 use std::{
     collections::HashMap,
     fs::{create_dir_all, read_dir},
@@ -6,13 +5,14 @@ use std::{
     path::PathBuf,
     sync::Arc,
 };
+
+use anyhow::Error;
 use swc::{config::SourceMapsConfig, resolver::environment_resolver};
-use swc_atoms::js_word;
 use swc_bundler::{BundleKind, Bundler, Config, ModuleRecord};
-use swc_common::{FileName, Span, GLOBALS};
+use swc_common::{errors::HANDLER, FileName, Globals, Span, GLOBALS};
 use swc_ecma_ast::{
-    Bool, EsVersion, Expr, ExprOrSuper, Ident, KeyValueProp, Lit, MemberExpr, MetaPropExpr,
-    PropName, Str,
+    Bool, EsVersion, Expr, Ident, KeyValueProp, Lit, MemberExpr, MemberProp, MetaPropExpr,
+    MetaPropKind, PropName, Str,
 };
 use swc_ecma_loader::{TargetEnv, NODE_BUILTINS};
 use swc_ecma_transforms::fixer;
@@ -22,8 +22,6 @@ use testing::NormalizedOutput;
 
 #[testing::fixture("tests/pass/**/input")]
 fn pass(input_dir: PathBuf) {
-    let _ = pretty_env_logger::try_init();
-
     let entry = input_dir.parent().unwrap().to_path_buf();
 
     let _ = create_dir_all(entry.join("output"));
@@ -31,18 +29,12 @@ fn pass(input_dir: PathBuf) {
     let entries = read_dir(&input_dir)
         .unwrap()
         .filter(|e| match e {
-            Ok(e) => {
-                if e.path()
-                    .file_name()
-                    .unwrap()
-                    .to_string_lossy()
-                    .starts_with("entry")
-                {
-                    true
-                } else {
-                    false
-                }
-            }
+            Ok(e) => e
+                .path()
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("entry"),
             _ => false,
         })
         .map(|e| -> Result<_, io::Error> {
@@ -55,93 +47,101 @@ fn pass(input_dir: PathBuf) {
         .collect::<Result<HashMap<_, _>, _>>()
         .unwrap();
 
-    testing::run_test2(false, |cm, _handler| {
-        let compiler = Arc::new(swc::Compiler::new(cm.clone()));
+    testing::run_test2(false, |cm, handler| {
+        HANDLER.set(&handler, || {
+            let compiler = Arc::new(swc::Compiler::new(cm.clone()));
+            let globals = Globals::new();
 
-        GLOBALS.set(compiler.globals(), || {
-            let loader = SwcLoader::new(
-                compiler.clone(),
-                swc::config::Options {
-                    swcrc: true,
-                    ..Default::default()
-                },
-            );
-            let mut bundler = Bundler::new(
-                compiler.globals(),
-                cm.clone(),
-                &loader,
-                environment_resolver(TargetEnv::Node, Default::default()),
-                Config {
-                    require: true,
-                    disable_inliner: true,
-                    module: Default::default(),
-                    external_modules: NODE_BUILTINS.to_vec().into_iter().map(From::from).collect(),
-                },
-                Box::new(Hook),
-            );
+            GLOBALS.set(&globals, || {
+                let loader = SwcLoader::new(
+                    compiler.clone(),
+                    swc::config::Options {
+                        swcrc: true,
+                        ..Default::default()
+                    },
+                );
+                let mut bundler = Bundler::new(
+                    &globals,
+                    cm.clone(),
+                    &loader,
+                    environment_resolver(TargetEnv::Node, Default::default(), false),
+                    Config {
+                        require: true,
+                        disable_inliner: true,
+                        module: Default::default(),
+                        external_modules: NODE_BUILTINS.iter().copied().map(From::from).collect(),
+                        ..Default::default()
+                    },
+                    Box::new(Hook),
+                );
 
-            let modules = bundler
-                .bundle(entries)
-                .map_err(|err| println!("{:?}", err))?;
-            println!("Bundled as {} modules", modules.len());
+                let modules = bundler
+                    .bundle(entries)
+                    .map_err(|err| println!("{:?}", err))?;
+                println!("Bundled as {} modules", modules.len());
 
-            let mut error = false;
+                let mut error = false;
 
-            for bundled in modules {
-                let code = compiler
-                    .print(
-                        &bundled.module.fold_with(&mut fixer(None)),
-                        None,
-                        None,
-                        false,
-                        EsVersion::Es2020,
-                        SourceMapsConfig::Bool(false),
-                        &Default::default(),
-                        None,
-                        false,
-                        Some(true.into()),
-                    )
-                    .expect("failed to print?")
-                    .code;
+                for bundled in modules {
+                    let comments = compiler.comments().clone();
+                    let code = compiler
+                        .print(
+                            &bundled.module.fold_with(&mut fixer(None)),
+                            None,
+                            None,
+                            false,
+                            SourceMapsConfig::Bool(false),
+                            &Default::default(),
+                            None,
+                            Some(&comments),
+                            false,
+                            Default::default(),
+                            swc_ecma_codegen::Config::default().with_target(EsVersion::Es2020),
+                        )
+                        .expect("failed to print?")
+                        .code;
 
-                let name = match bundled.kind {
-                    BundleKind::Named { name } | BundleKind::Lib { name } => PathBuf::from(name),
-                    BundleKind::Dynamic => format!("dynamic.{}.js", bundled.id).into(),
-                };
+                    let name = match bundled.kind {
+                        BundleKind::Named { name } | BundleKind::Lib { name } => {
+                            PathBuf::from(name)
+                        }
+                        BundleKind::Dynamic => format!("dynamic.{}.js", bundled.id).into(),
+                    };
 
-                let output_path = entry
-                    .join("output")
-                    .join(name.file_name().unwrap())
-                    .with_extension("js");
+                    let output_path = entry
+                        .join("output")
+                        .join(name.file_name().unwrap())
+                        .with_extension("js");
 
-                println!("Printing {}", output_path.display());
+                    println!("Printing {}", output_path.display());
 
-                // {
-                //     let status = Command::new("node")
-                //         .arg(&output_path)
-                //         .stdout(Stdio::inherit())
-                //         .stderr(Stdio::inherit())
-                //         .status()
-                //         .unwrap();
-                //     assert!(status.success());
-                // }
+                    // {
+                    //     let status = Command::new("node")
+                    //         .arg(&output_path)
+                    //         .stdout(Stdio::inherit())
+                    //         .stderr(Stdio::inherit())
+                    //         .status()
+                    //         .unwrap();
+                    //     assert!(status.success());
+                    // }
 
-                let s = NormalizedOutput::from(code);
+                    let s = NormalizedOutput::from(code);
 
-                match s.compare_to_file(&output_path) {
-                    Ok(_) => {}
-                    Err(err) => {
-                        println!("Diff: {:?}", err);
-                        error = true;
+                    match s.compare_to_file(&output_path) {
+                        Ok(_) => {}
+                        Err(err) => {
+                            println!("Diff: {:?}", err);
+                            error = true;
+                        }
                     }
                 }
-            }
 
-            if error {
-                return Err(());
-            }
+                if error {
+                    return Err(());
+                }
 
-            Ok(())
+                Ok(())
+            })
         })
     })
     .expect("failed to process a module");
@@ -155,27 +155,27 @@ impl swc_bundler::Hook for Hook {
         span: Span,
         module_record: &ModuleRecord,
     ) -> Result<Vec<KeyValueProp>, Error> {
+        let file_name = module_record.file_name.to_string();
+
         Ok(vec![
             KeyValueProp {
-                key: PropName::Ident(Ident::new(js_word!("url"), span)),
+                key: PropName::Ident(Ident::new("url".into(), span)),
                 value: Box::new(Expr::Lit(Lit::Str(Str {
                     span,
-                    value: module_record.file_name.to_string().into(),
-                    has_escape: false,
-                    kind: Default::default(),
+                    raw: None,
+                    value: file_name.into(),
                 }))),
             },
             KeyValueProp {
-                key: PropName::Ident(Ident::new(js_word!("main"), span)),
+                key: PropName::Ident(Ident::new("main".into(), span)),
                 value: Box::new(if module_record.is_entry {
                     Expr::Member(MemberExpr {
                         span,
-                        obj: ExprOrSuper::Expr(Box::new(Expr::MetaProp(MetaPropExpr {
-                            meta: Ident::new(js_word!("import"), span),
-                            prop: Ident::new(js_word!("meta"), span),
-                        }))),
-                        prop: Box::new(Expr::Ident(Ident::new(js_word!("main"), span))),
-                        computed: false,
+                        obj: Box::new(Expr::MetaProp(MetaPropExpr {
+                            span,
+                            kind: MetaPropKind::ImportMeta,
+                        })),
+                        prop: MemberProp::Ident(Ident::new("main".into(), span)),
                     })
                 } else {
                     Expr::Lit(Lit::Bool(Bool { span, value: false }))

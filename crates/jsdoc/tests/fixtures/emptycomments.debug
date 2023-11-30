@@ -2,144 +2,144 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                0,
+                1,
             ),
             hi: BytePos(
-                0,
+                1,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    0,
+                    1,
                 ),
                 hi: BytePos(
-                    0,
+                    1,
                 ),
                 ctxt: #0,
             },
-            value: Atom('' type=static),
+            value: "",
         },
         tags: [],
     },
     JsDoc {
         span: Span {
             lo: BytePos(
-                28,
+                29,
             ),
             hi: BytePos(
-                28,
+                29,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    28,
+                    29,
                 ),
                 hi: BytePos(
-                    28,
+                    29,
                 ),
                 ctxt: #0,
             },
-            value: Atom('' type=static),
+            value: "",
         },
         tags: [],
     },
     JsDoc {
         span: Span {
             lo: BytePos(
-                126,
+                127,
             ),
             hi: BytePos(
-                126,
+                127,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    126,
+                    127,
                 ),
                 hi: BytePos(
-                    128,
+                    129,
                 ),
                 ctxt: #0,
             },
-            value: Atom('	 ' type=inline),
+            value: "\t ",
         },
         tags: [],
     },
     JsDoc {
         span: Span {
             lo: BytePos(
-                227,
+                228,
             ),
             hi: BytePos(
-                227,
+                228,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    227,
+                    228,
                 ),
                 hi: BytePos(
-                    231,
+                    232,
                 ),
                 ctxt: #0,
             },
-            value: Atom('			 ' type=inline),
+            value: "\t\t\t ",
         },
         tags: [],
     },
     JsDoc {
         span: Span {
             lo: BytePos(
-                320,
+                321,
             ),
             hi: BytePos(
-                320,
+                321,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    320,
+                    321,
                 ),
                 hi: BytePos(
-                    320,
+                    321,
                 ),
                 ctxt: #0,
             },
-            value: Atom('' type=static),
+            value: "",
         },
         tags: [],
     },
     JsDoc {
         span: Span {
             lo: BytePos(
-                415,
+                416,
             ),
             hi: BytePos(
-                415,
+                416,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    415,
+                    416,
                 ),
                 hi: BytePos(
-                    415,
+                    416,
                 ),
                 ctxt: #0,
             },
-            value: Atom('' type=static),
+            value: "",
         },
         tags: [],
     },

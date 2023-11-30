@@ -1,17 +1,23 @@
-use crate::{
-    compress::{compressor, pure_optimizer},
-    marks::Marks,
-    mode::Mode,
-};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+
+use parking_lot::Mutex;
 use swc_atoms::js_word;
-use swc_common::{collections::AHashMap, util::take::Take, DUMMY_SP};
+use swc_common::{collections::AHashMap, SyntaxContext, DUMMY_SP};
 use swc_ecma_ast::*;
-use swc_ecma_transforms::optimization::simplify::{expr_simplifier, ExprSimplifierConfig};
-use swc_ecma_utils::{ident::IdentLike, undefined, ExprExt, ExprFactory, Id};
-use swc_ecma_visit::{FoldWith, VisitMutWith};
+use swc_ecma_transforms_optimization::simplify::{expr_simplifier, ExprSimplifierConfig};
+use swc_ecma_usage_analyzer::marks::Marks;
+use swc_ecma_utils::{undefined, ExprCtx, ExprExt};
+use swc_ecma_visit::VisitMutWith;
+
+use crate::{
+    compress::{compressor, pure_optimizer, PureOptimizerConfig},
+    mode::Mode,
+    option::{CompressOptions, TopLevelOptions},
+};
 
 pub struct Evaluator {
+    expr_ctx: ExprCtx,
+
     module: Module,
     marks: Marks,
     data: Eval,
@@ -22,6 +28,11 @@ pub struct Evaluator {
 impl Evaluator {
     pub fn new(module: Module, marks: Marks) -> Self {
         Evaluator {
+            expr_ctx: ExprCtx {
+                unresolved_ctxt: SyntaxContext::empty().apply_mark(marks.unresolved_mark),
+                is_unresolved_ref_safe: false,
+            },
+
             module,
             marks,
             data: Default::default(),
@@ -40,7 +51,7 @@ struct EvalStore {
     cache: AHashMap<Id, Box<Expr>>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EvalResult {
     Lit(Lit),
     Undefined,
@@ -48,12 +59,16 @@ pub enum EvalResult {
 
 impl Mode for Eval {
     fn store(&self, id: Id, value: &Expr) {
-        let mut w = self.store.lock().unwrap();
+        let mut w = self.store.lock();
         w.cache.insert(id, Box::new(value.clone()));
     }
 
-    fn force_str_for_tpl() -> bool {
+    fn force_str_for_tpl(&self) -> bool {
         true
+    }
+
+    fn should_be_very_correct(&self) -> bool {
+        false
     }
 }
 
@@ -64,18 +79,17 @@ impl Evaluator {
 
             let marks = self.marks;
             let data = self.data.clone();
-            self.module.map_with_mut(|m| {
-                //
-                swc_common::GLOBALS.with(|globals| {
-                    //
-                    m.fold_with(&mut compressor(
-                        &globals,
-                        marks,
-                        &serde_json::from_str("{}").unwrap(),
-                        &data,
-                    ))
-                })
-            });
+            //
+            self.module.visit_mut_with(&mut compressor(
+                marks,
+                &CompressOptions {
+                    hoist_props: true,
+                    top_level: Some(TopLevelOptions { functions: true }),
+                    ..Default::default()
+                },
+                None,
+                &data,
+            ));
         }
     }
 
@@ -83,13 +97,16 @@ impl Evaluator {
         match e {
             Expr::Seq(s) => return self.eval(s.exprs.last()?),
 
-            Expr::Lit(l @ Lit::Null(..))
-            | Expr::Lit(l @ Lit::Num(..) | l @ Lit::Str(..) | l @ Lit::BigInt(..)) => {
-                return Some(EvalResult::Lit(l.clone()))
-            }
+            Expr::Lit(
+                l @ Lit::Num(..)
+                | l @ Lit::Str(..)
+                | l @ Lit::BigInt(..)
+                | l @ Lit::Bool(..)
+                | l @ Lit::Null(..),
+            ) => return Some(EvalResult::Lit(l.clone())),
 
             Expr::Tpl(t) => {
-                return self.eval_tpl(&t);
+                return self.eval_tpl(t);
             }
 
             Expr::TaggedTpl(t) => {
@@ -97,12 +114,11 @@ impl Evaluator {
 
                 match &*t.tag {
                     Expr::Member(MemberExpr {
-                        obj: ExprOrSuper::Expr(tag_obj),
-                        prop,
-                        computed: false,
+                        obj: tag_obj,
+                        prop: MemberProp::Ident(prop),
                         ..
-                    }) if tag_obj.is_ident_ref_to("String".into())
-                        && prop.is_ident_ref_to("raw".into()) =>
+                    }) if tag_obj.is_global_ref_to(&self.expr_ctx, "String")
+                        && prop.sym == *"raw" =>
                     {
                         return self.eval_tpl(&t.tpl);
                     }
@@ -131,12 +147,8 @@ impl Evaluator {
             }
 
             // "foo".length
-            Expr::Member(MemberExpr {
-                obj: ExprOrSuper::Expr(obj),
-                prop,
-                computed: false,
-                ..
-            }) if obj.is_lit() && prop.is_ident_ref_to("length".into()) => {}
+            Expr::Member(MemberExpr { obj, prop, .. })
+                if obj.is_lit() && prop.is_ident_with("length") => {}
 
             Expr::Unary(UnaryExpr {
                 op: op!("void"), ..
@@ -145,7 +157,7 @@ impl Evaluator {
             Expr::Unary(UnaryExpr {
                 op: op!("!"), arg, ..
             }) => {
-                let arg = self.eval(&arg)?;
+                let arg = self.eval(arg)?;
 
                 if is_truthy(&arg)? {
                     return Some(EvalResult::Lit(Lit::Bool(Bool {
@@ -171,34 +183,29 @@ impl Evaluator {
             Expr::Ident(i) => {
                 self.run();
 
-                let lock = self.data.store.lock().ok()?;
+                let lock = self.data.store.lock();
                 let val = lock.cache.get(&i.to_id())?;
 
                 return Some(val.clone());
             }
 
             Expr::Member(MemberExpr {
-                span,
-                obj: ExprOrSuper::Expr(obj),
-                prop,
-                computed: false,
-                ..
-            }) => {
-                let obj = self.eval_as_expr(&obj)?;
+                span, obj, prop, ..
+            }) if !prop.is_computed() => {
+                let obj = self.eval_as_expr(obj)?;
 
                 let mut e = Expr::Member(MemberExpr {
                     span: *span,
-                    obj: obj.as_obj(),
+                    obj,
                     prop: prop.clone(),
-                    computed: false,
                 });
 
-                e.visit_mut_with(&mut expr_simplifier(ExprSimplifierConfig {
-                    preserve_string_call: true,
-                }));
+                e.visit_mut_with(&mut expr_simplifier(
+                    self.marks.unresolved_mark,
+                    ExprSimplifierConfig {},
+                ));
                 return Some(Box::new(e));
             }
-
             _ => {}
         }
 
@@ -225,12 +232,16 @@ impl Evaluator {
         });
 
         {
-            let data = self.data.clone();
             e.visit_mut_with(&mut pure_optimizer(
-                &serde_json::from_str("{}").unwrap(),
+                &Default::default(),
+                None,
                 self.marks,
-                &data,
-                false,
+                PureOptimizerConfig {
+                    enable_join_vars: false,
+                    force_str_for_tpl: self.data.force_str_for_tpl(),
+                    #[cfg(feature = "debug")]
+                    debug_infinite_loop: false,
+                },
             ));
         }
 

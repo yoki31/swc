@@ -3,7 +3,7 @@
         version: "1.4.5",
         build: "ab8ea8824dc3b24b6666867a2c4ed58ebb762cf0"
     };
-    var typeOf = this.typeOf = function(item) {
+    var typeOf1 = this.typeOf = function(item) {
         if (null == item) return "null";
         if (null != item.$family) return item.$family();
         if (item.nodeName) {
@@ -14,15 +14,15 @@
             if ("item" in item) return "collection";
         }
         return typeof item;
-    }, instanceOf = this.instanceOf = function(item, object) {
+    }, instanceOf1 = this.instanceOf = function(item, object) {
         if (null == item) return !1;
         for(var constructor = item.$constructor || item.constructor; constructor;){
             if (constructor === object) return !0;
             constructor = constructor.parent;
         }
         return !!item.hasOwnProperty && item instanceof object;
-    }, Function = this.Function, enumerables = !0;
-    for(var i1 in {
+    }, Function1 = this.Function, enumerables = !0;
+    for(var i in {
         toString: 1
     })enumerables = null;
     enumerables && (enumerables = [
@@ -33,7 +33,7 @@
         "toLocaleString",
         "toString",
         "constructor"
-    ]), Function.prototype.overloadSetter = function(usePlural) {
+    ]), Function1.prototype.overloadSetter = function(usePlural) {
         var self = this;
         return function(a, b) {
             if (null == a) return this;
@@ -43,31 +43,30 @@
             } else self.call(this, a, b);
             return this;
         };
-    }, Function.prototype.overloadGetter = function(usePlural) {
+    }, Function1.prototype.overloadGetter = function(usePlural) {
         var self = this;
         return function(a) {
             var args, result;
             if ("string" != typeof a ? args = a : arguments.length > 1 ? args = arguments : usePlural && (args = [
                 a
             ]), args) {
-                result = {
-                };
+                result = {};
                 for(var i = 0; i < args.length; i++)result[args[i]] = self.call(this, args[i]);
             } else result = self.call(this, a);
             return result;
         };
-    }, Function.prototype.extend = (function(key, value) {
+    }, Function1.prototype.extend = (function(key, value) {
         this[key] = value;
-    }).overloadSetter(), Function.prototype.implement = (function(key, value) {
+    }).overloadSetter(), Function1.prototype.implement = (function(key, value) {
         this.prototype[key] = value;
     }).overloadSetter();
     var slice = Array.prototype.slice;
-    Function.from = function(item) {
-        return "function" == typeOf(item) ? item : function() {
+    Function1.from = function(item) {
+        return "function" == typeOf1(item) ? item : function() {
             return item;
         };
     }, Array.from = function(item) {
-        return null == item ? [] : Type.isEnumerable(item) && "string" != typeof item ? "array" == typeOf(item) ? item : slice.call(item) : [
+        return null == item ? [] : Type1.isEnumerable(item) && "string" != typeof item ? "array" == typeOf1(item) ? item : slice.call(item) : [
             item
         ];
     }, Number.from = function(item) {
@@ -75,7 +74,7 @@
         return isFinite(number) ? number : null;
     }, String.from = function(item) {
         return item + "";
-    }, Function.implement({
+    }, Function1.implement({
         hide: function() {
             return this.$hidden = !0, this;
         },
@@ -83,32 +82,31 @@
             return this.$protected = !0, this;
         }
     });
-    var Type = this.Type = function(name, object) {
+    var Type1 = this.Type = function(name, object) {
         if (name) {
             var lower = name.toLowerCase(), typeCheck = function(item) {
-                return typeOf(item) == lower;
+                return typeOf1(item) == lower;
             };
-            Type["is" + name] = typeCheck, null != object && (object.prototype.$family = (function() {
+            Type1["is" + name] = typeCheck, null != object && (object.prototype.$family = (function() {
                 return lower;
             }).hide(), object.type = typeCheck);
         }
-        return null == object ? null : (object.extend(this), object.$constructor = Type, object.prototype.$constructor = object, object);
+        return null == object ? null : (object.extend(this), object.$constructor = Type1, object.prototype.$constructor = object, object);
     }, toString = Object.prototype.toString;
-    Type.isEnumerable = function(item) {
+    Type1.isEnumerable = function(item) {
         return null != item && "number" == typeof item.length && "[object Function]" != toString.call(item);
     };
-    var hooks1 = {
-    }, hooksOf = function(object) {
-        var type = typeOf(object.prototype);
-        return hooks1[type] || (hooks1[type] = []);
+    var hooks = {}, hooksOf = function(object) {
+        var type = typeOf1(object.prototype);
+        return hooks[type] || (hooks[type] = []);
     }, implement = function(name, method) {
         if (!method || !method.$hidden) {
             for(var hooks = hooksOf(this), i = 0; i < hooks.length; i++){
                 var hook = hooks[i];
-                "type" == typeOf(hook) ? implement.call(hook, name, method) : hook.call(this, name, method);
+                "type" == typeOf1(hook) ? implement.call(hook, name, method) : hook.call(this, name, method);
             }
             var previous = this.prototype[name];
-            null != previous && previous.$protected || (this.prototype[name] = method), null == this[name] && "function" == typeOf(method) && extend.call(this, name, function(item) {
+            null != previous && previous.$protected || (this.prototype[name] = method), null == this[name] && "function" == typeOf1(method) && extend.call(this, name, function(item) {
                 return method.apply(item, slice.call(arguments, 1));
             });
         }
@@ -118,7 +116,7 @@
             null != previous && previous.$protected || (this[name] = method);
         }
     };
-    Type.implement({
+    Type1.implement({
         implement: implement.overloadSetter(),
         extend: extend.overloadSetter(),
         alias: (function(name, existing) {
@@ -127,12 +125,12 @@
         mirror: function(hook) {
             return hooksOf(this).push(hook), this;
         }
-    }), new Type("Type", Type);
+    }), new Type1("Type", Type1);
     var force = function(name, object, methods) {
         var isType = object != Object, prototype = object.prototype;
-        isType && (object = new Type(name, object));
-        for(var i2 = 0, l1 = methods.length; i2 < l1; i2++){
-            var key = methods[i2], generic = object[key], proto = prototype[key];
+        isType && (object = new Type1(name, object));
+        for(var i = 0, l = methods.length; i < l; i++){
+            var key = methods[i], generic = object[key], proto = prototype[key];
             generic && generic.protect(), isType && proto && object.implement(key, proto.protect());
         }
         if (isType) {
@@ -186,7 +184,7 @@
         "toFixed",
         "toLocaleString",
         "toPrecision"
-    ])("Function", Function, [
+    ])("Function", Function1, [
         "apply",
         "call",
         "bind"
@@ -210,8 +208,8 @@
     ])("Date", Date, [
         "now"
     ]), Object.extend = extend.overloadSetter(), Date.extend("now", function() {
-        return +new Date;
-    }), new Type("Boolean", Boolean), Number.prototype.$family = (function() {
+        return +new Date();
+    }), new Type1("Boolean", Boolean), Number.prototype.$family = (function() {
         return isFinite(this) ? "number" : "null";
     }).hide(), Number.extend("random", function(min, max) {
         return Math.floor(Math.random() * (max - min + 1) + min);
@@ -228,7 +226,7 @@
         }
     });
     var cloneOf = function(item) {
-        switch(typeOf(item)){
+        switch(typeOf1(item)){
             case "array":
                 return item.clone();
             case "object":
@@ -238,13 +236,13 @@
         }
     };
     Array.implement("clone", function() {
-        for(var i = this.length, clone = new Array(i); i--;)clone[i] = cloneOf(this[i]);
+        for(var i = this.length, clone = Array(i); i--;)clone[i] = cloneOf(this[i]);
         return clone;
     });
     var mergeOne = function(source, key, current) {
-        switch(typeOf(current)){
+        switch(typeOf1(current)){
             case "object":
-                "object" == typeOf(source[key]) ? Object.merge(source[key], current) : source[key] = Object.clone(current);
+                "object" == typeOf1(source[key]) ? Object.merge(source[key], current) : source[key] = Object.clone(current);
                 break;
             case "array":
                 source[key] = current.clone();
@@ -256,7 +254,7 @@
     };
     Object.extend({
         merge: function(source, k, v) {
-            if ("string" == typeOf(k)) return mergeOne(source, k, v);
+            if ("string" == typeOf1(k)) return mergeOne(source, k, v);
             for(var i = 1, l = arguments.length; i < l; i++){
                 var object = arguments[i];
                 for(var key in object)mergeOne(source, key, object[key]);
@@ -264,15 +262,13 @@
             return source;
         },
         clone: function(object) {
-            var clone = {
-            };
+            var clone = {};
             for(var key in object)clone[key] = cloneOf(object[key]);
             return clone;
         },
         append: function(original) {
             for(var i = 1, l = arguments.length; i < l; i++){
-                var extended = arguments[i] || {
-                };
+                var extended = arguments[i] || {};
                 for(var key in extended)original[key] = extended[key];
             }
             return original;
@@ -284,23 +280,22 @@
         "Collection",
         "Arguments"
     ].each(function(name) {
-        new Type(name);
+        new Type1(name);
     });
     var UID = Date.now();
     String.extend("uniqueID", function() {
         return (UID++).toString(36);
     });
-    var Hash = this.Hash = new Type("Hash", function(object) {
-        for(var key in "hash" == typeOf(object) && (object = Object.clone(object.getClean())), object)this[key] = object[key];
+    var Hash1 = this.Hash = new Type1("Hash", function(object) {
+        for(var key in "hash" == typeOf1(object) && (object = Object.clone(object.getClean())), object)this[key] = object[key];
         return this;
     });
-    Hash.implement({
+    Hash1.implement({
         forEach: function(fn, bind) {
             Object.forEach(this, fn, bind);
         },
         getClean: function() {
-            var clean = {
-            };
+            var clean = {};
             for(var key in this)this.hasOwnProperty(key) && (clean[key] = this[key]);
             return clean;
         },
@@ -309,17 +304,17 @@
             for(var key in this)this.hasOwnProperty(key) && length++;
             return length;
         }
-    }), Hash.alias("each", "forEach"), Object.type = Type.isObject;
+    }), Hash1.alias("each", "forEach"), Object.type = Type1.isObject;
     var Native = this.Native = function(properties) {
-        return new Type(properties.name, properties.initialize);
+        return new Type1(properties.name, properties.initialize);
     };
-    Native.type = Type.type, Native.implement = function(objects, methods) {
+    Native.type = Type1.type, Native.implement = function(objects, methods) {
         for(var i = 0; i < objects.length; i++)objects[i].implement(methods);
         return Native;
     };
     var arrayType = Array.type;
     Array.type = function(item) {
-        return instanceOf(item, Array) || arrayType(item);
+        return instanceOf1(item, Array) || arrayType(item);
     }, this.$A = function(item) {
         return Array.from(item).slice();
     }, this.$arguments = function(i) {
@@ -333,28 +328,26 @@
     }, this.$defined = function(obj) {
         return null != obj;
     }, this.$each = function(iterable, fn, bind) {
-        var type = typeOf(iterable);
+        var type = typeOf1(iterable);
         ("arguments" == type || "collection" == type || "array" == type || "elements" == type ? Array : Object).each(iterable, fn, bind);
-    }, this.$empty = function() {
-    }, this.$extend = function(original, extended) {
+    }, this.$empty = function() {}, this.$extend = function(original, extended) {
         return Object.append(original, extended);
     }, this.$H = function(object) {
-        return new Hash(object);
+        return new Hash1(object);
     }, this.$merge = function() {
         var args = Array.slice(arguments);
-        return args.unshift({
-        }), Object.merge.apply(null, args);
-    }, this.$lambda = Function.from, this.$mixin = Object.merge, this.$random = Number.random, this.$splat = Array.from, this.$time = Date.now, this.$type = function(object) {
-        var type = typeOf(object);
+        return args.unshift({}), Object.merge.apply(null, args);
+    }, this.$lambda = Function1.from, this.$mixin = Object.merge, this.$random = Number.random, this.$splat = Array.from, this.$time = Date.now, this.$type = function(object) {
+        var type = typeOf1(object);
         return "elements" == type ? "array" : "null" != type && type;
     }, this.$unlink = function(object) {
-        switch(typeOf(object)){
+        switch(typeOf1(object)){
             case "object":
                 return Object.clone(object);
             case "array":
                 return Array.clone(object);
             case "hash":
-                return new Hash(object);
+                return new Hash1(object);
             default:
                 return object;
         }
@@ -392,13 +385,11 @@
         });
     },
     associate: function(keys) {
-        for(var obj = {
-        }, length = Math.min(this.length, keys.length), i = 0; i < length; i++)obj[keys[i]] = this[i];
+        for(var obj = {}, length = Math.min(this.length, keys.length), i = 0; i < length; i++)obj[keys[i]] = this[i];
         return obj;
     },
     link: function(object) {
-        for(var result = {
-        }, i = 0, l = this.length; i < l; i++)for(var key in object)if (object[key](this[i])) {
+        for(var result = {}, i = 0, l = this.length; i < l; i++)for(var key in object)if (object[key](this[i])) {
             result[key] = this[i], delete object[key];
             break;
         }
@@ -458,12 +449,12 @@
         return array ? hex : "#" + hex.join("");
     }
 }), Array.alias("extend", "append");
-var fireEvent1, $pick = function() {
+var $pick = function() {
     return Array.from(arguments).pick();
 };
 String.implement({
     test: function(regex, params) {
-        return ("regexp" == typeOf(regex) ? regex : new RegExp("" + regex, params)).test(this);
+        return ("regexp" == typeOf(regex) ? regex : RegExp("" + regex, params)).test(this);
     },
     contains: function(string, separator) {
         return separator ? (separator + this + separator).indexOf(separator + string + separator) > -1 : String(this).indexOf(string) > -1;
@@ -516,7 +507,7 @@ String.implement({
         return Math.min(max, Math.max(min, this));
     },
     round: function(precision) {
-        return precision = Math.pow(10, precision || 0).toFixed(precision < 0 ? -precision : 0), Math.round(this * precision) / precision;
+        return Math.round(this * (precision = Math.pow(10, precision || 0).toFixed(precision < 0 ? -precision : 0))) / precision;
     },
     times: function(fn, bind) {
         for(var i = 0; i < this; i++)fn.call(bind, i, this);
@@ -527,9 +518,8 @@ String.implement({
     toInt: function(base) {
         return parseInt(this, base || 10);
     }
-}), Number.alias("each", "times"), (function(math) {
-    var methods = {
-    };
+}), Number.alias("each", "times"), function(math) {
+    var methods = {};
     math.each(function(name) {
         Number[name] || (methods[name] = function() {
             return Math[name].apply(null, [
@@ -537,7 +527,7 @@ String.implement({
             ].concat(Array.from(arguments)));
         });
     }), Number.implement(methods);
-})([
+}([
     "abs",
     "acos",
     "asin",
@@ -558,23 +548,20 @@ String.implement({
     attempt: function() {
         for(var i = 0, l = arguments.length; i < l; i++)try {
             return arguments[i]();
-        } catch (e) {
-        }
+        } catch (e) {}
         return null;
     }
 }), Function.implement({
     attempt: function(args, bind) {
         try {
             return this.apply(bind, Array.from(args));
-        } catch (e) {
-        }
+        } catch (e) {}
         return null;
     },
     bind: function(that) {
-        var self = this, args = arguments.length > 1 ? Array.slice(arguments, 1) : null, F = function() {
-        }, bound = function() {
+        var self = this, args = arguments.length > 1 ? Array.slice(arguments, 1) : null, F = function() {}, bound = function() {
             var context = that, length = arguments.length;
-            this instanceof bound && (F.prototype = self.prototype, context = new F);
+            this instanceof bound && (F.prototype = self.prototype, context = new F());
             var result = args || length ? self.apply(context, args && length ? args.concat(Array.slice(arguments)) : args || arguments) : self.call(context);
             return context == that ? result : context;
         };
@@ -595,8 +582,7 @@ String.implement({
 }), delete Function.prototype.bind, Function.implement({
     create: function(options) {
         var self = this;
-        return options = options || {
-        }, function(event) {
+        return options = options || {}, function(event) {
             var args = options.arguments;
             args = null != args ? Array.from(args) : Array.slice(arguments, options.event ? 1 : 0), options.event && (args = [
                 event || window.event
@@ -630,22 +616,19 @@ var $try = Function.attempt;
     var hasOwnProperty = Object.prototype.hasOwnProperty;
     Object.extend({
         subset: function(object, keys) {
-            for(var results = {
-            }, i = 0, l = keys.length; i < l; i++){
+            for(var results = {}, i = 0, l = keys.length; i < l; i++){
                 var k = keys[i];
                 k in object && (results[k] = object[k]);
             }
             return results;
         },
         map: function(object, fn, bind) {
-            var results = {
-            };
+            var results = {};
             for(var key in object)hasOwnProperty.call(object, key) && (results[key] = fn.call(bind, object[key], key, object));
             return results;
         },
         filter: function(object, fn, bind) {
-            var results = {
-            };
+            var results = {};
             for(var key in object){
                 var value = object[key];
                 hasOwnProperty.call(object, key) && fn.call(bind, value, key, object) && (results[key] = value);
@@ -688,8 +671,7 @@ var $try = Function.attempt;
                         result = Object.toQueryString(value, key);
                         break;
                     case "array":
-                        var result, qs = {
-                        };
+                        var result, qs = {};
                         value.each(function(val, i) {
                             qs[i] = val;
                         }), result = Object.toQueryString(qs, key);
@@ -710,14 +692,12 @@ var $try = Function.attempt;
         return Object.contains(this, value);
     },
     extend: function(properties) {
-        return Hash.each(properties || {
-        }, function(value, key) {
+        return Hash.each(properties || {}, function(value, key) {
             Hash.set(this, key, value);
         }, this), this;
     },
     combine: function(properties) {
-        return Hash.each(properties || {
-        }, function(value, key) {
+        return Hash.each(properties || {}, function(value, key) {
             Hash.include(this, key, value);
         }, this), this;
     },
@@ -762,12 +742,12 @@ var $try = Function.attempt;
 }), Hash.extend = Object.append, Hash.alias({
     indexOf: "keyOf",
     contains: "hasValue"
-}), (function() {
-    var XMLHTTP, MSXML2, MSXML, document = this.document, window = document.window = this, ua = navigator.userAgent.toLowerCase(), platform = navigator.platform.toLowerCase(), UA = ua.match(/(opera|ie|firefox|chrome|version)[\s\/:]([\w\d\.]+)?.*?(safari|version[\s\/:]([\w\d\.]+)|$)/) || [
+}), function() {
+    var document1 = this.document, window1 = document1.window = this, ua = navigator.userAgent.toLowerCase(), platform = navigator.platform.toLowerCase(), UA = ua.match(/(opera|ie|firefox|chrome|version)[\s\/:]([\w\d\.]+)?.*?(safari|version[\s\/:]([\w\d\.]+)|$)/) || [
         null,
         "unknown",
         0
-    ], mode = "ie" == UA[1] && document.documentMode, Browser = this.Browser = {
+    ], mode = "ie" == UA[1] && document1.documentMode, Browser1 = this.Browser = {
         extend: Function.prototype.extend,
         name: "version" == UA[1] ? UA[3] : UA[1],
         version: mode || parseFloat("opera" == UA[1] && UA[4] ? UA[4] : UA[2]),
@@ -777,76 +757,75 @@ var $try = Function.attempt;
             ])[0]
         },
         Features: {
-            xpath: !!document.evaluate,
-            air: !!window.runtime,
-            query: !!document.querySelector,
-            json: !!window.JSON
+            xpath: !!document1.evaluate,
+            air: !!window1.runtime,
+            query: !!document1.querySelector,
+            json: !!window1.JSON
         },
-        Plugins: {
-        }
+        Plugins: {}
     };
-    Browser[Browser.name] = !0, Browser[Browser.name + parseInt(Browser.version, 10)] = !0, Browser.Platform[Browser.Platform.name] = !0, XMLHTTP = function() {
-        return new XMLHttpRequest();
-    }, MSXML2 = function() {
-        return new ActiveXObject("MSXML2.XMLHTTP");
-    }, MSXML = function() {
-        return new ActiveXObject("Microsoft.XMLHTTP");
-    }, Browser.Request = Function.attempt(function() {
-        return XMLHTTP(), XMLHTTP;
-    }, function() {
-        return MSXML2(), MSXML2;
-    }, function() {
-        return MSXML(), MSXML;
-    }), Browser.Features.xhr = !!Browser.Request;
-    var version1 = (Function.attempt(function() {
+    Browser1[Browser1.name] = !0, Browser1[Browser1.name + parseInt(Browser1.version, 10)] = !0, Browser1.Platform[Browser1.Platform.name] = !0, Browser1.Request = function() {
+        var XMLHTTP = function() {
+            return new XMLHttpRequest();
+        }, MSXML2 = function() {
+            return new ActiveXObject("MSXML2.XMLHTTP");
+        }, MSXML = function() {
+            return new ActiveXObject("Microsoft.XMLHTTP");
+        };
+        return Function.attempt(function() {
+            return XMLHTTP(), XMLHTTP;
+        }, function() {
+            return MSXML2(), MSXML2;
+        }, function() {
+            return MSXML(), MSXML;
+        });
+    }(), Browser1.Features.xhr = !!Browser1.Request;
+    var version = (Function.attempt(function() {
         return navigator.plugins["Shockwave Flash"].description;
     }, function() {
         return new ActiveXObject("ShockwaveFlash.ShockwaveFlash").GetVariable("$version");
     }) || "0 r0").match(/\d+/g);
-    if (Browser.Plugins.Flash = {
-        version: Number(version1[0] || "0." + version1[1]) || 0,
-        build: Number(version1[2]) || 0
-    }, Browser.exec = function(text) {
+    if (Browser1.Plugins.Flash = {
+        version: Number(version[0] || "0." + version[1]) || 0,
+        build: Number(version[2]) || 0
+    }, Browser1.exec = function(text) {
         if (!text) return text;
-        if (window.execScript) window.execScript(text);
+        if (window1.execScript) window1.execScript(text);
         else {
-            var script = document.createElement("script");
-            script.setAttribute("type", "text/javascript"), script.text = text, document.head.appendChild(script), document.head.removeChild(script);
+            var script = document1.createElement("script");
+            script.setAttribute("type", "text/javascript"), script.text = text, document1.head.appendChild(script), document1.head.removeChild(script);
         }
         return text;
     }, String.implement("stripScripts", function(exec) {
         var scripts = "", text = this.replace(/<script[^>]*>([\s\S]*?)<\/script>/gi, function(all, code) {
             return scripts += code + "\n", "";
         });
-        return !0 === exec ? Browser.exec(scripts) : "function" == typeOf(exec) && exec(scripts, text), text;
-    }), Browser.extend({
+        return !0 === exec ? Browser1.exec(scripts) : "function" == typeOf(exec) && exec(scripts, text), text;
+    }), Browser1.extend({
         Document: this.Document,
         Window: this.Window,
         Element: this.Element,
         Event: this.Event
-    }), this.Window = this.$constructor = new Type("Window", function() {
-    }), this.$family = Function.from("window").hide(), Window.mirror(function(name, method) {
-        window[name] = method;
-    }), this.Document = document.$constructor = new Type("Document", function() {
-    }), document.$family = Function.from("document").hide(), Document.mirror(function(name, method) {
-        document[name] = method;
-    }), document.html = document.documentElement, document.head || (document.head = document.getElementsByTagName("head")[0]), document.execCommand) try {
-        document.execCommand("BackgroundImageCache", !1, !0);
-    } catch (e) {
-    }
+    }), this.Window = this.$constructor = new Type("Window", function() {}), this.$family = Function.from("window").hide(), Window.mirror(function(name, method) {
+        window1[name] = method;
+    }), this.Document = document1.$constructor = new Type("Document", function() {}), document1.$family = Function.from("document").hide(), Document.mirror(function(name, method) {
+        document1[name] = method;
+    }), document1.html = document1.documentElement, document1.head || (document1.head = document1.getElementsByTagName("head")[0]), document1.execCommand) try {
+        document1.execCommand("BackgroundImageCache", !1, !0);
+    } catch (e) {}
     if (this.attachEvent && !this.addEventListener) {
         var unloadEvent = function() {
-            this.detachEvent("onunload", unloadEvent), document.head = document.html = document.window = null;
+            this.detachEvent("onunload", unloadEvent), document1.head = document1.html = document1.window = null;
         };
         this.attachEvent("onunload", unloadEvent);
     }
     var arrayFrom = Array.from;
     try {
-        arrayFrom(document.html.childNodes);
-    } catch (e1) {
+        arrayFrom(document1.html.childNodes);
+    } catch (e) {
         Array.from = function(item) {
             if ("string" != typeof item && Type.isEnumerable(item) && "array" != typeOf(item)) {
-                for(var i = item.length, array = new Array(i); i--;)array[i] = item[i];
+                for(var i = item.length, array = Array(i); i--;)array[i] = item[i];
                 return array;
             }
             return arrayFrom(item);
@@ -870,12 +849,11 @@ var $try = Function.attempt;
             };
         });
     }
-    Browser.Platform.ios && (Browser.Platform.ipod = !0), Browser.Engine = {
-    };
+    Browser1.Platform.ios && (Browser1.Platform.ipod = !0), Browser1.Engine = {};
     var setEngine = function(name, version) {
-        Browser.Engine.name = name, Browser.Engine[name + version] = !0, Browser.Engine.version = version;
+        Browser1.Engine.name = name, Browser1.Engine[name + version] = !0, Browser1.Engine.version = version;
     };
-    if (Browser.ie) switch(Browser.Engine.trident = !0, Browser.version){
+    if (Browser1.ie) switch(Browser1.Engine.trident = !0, Browser1.version){
         case 6:
             setEngine("trident", 4);
             break;
@@ -885,7 +863,7 @@ var $try = Function.attempt;
         case 8:
             setEngine("trident", 6);
     }
-    if (Browser.firefox && (Browser.Engine.gecko = !0, setEngine("gecko", Browser.version >= 3 ? 19 : 18)), Browser.safari || Browser.chrome) switch(Browser.Engine.webkit = !0, Browser.version){
+    if (Browser1.firefox && (Browser1.Engine.gecko = !0, setEngine("gecko", Browser1.version >= 3 ? 19 : 18)), Browser1.safari || Browser1.chrome) switch(Browser1.Engine.webkit = !0, Browser1.version){
         case 2:
             setEngine("webkit", 419);
             break;
@@ -895,18 +873,17 @@ var $try = Function.attempt;
         case 4:
             setEngine("webkit", 525);
     }
-    if (Browser.opera && (Browser.Engine.presto = !0, setEngine("presto", Browser.version >= 9.6 ? 960 : Browser.version >= 9.5 ? 950 : 925)), "unknown" == Browser.name) switch((ua.match(/(?:webkit|khtml|gecko)/) || [])[0]){
+    if (Browser1.opera && (Browser1.Engine.presto = !0, setEngine("presto", Browser1.version >= 9.6 ? 960 : Browser1.version >= 9.5 ? 950 : 925)), "unknown" == Browser1.name) switch((ua.match(/(?:webkit|khtml|gecko)/) || [])[0]){
         case "webkit":
         case "khtml":
-            Browser.Engine.webkit = !0;
+            Browser1.Engine.webkit = !0;
             break;
         case "gecko":
-            Browser.Engine.gecko = !0;
+            Browser1.Engine.gecko = !0;
     }
-    this.$exec = Browser.exec;
-})(), (function() {
-    var _keys = {
-    }, DOMEvent = this.DOMEvent = new Type("DOMEvent", function(event, win) {
+    this.$exec = Browser1.exec;
+}(), function() {
+    var _keys = {}, DOMEvent1 = this.DOMEvent = new Type("DOMEvent", function(event, win) {
         if (win || (win = window), (event = event || win.event).$extended) return event;
         this.event = event, this.$extended = !0, this.shift = event.shiftKey, this.control = event.ctrlKey, this.alt = event.altKey, this.meta = event.metaKey;
         for(var type = this.type = event.type, target = event.target || event.srcElement; target && 3 == target.nodeType;)target = target.parentNode;
@@ -939,11 +916,9 @@ var $try = Function.attempt;
                 };
             }
         }
-        this.client || (this.client = {
-        }), this.page || (this.page = {
-        });
+        this.client || (this.client = {}), this.page || (this.page = {});
     });
-    DOMEvent.implement({
+    DOMEvent1.implement({
         stop: function() {
             return this.preventDefault().stopPropagation();
         },
@@ -953,25 +928,24 @@ var $try = Function.attempt;
         preventDefault: function() {
             return this.event.preventDefault ? this.event.preventDefault() : this.event.returnValue = !1, this;
         }
-    }), DOMEvent.defineKey = function(code, key) {
+    }), DOMEvent1.defineKey = function(code, key) {
         return _keys[code] = key, this;
-    }, DOMEvent.defineKeys = DOMEvent.defineKey.overloadSetter(!0), DOMEvent.defineKeys({
-        "38": "up",
-        "40": "down",
-        "37": "left",
-        "39": "right",
-        "27": "esc",
-        "32": "space",
-        "8": "backspace",
-        "9": "tab",
-        "46": "delete",
-        "13": "enter"
+    }, DOMEvent1.defineKeys = DOMEvent1.defineKey.overloadSetter(!0), DOMEvent1.defineKeys({
+        38: "up",
+        40: "down",
+        37: "left",
+        39: "right",
+        27: "esc",
+        32: "space",
+        8: "backspace",
+        9: "tab",
+        46: "delete",
+        13: "enter"
     });
-})();
+}();
 var Event = DOMEvent;
-Event.Keys = {
-}, Event.Keys = new Hash(Event.Keys), (function() {
-    var Class = this.Class = new Type("Class", function(params) {
+Event.Keys = {}, Event.Keys = new Hash(Event.Keys), function() {
+    var Class1 = this.Class = new Type("Class", function(params) {
         instanceOf(params, Function) && (params = {
             initialize: params
         });
@@ -981,31 +955,29 @@ Event.Keys = {
             var value = this.initialize ? this.initialize.apply(this, arguments) : this;
             return this.$caller = this.caller = null, value;
         }).extend(this).implement(params);
-        return newClass.$constructor = Class, newClass.prototype.$constructor = newClass, newClass.prototype.parent = parent1, newClass;
-    }), parent1 = function() {
-        if (!this.$caller) throw new Error("The method \"parent\" cannot be called.");
+        return newClass.$constructor = Class1, newClass.prototype.$constructor = newClass, newClass.prototype.parent = parent, newClass;
+    }), parent = function() {
+        if (!this.$caller) throw Error('The method "parent" cannot be called.');
         var name = this.$caller.$name, parent = this.$caller.$owner.parent, previous = parent ? parent.prototype[name] : null;
-        if (!previous) throw new Error("The method \"" + name + "\" has no parent.");
+        if (!previous) throw Error('The method "' + name + '" has no parent.');
         return previous.apply(this, arguments);
     }, reset = function(object) {
         for(var key in object){
             var value = object[key];
             switch(typeOf(value)){
                 case "object":
-                    var F = function() {
-                    };
-                    F.prototype = value, object[key] = reset(new F);
+                    var F = function() {};
+                    F.prototype = value, object[key] = reset(new F());
                     break;
                 case "array":
                     object[key] = value.clone();
-                    break;
             }
         }
         return object;
     }, wrap = function(self, key, method) {
         method.$origin && (method = method.$origin);
         var wrapper = (function() {
-            if (method.$protected && null == this.$caller) throw new Error("The method \"" + key + "\" cannot be called.");
+            if (method.$protected && null == this.$caller) throw Error('The method "' + key + '" cannot be called.');
             var caller = this.caller, current = this.$caller;
             this.caller = current, this.$caller = wrapper;
             var result = method.apply(this, arguments);
@@ -1017,7 +989,7 @@ Event.Keys = {
         });
         return wrapper;
     }, implement = function(key, value, retain) {
-        if (Class.Mutators.hasOwnProperty(key) && null == (value = Class.Mutators[key].call(this, value))) return this;
+        if (Class1.Mutators.hasOwnProperty(key) && null == (value = Class1.Mutators[key].call(this, value))) return this;
         if ("function" == typeOf(value)) {
             if (value.$hidden) return this;
             this.prototype[key] = retain ? value : wrap(this, key, value);
@@ -1025,21 +997,21 @@ Event.Keys = {
         return this;
     }, getInstance = function(klass) {
         klass.$prototyping = !0;
-        var proto = new klass;
+        var proto = new klass();
         return delete klass.$prototyping, proto;
     };
-    Class.implement("implement", implement.overloadSetter()), Class.Mutators = {
+    Class1.implement("implement", implement.overloadSetter()), Class1.Mutators = {
         Extends: function(parent) {
             this.parent = parent, this.prototype = getInstance(parent);
         },
         Implements: function(items) {
             Array.from(items).each(function(item) {
-                var instance = new item;
+                var instance = new item();
                 for(var key in instance)implement.call(this, key, instance[key], !0);
             }, this);
         }
     };
-})(), (function() {
+}(), function() {
     this.Chain = new Class({
         $chain: [],
         chain: function() {
@@ -1058,8 +1030,7 @@ Event.Keys = {
         });
     };
     this.Events = new Class({
-        $events: {
-        },
+        $events: {},
         addEvent: function(type, fn, internal) {
             return type = removeOn(type), fn == $empty || (this.$events[type] = (this.$events[type] || []).include(fn), internal && (fn.internal = !0)), this;
         },
@@ -1095,18 +1066,15 @@ Event.Keys = {
     }), this.Options = new Class({
         setOptions: function() {
             var options = this.options = Object.merge.apply(null, [
-                {
-                },
+                {},
                 this.options
             ].append(arguments));
             if (this.addEvent) for(var option in options)"function" == typeOf(options[option]) && /^on[A-Z]/.test(option) && (this.addEvent(option, options[option]), delete options[option]);
             return this;
         }
     });
-})(), (function() {
-    var parsed, separatorIndex, combinatorIndex, reversed, cache = {
-    }, reverseCache = {
-    }, reUnescape = /\\/g, parse = function(expression, isReversed) {
+}(), (function() {
+    var parsed, separatorIndex, combinatorIndex, reversed, cache = {}, reverseCache = {}, reUnescape = /\\/g, parse = function(expression, isReversed) {
         if (null == expression) return null;
         if (!0 === expression.Slick) return expression;
         expression = ("" + expression).replace(/^\s+|\s+$/g, "");
@@ -1119,7 +1087,7 @@ Event.Keys = {
             reverse: function() {
                 return parse(this.raw, !0);
             }
-        }, separatorIndex = -1; expression != (expression = expression.replace(regexp1, parser)););
+        }, separatorIndex = -1; expression != (expression = expression.replace(regexp, parser)););
         return parsed.length = parsed.expressions.length, currentCache[parsed.raw] = reversed ? reverse(parsed) : parsed;
     }, reverseCombinator = function(combinator) {
         return "!" === combinator ? " " : " " === combinator ? "!" : /^!/.test(combinator) ? combinator.replace(/^!/, "") : "!" + combinator;
@@ -1140,8 +1108,8 @@ Event.Keys = {
         return string.replace(/[-[\]{}()*+?.\\^$|,#\s]/g, function(match) {
             return "\\" + match;
         });
-    }, regexp1 = new RegExp("^(?:\\s*(,)\\s*|\\s*(<combinator>+)\\s*|(\\s+)|(<unicode>+|\\*)|\\#(<unicode>+)|\\.(<unicode>+)|\\[\\s*(<unicode1>+)(?:\\s*([*^$!~|]?=)(?:\\s*(?:([\"']?)(.*?)\\9)))?\\s*\\](?!\\])|(:+)(<unicode>+)(?:\\((?:(?:([\"'])([^\\13]*)\\13)|((?:\\([^)]+\\)|[^()]*)+))\\))?)".replace(/<combinator>/, "[" + escapeRegExp(">+~`!@$%^&={}\\;</") + "]").replace(/<unicode>/g, "(?:[\\w\\u00a1-\\uFFFF-]|\\\\[^\\s0-9a-f])").replace(/<unicode1>/g, "(?:[:\\w\\u00a1-\\uFFFF-]|\\\\[^\\s0-9a-f])"));
-    function parser(rawMatch, separator, combinator, combinatorChildren, tagName, id, className, attributeKey, attributeOperator, attributeQuote, attributeValue, pseudoMarker, pseudoClass, pseudoQuote, pseudoClassQuotedValue, pseudoClassValue) {
+    }, regexp = new RegExp("^(?:\\s*(,)\\s*|\\s*(<combinator>+)\\s*|(\\s+)|(<unicode>+|\\*)|\\#(<unicode>+)|\\.(<unicode>+)|\\[\\s*(<unicode1>+)(?:\\s*([*^$!~|]?=)(?:\\s*(?:([\"']?)(.*?)\\9)))?\\s*\\](?!\\])|(:+)(<unicode>+)(?:\\((?:(?:([\"'])([^\\13]*)\\13)|((?:\\([^)]+\\)|[^()]*)+))\\))?)".replace(/<combinator>/, "[" + escapeRegExp(">+~`!@$%^&={}\\;</") + "]").replace(/<unicode>/g, "(?:[\\w\\u00a1-\\uFFFF-]|\\\\[^\\s0-9a-f])").replace(/<unicode1>/g, "(?:[:\\w\\u00a1-\\uFFFF-]|\\\\[^\\s0-9a-f])"));
+    function parser(rawMatch, separator, combinator, combinatorChildren, tagName, id, className1, attributeKey, attributeOperator, attributeQuote, attributeValue, pseudoMarker, pseudoClass, pseudoQuote, pseudoClassQuotedValue, pseudoClassValue) {
         if ((separator || -1 === separatorIndex) && (parsed.expressions[++separatorIndex] = [], combinatorIndex = -1, separator)) return "";
         if (combinator || combinatorChildren || -1 === combinatorIndex) {
             combinator = combinator || " ";
@@ -1154,9 +1122,9 @@ Event.Keys = {
         var currentParsed = parsed.expressions[separatorIndex][combinatorIndex];
         if (tagName) currentParsed.tag = tagName.replace(reUnescape, "");
         else if (id) currentParsed.id = id.replace(reUnescape, "");
-        else if (className) className = className.replace(reUnescape, ""), currentParsed.classList || (currentParsed.classList = []), currentParsed.classes || (currentParsed.classes = []), currentParsed.classList.push(className), currentParsed.classes.push({
-            value: className,
-            regexp: new RegExp("(^|\\s)" + escapeRegExp(className) + "(\\s|$)")
+        else if (className1) className1 = className1.replace(reUnescape, ""), currentParsed.classList || (currentParsed.classList = []), currentParsed.classes || (currentParsed.classes = []), currentParsed.classList.push(className1), currentParsed.classes.push({
+            value: className1,
+            regexp: RegExp("(^|\\s)" + escapeRegExp(className1) + "(\\s|$)")
         });
         else if (pseudoClass) pseudoClassValue = (pseudoClassValue = pseudoClassValue || pseudoClassQuotedValue) ? pseudoClassValue.replace(reUnescape, "") : null, currentParsed.pseudos || (currentParsed.pseudos = []), currentParsed.pseudos.push({
             key: pseudoClass.replace(reUnescape, ""),
@@ -1166,16 +1134,16 @@ Event.Keys = {
         else if (attributeKey) {
             switch(attributeKey = attributeKey.replace(reUnescape, ""), attributeValue = (attributeValue || "").replace(reUnescape, ""), attributeOperator){
                 case "^=":
-                    regexp = new RegExp("^" + escapeRegExp(attributeValue));
+                    regexp = RegExp("^" + escapeRegExp(attributeValue));
                     break;
                 case "$=":
-                    regexp = new RegExp(escapeRegExp(attributeValue) + "$");
+                    regexp = RegExp(escapeRegExp(attributeValue) + "$");
                     break;
                 case "~=":
-                    regexp = new RegExp("(^|\\s)" + escapeRegExp(attributeValue) + "(\\s|$)");
+                    regexp = RegExp("(^|\\s)" + escapeRegExp(attributeValue) + "(\\s|$)");
                     break;
                 case "|=":
-                    regexp = new RegExp("^" + escapeRegExp(attributeValue) + "(-|$)");
+                    regexp = RegExp("^" + escapeRegExp(attributeValue) + "(-|$)");
                     break;
                 case "=":
                     test = function(value) {
@@ -1210,94 +1178,79 @@ Event.Keys = {
         }
         return "";
     }
-    var Slick = this.Slick || {
-    };
-    Slick.parse = function(expression) {
+    var Slick1 = this.Slick || {};
+    Slick1.parse = function(expression) {
         return parse(expression);
-    }, Slick.escapeRegExp = escapeRegExp, this.Slick || (this.Slick = Slick);
+    }, Slick1.escapeRegExp = escapeRegExp, this.Slick || (this.Slick = Slick1);
 }).apply("undefined" != typeof exports ? exports : this), (function() {
-    var local = {
-    }, featuresCache = {
-    }, toString = Object.prototype.toString;
+    var local = {}, featuresCache = {}, toString = Object.prototype.toString;
     local.isNativeCode = function(fn) {
         return /\{\s*\[native code\]\s*\}/.test("" + fn);
-    }, local.isXML = function(document) {
-        return !!document.xmlVersion || !!document.xml || "[object XMLDocument]" == toString.call(document) || 9 == document.nodeType && "HTML" != document.documentElement.nodeName;
-    }, local.setDocument = function(document) {
-        var nodeType = document.nodeType;
+    }, local.isXML = function(document1) {
+        return !!document1.xmlVersion || !!document1.xml || "[object XMLDocument]" == toString.call(document1) || 9 == document1.nodeType && "HTML" != document1.documentElement.nodeName;
+    }, local.setDocument = function(document1) {
+        var nodeType = document1.nodeType;
         if (9 == nodeType) ;
-        else if (nodeType) document = document.ownerDocument;
+        else if (nodeType) document1 = document1.ownerDocument;
         else {
-            if (!document.navigator) return;
-            document = document.document;
+            if (!document1.navigator) return;
+            document1 = document1.document;
         }
-        if (this.document !== document) {
-            this.document = document;
-            var feature, root = document.documentElement, rootUid = this.getUIDXML(root), features = featuresCache[rootUid];
+        if (this.document !== document1) {
+            this.document = document1;
+            var feature, root = document1.documentElement, rootUid = this.getUIDXML(root), features = featuresCache[rootUid];
             if (features) {
                 for(feature in features)this[feature] = features[feature];
                 return;
             }
-            (features = featuresCache[rootUid] = {
-            }).root = root, features.isXMLDocument = this.isXML(document), features.brokenStarGEBTN = features.starSelectsClosedQSA = features.idGetsName = features.brokenMixedCaseQSA = features.brokenGEBCN = features.brokenCheckedQSA = features.brokenEmptyAttributeQSA = features.isHTMLDocument = features.nativeMatchesSelector = !1;
-            var starSelectsClosed, starSelectsComments, brokenSecondClassNameGEBCN, cachedGetElementsByClassName, brokenFormAttributeGetter, selected, id = "slick_uniqueid", testNode = document.createElement("div"), testRoot = document.body || document.getElementsByTagName("body")[0] || root;
+            features = featuresCache[rootUid] = {}, features.root = root, features.isXMLDocument = this.isXML(document1), features.brokenStarGEBTN = features.starSelectsClosedQSA = features.idGetsName = features.brokenMixedCaseQSA = features.brokenGEBCN = features.brokenCheckedQSA = features.brokenEmptyAttributeQSA = features.isHTMLDocument = features.nativeMatchesSelector = !1;
+            var starSelectsClosed, starSelectsComments, brokenSecondClassNameGEBCN, cachedGetElementsByClassName, brokenFormAttributeGetter, selected, id = "slick_uniqueid", testNode = document1.createElement("div"), testRoot = document1.body || document1.getElementsByTagName("body")[0] || root;
             testRoot.appendChild(testNode);
             try {
-                testNode.innerHTML = "<a id=\"" + id + "\"></a>", features.isHTMLDocument = !!document.getElementById(id);
-            } catch (e) {
-            }
+                testNode.innerHTML = '<a id="' + id + '"></a>', features.isHTMLDocument = !!document1.getElementById(id);
+            } catch (e) {}
             if (features.isHTMLDocument) {
-                testNode.style.display = "none", testNode.appendChild(document.createComment("")), starSelectsComments = testNode.getElementsByTagName("*").length > 1;
+                testNode.style.display = "none", testNode.appendChild(document1.createComment("")), starSelectsComments = testNode.getElementsByTagName("*").length > 1;
                 try {
                     testNode.innerHTML = "foo</foo>", starSelectsClosed = (selected = testNode.getElementsByTagName("*")) && !!selected.length && "/" == selected[0].nodeName.charAt(0);
-                } catch (e) {
-                }
+                } catch (e) {}
                 features.brokenStarGEBTN = starSelectsComments || starSelectsClosed;
                 try {
-                    testNode.innerHTML = "<a name=\"" + id + "\"></a><b id=\"" + id + "\"></b>", features.idGetsName = document.getElementById(id) === testNode.firstChild;
-                } catch (e2) {
-                }
+                    testNode.innerHTML = '<a name="' + id + '"></a><b id="' + id + '"></b>', features.idGetsName = document1.getElementById(id) === testNode.firstChild;
+                } catch (e) {}
                 if (testNode.getElementsByClassName) {
                     try {
-                        testNode.innerHTML = "<a class=\"f\"></a><a class=\"b\"></a>", testNode.getElementsByClassName("b").length, testNode.firstChild.className = "b", cachedGetElementsByClassName = 2 != testNode.getElementsByClassName("b").length;
-                    } catch (e) {
-                    }
+                        testNode.innerHTML = '<a class="f"></a><a class="b"></a>', testNode.getElementsByClassName("b").length, testNode.firstChild.className = "b", cachedGetElementsByClassName = 2 != testNode.getElementsByClassName("b").length;
+                    } catch (e) {}
                     try {
-                        testNode.innerHTML = "<a class=\"a\"></a><a class=\"f b a\"></a>", brokenSecondClassNameGEBCN = 2 != testNode.getElementsByClassName("a").length;
-                    } catch (e3) {
-                    }
+                        testNode.innerHTML = '<a class="a"></a><a class="f b a"></a>', brokenSecondClassNameGEBCN = 2 != testNode.getElementsByClassName("a").length;
+                    } catch (e) {}
                     features.brokenGEBCN = cachedGetElementsByClassName || brokenSecondClassNameGEBCN;
                 }
                 if (testNode.querySelectorAll) {
                     try {
                         testNode.innerHTML = "foo</foo>", selected = testNode.querySelectorAll("*"), features.starSelectsClosedQSA = selected && !!selected.length && "/" == selected[0].nodeName.charAt(0);
-                    } catch (e) {
-                    }
+                    } catch (e) {}
                     try {
-                        testNode.innerHTML = "<a class=\"MiX\"></a>", features.brokenMixedCaseQSA = !testNode.querySelectorAll(".MiX").length;
-                    } catch (e4) {
-                    }
+                        testNode.innerHTML = '<a class="MiX"></a>', features.brokenMixedCaseQSA = !testNode.querySelectorAll(".MiX").length;
+                    } catch (e) {}
                     try {
-                        testNode.innerHTML = "<select><option selected=\"selected\">a</option></select>", features.brokenCheckedQSA = 0 == testNode.querySelectorAll(":checked").length;
-                    } catch (e5) {
-                    }
+                        testNode.innerHTML = '<select><option selected="selected">a</option></select>', features.brokenCheckedQSA = 0 == testNode.querySelectorAll(":checked").length;
+                    } catch (e) {}
                     try {
-                        testNode.innerHTML = "<a class=\"\"></a>", features.brokenEmptyAttributeQSA = 0 != testNode.querySelectorAll("[class*=\"\"]").length;
-                    } catch (e6) {
-                    }
+                        testNode.innerHTML = '<a class=""></a>', features.brokenEmptyAttributeQSA = 0 != testNode.querySelectorAll('[class*=""]').length;
+                    } catch (e) {}
                 }
                 try {
-                    testNode.innerHTML = "<form action=\"s\"><input id=\"action\"/></form>", brokenFormAttributeGetter = "s" != testNode.firstChild.getAttribute("action");
-                } catch (e7) {
-                }
+                    testNode.innerHTML = '<form action="s"><input id="action"/></form>', brokenFormAttributeGetter = "s" != testNode.firstChild.getAttribute("action");
+                } catch (e) {}
                 if (features.nativeMatchesSelector = root.matchesSelector || root.mozMatchesSelector || root.webkitMatchesSelector, features.nativeMatchesSelector) try {
                     features.nativeMatchesSelector.call(root, ":slick"), features.nativeMatchesSelector = null;
-                } catch (e8) {
-                }
+                } catch (e) {}
             }
             try {
                 root.slick_expando = 1, delete root.slick_expando, features.getUID = this.getUIDHTML;
-            } catch (e9) {
+            } catch (e) {
                 features.getUID = this.getUIDXML;
             }
             testRoot.removeChild(testNode), testNode = selected = testRoot = null, features.getAttribute = features.isHTMLDocument && brokenFormAttributeGetter ? function(node, name) {
@@ -1313,11 +1266,11 @@ Event.Keys = {
             } : function(node, attribute) {
                 return !!((node = node.getAttributeNode(attribute)) && (node.specified || node.nodeValue));
             };
-            var nativeRootContains = root && this.isNativeCode(root.contains), nativeDocumentContains = document && this.isNativeCode(document.contains);
+            var nativeRootContains = root && this.isNativeCode(root.contains), nativeDocumentContains = document1 && this.isNativeCode(document1.contains);
             for(feature in features.contains = nativeRootContains && nativeDocumentContains ? function(context, node) {
                 return context.contains(node);
             } : nativeRootContains && !nativeDocumentContains ? function(context, node) {
-                return context === node || (context === document ? document.documentElement : context).contains(node);
+                return context === node || (context === document1 ? document1.documentElement : context).contains(node);
             } : root && root.compareDocumentPosition ? function(context, node) {
                 return context === node || !!(16 & context.compareDocumentPosition(node));
             } : function(context, node) {
@@ -1328,22 +1281,20 @@ Event.Keys = {
                 return a.compareDocumentPosition && b.compareDocumentPosition ? 4 & a.compareDocumentPosition(b) ? -1 : a === b ? 0 : 1 : 0;
             } : "sourceIndex" in root ? function(a, b) {
                 return a.sourceIndex && b.sourceIndex ? a.sourceIndex - b.sourceIndex : 0;
-            } : document.createRange ? function(a, b) {
+            } : document1.createRange ? function(a, b) {
                 if (!a.ownerDocument || !b.ownerDocument) return 0;
                 var aRange = a.ownerDocument.createRange(), bRange = b.ownerDocument.createRange();
                 return aRange.setStart(a, 0), aRange.setEnd(a, 0), bRange.setStart(b, 0), bRange.setEnd(b, 0), aRange.compareBoundaryPoints(Range.START_TO_END, bRange);
             } : null, root = null, features)this[feature] = features[feature];
         }
     };
-    var reSimpleSelector = /^([#.]?)((?:[\w-]+|\*))$/, reEmptyAttribute = /\[.+[*$^]=(?:""|'')?\]/, qsaFailExpCache = {
-    };
+    var reSimpleSelector = /^([#.]?)((?:[\w-]+|\*))$/, reEmptyAttribute = /\[.+[*$^]=(?:""|'')?\]/, qsaFailExpCache = {};
     local.search = function(context, expression, append, first) {
         var found = this.found = first ? null : append || [];
         if (!context) return found;
         if (context.navigator) context = context.document;
         else if (!context.nodeType) return found;
-        var parsed, i, uniques = this.uniques = {
-        }, hasOthers = !!(append && append.length), contextIsDocument = 9 == context.nodeType;
+        var parsed, i, uniques = this.uniques = {}, hasOthers = !!(append && append.length), contextIsDocument = 9 == context.nodeType;
         if (this.document !== (contextIsDocument ? context : context.ownerDocument) && this.setDocument(context), hasOthers) for(i = found.length; i--;)uniques[this.getUID(found[i])] = !0;
         if ("string" == typeof expression) {
             var simpleSelector = expression.match(reSimpleSelector);
@@ -1362,7 +1313,7 @@ Event.Keys = {
                             if (nodes = context.getElementsByClassName(name), first) return nodes[0] || null;
                             for(i = 0; node = nodes[i++];)hasOthers && uniques[this.getUID(node)] || found.push(node);
                         } else {
-                            var matchClass = new RegExp("(^|\\s)" + Slick.escapeRegExp(name) + "(\\s|$)");
+                            var matchClass = RegExp("(^|\\s)" + Slick1.escapeRegExp(name) + "(\\s|$)");
                             for(i = 0, nodes = context.getElementsByTagName("*"); node = nodes[i++];)if ((className = node.className) && matchClass.test(className)) {
                                 if (first) return node;
                                 hasOthers && uniques[this.getUID(node)] || found.push(node);
@@ -1377,7 +1328,7 @@ Event.Keys = {
                 return hasOthers && this.sort(found), first ? null : found;
             }
             querySelector: if (context.querySelectorAll) {
-                if (!this.isHTMLDocument || qsaFailExpCache[expression] || this.brokenMixedCaseQSA || this.brokenCheckedQSA && expression.indexOf(":checked") > -1 || this.brokenEmptyAttributeQSA && reEmptyAttribute.test(expression) || !contextIsDocument && expression.indexOf(",") > -1 || Slick.disableQSA) break querySelector;
+                if (!this.isHTMLDocument || qsaFailExpCache[expression] || this.brokenMixedCaseQSA || this.brokenCheckedQSA && expression.indexOf(":checked") > -1 || this.brokenEmptyAttributeQSA && reEmptyAttribute.test(expression) || !contextIsDocument && expression.indexOf(",") > -1 || Slick1.disableQSA) break querySelector;
                 var _expression = expression, _context = context;
                 if (!contextIsDocument) {
                     var currentId = _context.getAttribute("id"), slickid = "slickid__";
@@ -1401,17 +1352,11 @@ Event.Keys = {
         else if (expression.Slick) parsed = expression;
         else if (this.contains(context.documentElement || context, expression)) return found ? found.push(expression) : found = expression, found;
         else return found;
-        this.posNTH = {
-        }, this.posNTHLast = {
-        }, this.posNTHType = {
-        }, this.posNTHTypeLast = {
-        }, this.push = !hasOthers && (first || 1 == parsed.length && 1 == parsed.expressions[0].length) ? this.pushArray : this.pushUID, null == found && (found = []);
-        var j, m, n, combinator, tag, id, classList, classes, attributes, pseudos, currentItems, currentExpression, currentBit, lastBit, expressions = parsed.expressions;
-        search: for(i = 0; currentExpression = expressions[i]; i++)for(j = 0; currentBit = currentExpression[j]; j++){
+        this.posNTH = {}, this.posNTHLast = {}, this.posNTHType = {}, this.posNTHTypeLast = {}, this.push = !hasOthers && (first || 1 == parsed.length && 1 == parsed.expressions[0].length) ? this.pushArray : this.pushUID, null == found && (found = []);
+        var j, m, n, combinator, tag, id, classList, classes, attributes, pseudos, currentItems, currentExpression1, currentBit, lastBit, expressions = parsed.expressions;
+        search: for(i = 0; currentExpression1 = expressions[i]; i++)for(j = 0; currentBit = currentExpression1[j]; j++){
             if (!this[combinator = "combinator:" + currentBit.combinator]) continue search;
-            if (tag = this.isXMLDocument ? currentBit.tag : currentBit.tag.toUpperCase(), id = currentBit.id, classList = currentBit.classList, classes = currentBit.classes, attributes = currentBit.attributes, pseudos = currentBit.pseudos, lastBit = j === currentExpression.length - 1, this.bitUniques = {
-            }, lastBit ? (this.uniques = uniques, this.found = found) : (this.uniques = {
-            }, this.found = []), 0 === j) {
+            if (tag = this.isXMLDocument ? currentBit.tag : currentBit.tag.toUpperCase(), id = currentBit.id, classList = currentBit.classList, classes = currentBit.classes, attributes = currentBit.attributes, pseudos = currentBit.pseudos, lastBit = j === currentExpression1.length - 1, this.bitUniques = {}, lastBit ? (this.uniques = uniques, this.found = found) : (this.uniques = {}, this.found = []), 0 === j) {
                 if (this[combinator](context, tag, id, classes, attributes, pseudos, classList), first && lastBit && found.length) break search;
             } else if (first && lastBit) {
                 for(m = 0, n = currentItems.length; m < n; m++)if (this[combinator](currentItems[m], tag, id, classes, attributes, pseudos, classList), found.length) break search;
@@ -1426,8 +1371,7 @@ Event.Keys = {
         return node.uniqueNumber || (node.uniqueNumber = this.uidx++);
     }, local.sort = function(results) {
         return this.documentSorter && results.sort(this.documentSorter), results;
-    }, local.cacheNTH = {
-    }, local.matchNTH = /^([+-]?\d*)?([a-z]+)?([+-]\d+)?$/, local.parseNTHArgument = function(argument) {
+    }, local.cacheNTH = {}, local.matchNTH = /^([+-]?\d*)?([a-z]+)?([+-]\d+)?$/, local.parseNTHArgument = function(argument) {
         var parsed = argument.match(this.matchNTH);
         if (!parsed) return !1;
         var special = parsed[2] || !1, a = parsed[1] || 1;
@@ -1481,9 +1425,8 @@ Event.Keys = {
         !this.uniques[uid] && this.matchSelector(node, tag, id, classes, attributes, pseudos) && (this.uniques[uid] = !0, this.found.push(node));
     }, local.matchNode = function(node, selector) {
         if (this.isHTMLDocument && this.nativeMatchesSelector) try {
-            return this.nativeMatchesSelector.call(node, selector.replace(/\[([^=]+)=\s*([^'"\]]+?)\s*\]/g, "[$1=\"$2\"]"));
-        } catch (matchError) {
-        }
+            return this.nativeMatchesSelector.call(node, selector.replace(/\[([^=]+)=\s*([^'"\]]+?)\s*\]/g, '[$1="$2"]'));
+        } catch (matchError) {}
         var parsed = this.Slick.parse(selector);
         if (!parsed) return !0;
         var i, expressions = parsed.expressions, simpleExpCounter = 0;
@@ -1553,10 +1496,7 @@ Event.Keys = {
                     return;
                 }
             }
-            getByTag: {
-                if (!((children = node.getElementsByTagName(tag)) && children.length)) break getByTag;
-                for(this.brokenStarGEBTN || (tag = null), i = 0; item = children[i++];)this.push(item, tag, id, classes, attributes, pseudos);
-            }
+            if ((children = node.getElementsByTagName(tag)) && children.length) for(this.brokenStarGEBTN || (tag = null), i = 0; item = children[i++];)this.push(item, tag, id, classes, attributes, pseudos);
         },
         ">": function(node, tag, id, classes, attributes, pseudos) {
             if (node = node.firstChild) do 1 == node.nodeType && this.push(node, tag, id, classes, attributes, pseudos);
@@ -1608,7 +1548,7 @@ Event.Keys = {
         }
     };
     for(var c in combinators)local["combinator:" + c] = combinators[c];
-    var pseudos1 = {
+    var pseudos = {
         empty: function(node) {
             var child = node.firstChild;
             return !(child && 1 == child.nodeType) && !(node.innerText || node.textContent || "").length;
@@ -1677,9 +1617,9 @@ Event.Keys = {
             return node.selected;
         }
     };
-    for(var p in pseudos1)local["pseudo:" + p] = pseudos1[p];
+    for(var p in pseudos)local["pseudo:" + p] = pseudos[p];
     var attributeGetters = local.attributeGetters = {
-        "for": function() {
+        for: function() {
             return "htmlFor" in this ? this.htmlFor : this.getAttribute("for");
         },
         href: function() {
@@ -1701,45 +1641,43 @@ Event.Keys = {
         }
     };
     attributeGetters.MAXLENGTH = attributeGetters.maxLength = attributeGetters.maxlength;
-    var Slick = local.Slick = this.Slick || {
-    };
-    Slick.version = "1.1.7", Slick.search = function(context, expression, append) {
+    var Slick1 = local.Slick = this.Slick || {};
+    Slick1.version = "1.1.7", Slick1.search = function(context, expression, append) {
         return local.search(context, expression, append);
-    }, Slick.find = function(context, expression) {
+    }, Slick1.find = function(context, expression) {
         return local.search(context, expression, null, !0);
-    }, Slick.contains = function(container, node) {
+    }, Slick1.contains = function(container, node) {
         return local.setDocument(container), local.contains(container, node);
-    }, Slick.getAttribute = function(node, name) {
+    }, Slick1.getAttribute = function(node, name) {
         return local.setDocument(node), local.getAttribute(node, name);
-    }, Slick.hasAttribute = function(node, name) {
+    }, Slick1.hasAttribute = function(node, name) {
         return local.setDocument(node), local.hasAttribute(node, name);
-    }, Slick.match = function(node, selector) {
+    }, Slick1.match = function(node, selector) {
         return !!node && !!selector && (!selector || selector === node || (local.setDocument(node), local.matchNode(node, selector)));
-    }, Slick.defineAttributeGetter = function(name, fn) {
+    }, Slick1.defineAttributeGetter = function(name, fn) {
         return local.attributeGetters[name] = fn, this;
-    }, Slick.lookupAttributeGetter = function(name) {
+    }, Slick1.lookupAttributeGetter = function(name) {
         return local.attributeGetters[name];
-    }, Slick.definePseudo = function(name, fn) {
+    }, Slick1.definePseudo = function(name, fn) {
         return local["pseudo:" + name] = function(node, argument) {
             return fn.call(node, argument);
         }, this;
-    }, Slick.lookupPseudo = function(name) {
+    }, Slick1.lookupPseudo = function(name) {
         var pseudo = local["pseudo:" + name];
         return pseudo ? function(argument) {
             return pseudo.call(this, argument);
         } : null;
-    }, Slick.override = function(regexp, fn) {
+    }, Slick1.override = function(regexp, fn) {
         return local.override(regexp, fn), this;
-    }, Slick.isXML = local.isXML, Slick.uidOf = function(node) {
+    }, Slick1.isXML = local.isXML, Slick1.uidOf = function(node) {
         return local.getUIDHTML(node);
-    }, this.Slick || (this.Slick = Slick);
+    }, this.Slick || (this.Slick = Slick1);
 }).apply("undefined" != typeof exports ? exports : this);
 var Element = function(tag, props) {
     var konstructor = Element.Constructors[tag];
     if (konstructor) return konstructor(props);
     if ("string" != typeof tag) return document.id(tag).set(props);
-    if (props || (props = {
-    }), !/^[\w-]+$/.test(tag)) {
+    if (props || (props = {}), !/^[\w-]+$/.test(tag)) {
         var parsed = Slick.parse(tag).expressions[0][0];
         tag = "*" == parsed.tag ? "div" : parsed.tag, parsed.id && null == props.id && (props.id = parsed.id);
         var attributes = parsed.attributes;
@@ -1748,12 +1686,13 @@ var Element = function(tag, props) {
     }
     return document.newElement(tag, props);
 };
-Browser.Element && (Element.prototype = Browser.Element.prototype, fireEvent1 = Element.prototype.fireEvent, Element.prototype._fireEvent = function(type, event) {
-    return fireEvent1.call(this, type, event);
-}), new Type("Element", Element).mirror(function(name) {
+Browser.Element && (Element.prototype = Browser.Element.prototype, Element.prototype._fireEvent = function(fireEvent) {
+    return function(type, event) {
+        return fireEvent.call(this, type, event);
+    };
+}(Element.prototype.fireEvent)), new Type("Element", Element).mirror(function(name) {
     if (!Array.prototype[name]) {
-        var obj = {
-        };
+        var obj = {};
         obj[name] = function() {
             for(var results = [], args = arguments, elements = !0, i = 0, l = this.length; i < l; i++){
                 var element = this[i], result = results[i] = element[name].apply(element, args);
@@ -1763,23 +1702,20 @@ Browser.Element && (Element.prototype = Browser.Element.prototype, fireEvent1 = 
         }, Elements.implement(obj);
     }
 }), Browser.Element || (Element.parent = Object, Element.Prototype = {
-    "$constructor": Element,
-    "$family": Function.from("element").hide()
+    $constructor: Element,
+    $family: Function.from("element").hide()
 }, Element.mirror(function(name, method) {
     Element.Prototype[name] = method;
-})), Element.Constructors = {
-}, Element.Constructors = new Hash;
+})), Element.Constructors = {}, Element.Constructors = new Hash();
 var IFrame = new Type("IFrame", function() {
     var iframe, params = Array.link(arguments, {
         properties: Type.isObject,
         iframe: function(obj) {
             return null != obj;
         }
-    }), props = params.properties || {
-    };
+    }), props = params.properties || {};
     params.iframe && (iframe = document.id(params.iframe));
-    var onload = props.onload || function() {
-    };
+    var onload = props.onload || function() {};
     delete props.onload, props.id = props.name = [
         props.id,
         props.name,
@@ -1790,8 +1726,7 @@ var IFrame = new Type("IFrame", function() {
     };
     return window.frames[props.id] ? onLoad() : iframe.addListener("load", onLoad), iframe;
 }), Elements = this.Elements = function(nodes) {
-    if (nodes && nodes.length) for(var node, uniques = {
-    }, i = 0; node = nodes[i++];){
+    if (nodes && nodes.length) for(var node, uniques = {}, i = 0; node = nodes[i++];){
         var uid = Slick.uidOf(node);
         uniques[uid] || (uniques[uid] = !0, this.push(node));
     }
@@ -1833,10 +1768,10 @@ Elements.prototype = {
         for(; this.length;)delete this[--this.length];
         return this;
     }).protect()
-}), Elements.alias("extend", "append"), (function() {
+}), Elements.alias("extend", "append"), function() {
     var createElementAcceptsHTML, splice = Array.prototype.splice, object = {
-        "0": 0,
-        "1": 1,
+        0: 0,
+        1: 1,
         length: 2
     };
     splice.call(object, 1, 1), 1 == object[1] && Elements.implement("splice", (function() {
@@ -1847,17 +1782,16 @@ Elements.prototype = {
     }), Array.mirror(Elements);
     try {
         createElementAcceptsHTML = "x" == document.createElement("<input name=x>").name;
-    } catch (e) {
-    }
+    } catch (e) {}
     var escapeQuotes = function(html) {
         return ("" + html).replace(/&/g, "&amp;").replace(/"/g, "&quot;");
     };
     Document.implement({
         newElement: function(tag, props) {
-            return props && null != props.checked && (props.defaultChecked = props.checked), createElementAcceptsHTML && props && (tag = "<" + tag, props.name && (tag += " name=\"" + escapeQuotes(props.name) + "\""), props.type && (tag += " type=\"" + escapeQuotes(props.type) + "\""), tag += ">", delete props.name, delete props.type), this.id(this.createElement(tag)).set(props);
+            return props && null != props.checked && (props.defaultChecked = props.checked), createElementAcceptsHTML && props && (tag = "<" + tag, props.name && (tag += ' name="' + escapeQuotes(props.name) + '"'), props.type && (tag += ' type="' + escapeQuotes(props.type) + '"'), tag += ">", delete props.name, delete props.type), this.id(this.createElement(tag)).set(props);
         }
     });
-})(), (function() {
+}(), function() {
     Slick.uidOf(window), Slick.uidOf(document), Document.implement({
         newTextNode: function(text) {
             return this.createTextNode(text);
@@ -1868,29 +1802,32 @@ Elements.prototype = {
         getWindow: function() {
             return this.window;
         },
-        id: ((types = {
-            string: function(id, nocash, doc) {
-                return (id = Slick.find(doc, "#" + id.replace(/(\W)/g, "\\$1"))) ? types.element(id, nocash) : null;
-            },
-            element: function(el, nocash) {
-                if (Slick.uidOf(el), !nocash && !el.$family && !/^(?:object|embed)$/i.test(el.tagName)) {
-                    var fireEvent = el.fireEvent;
-                    el._fireEvent = function(type, event) {
-                        return fireEvent(type, event);
-                    }, Object.append(el, Element.Prototype);
+        id: function() {
+            var types = {
+                string: function(id, nocash, doc) {
+                    return (id = Slick.find(doc, "#" + id.replace(/(\W)/g, "\\$1"))) ? types.element(id, nocash) : null;
+                },
+                element: function(el, nocash) {
+                    if (Slick.uidOf(el), !nocash && !el.$family && !/^(?:object|embed)$/i.test(el.tagName)) {
+                        var fireEvent = el.fireEvent;
+                        el._fireEvent = function(type, event) {
+                            return fireEvent(type, event);
+                        }, Object.append(el, Element.Prototype);
+                    }
+                    return el;
+                },
+                object: function(obj, nocash, doc) {
+                    return obj.toElement ? types.element(obj.toElement(doc), nocash) : null;
                 }
-                return el;
-            },
-            object: function(obj, nocash, doc) {
-                return obj.toElement ? types.element(obj.toElement(doc), nocash) : null;
-            }
-        }).textnode = types.whitespace = types.window = types.document = function(zero) {
-            return zero;
-        }, function(el, nocash, doc) {
-            if (el && el.$family && el.uniqueNumber) return el;
-            var type = typeOf(el);
-            return types[type] ? types[type](el, nocash, doc || document) : null;
-        })
+            };
+            return types.textnode = types.whitespace = types.window = types.document = function(zero) {
+                return zero;
+            }, function(el, nocash, doc) {
+                if (el && el.$family && el.uniqueNumber) return el;
+                var type = typeOf(el);
+                return types[type] ? types[type](el, nocash, doc || document) : null;
+            };
+        }()
     }), null == window.$ && Window.implement("$", function(el, nc) {
         return document.id(el, nc, this.document);
     }), Window.implement({
@@ -1905,29 +1842,32 @@ Elements.prototype = {
         Element
     ].invoke("implement", {
         getElements: function(expression) {
-            return Slick.search(this, expression, new Elements);
+            return Slick.search(this, expression, new Elements());
         },
         getElement: function(expression) {
             return document.id(Slick.find(this, expression));
         }
     });
-    var set, translations, types, search, find, match, pseudos, addSlickPseudos, contains = {
+    var contains = {
         contains: function(element) {
             return Slick.contains(this, element);
         }
     };
     document.contains || Document.implement(contains), document.createElement("div").contains || Element.implement(contains), Element.implement("hasChild", function(element) {
         return this !== element && this.contains(element);
-    }), search = Slick.search, find = Slick.find, match = Slick.match, this.Selectors = {
-    }, pseudos = this.Selectors.Pseudo = new Hash(), addSlickPseudos = function() {
-        for(var name in pseudos)pseudos.hasOwnProperty(name) && (Slick.definePseudo(name, pseudos[name]), delete pseudos[name]);
-    }, Slick.search = function(context, expression, append) {
-        return addSlickPseudos(), search.call(this, context, expression, append);
-    }, Slick.find = function(context, expression) {
-        return addSlickPseudos(), find.call(this, context, expression);
-    }, Slick.match = function(node, selector) {
-        return addSlickPseudos(), match.call(this, node, selector);
-    };
+    }), function(search, find, match) {
+        this.Selectors = {};
+        var pseudos = this.Selectors.Pseudo = new Hash(), addSlickPseudos = function() {
+            for(var name in pseudos)pseudos.hasOwnProperty(name) && (Slick.definePseudo(name, pseudos[name]), delete pseudos[name]);
+        };
+        Slick.search = function(context, expression, append) {
+            return addSlickPseudos(), search.call(this, context, expression, append);
+        }, Slick.find = function(context, expression) {
+            return addSlickPseudos(), find.call(this, context, expression);
+        }, Slick.match = function(node, selector) {
+            return addSlickPseudos(), match.call(this, node, selector);
+        };
+    }(Slick.search, Slick.find, Slick.match);
     var injectCombinator = function(expression, combinator) {
         if (!expression) return combinator;
         for(var expressions = (expression = Object.clone(Slick.parse(expression))).expressions, i = expressions.length; i--;)expressions[i][0].combinator = combinator;
@@ -1971,7 +1911,7 @@ Elements.prototype = {
             return !expression || Slick.match(this, expression);
         }
     }), null == window.$$ && Window.implement("$$", function(selector) {
-        var elements = new Elements;
+        var elements = new Elements();
         if (1 == arguments.length && "string" == typeof selector) return Slick.search(this.document, selector, elements);
         for(var args = Array.flatten(arguments), i = 0, l = args.length; i < l; i++){
             var item = args[i];
@@ -1986,7 +1926,7 @@ Elements.prototype = {
         return elements;
     }), null == window.$$ && Window.implement("$$", function(selector) {
         if (1 == arguments.length) {
-            if ("string" == typeof selector) return Slick.search(this.document, selector, new Elements);
+            if ("string" == typeof selector) return Slick.search(this.document, selector, new Elements());
             if (Type.isEnumerable(selector)) return new Elements(selector);
         }
         return new Elements(arguments);
@@ -2009,18 +1949,14 @@ Elements.prototype = {
     };
     inserters.inside = inserters.bottom, Object.each(inserters, function(inserter, where) {
         where = where.capitalize();
-        var methods = {
-        };
+        var methods = {};
         methods["inject" + where] = function(el) {
             return inserter(this, document.id(el, !0)), this;
         }, methods["grab" + where] = function(el) {
             return inserter(document.id(el, !0), this), this;
         }, Element.implement(methods);
     });
-    var propertyGetters = {
-    }, propertySetters = {
-    }, properties = {
-    };
+    var propertyGetters = {}, propertySetters = {}, properties = {};
     Array.forEach([
         "type",
         "value",
@@ -2042,7 +1978,8 @@ Elements.prototype = {
             return node[real];
         };
     });
-    var bools = [
+    var booleans = {};
+    Array.forEach([
         "compact",
         "nowrap",
         "ismap",
@@ -2060,9 +1997,7 @@ Elements.prototype = {
         "controls",
         "autoplay",
         "loop"
-    ], booleans = {
-    };
-    Array.forEach(bools, function(bool) {
+    ], function(bool) {
         var lower = bool.toLowerCase();
         booleans[lower] = bool, propertySetters[lower] = function(node, value) {
             node[bool] = !!value;
@@ -2070,10 +2005,10 @@ Elements.prototype = {
             return !!node[bool];
         };
     }), Object.append(propertySetters, {
-        "class": function(node, value) {
+        class: function(node, value) {
             "className" in node ? node.className = value || "" : node.setAttribute("class", value);
         },
-        "for": function(node, value) {
+        for: function(node, value) {
             "htmlFor" in node ? node.htmlFor = value : node.setAttribute("for", value);
         },
         style: function(node, value) {
@@ -2085,27 +2020,27 @@ Elements.prototype = {
     }), propertyGetters.class = function(node) {
         return "className" in node ? node.className || null : node.getAttribute("class");
     };
-    var el1 = document.createElement("button");
+    var el = document.createElement("button");
     try {
-        el1.type = "button";
-    } catch (e) {
-    }
-    "button" != el1.type && (propertySetters.type = function(node, value) {
+        el.type = "button";
+    } catch (e) {}
+    "button" != el.type && (propertySetters.type = function(node, value) {
         node.setAttribute("type", value);
-    }), el1 = null;
+    }), el = null;
     var input = document.createElement("input");
     input.value = "t", input.type = "submit", "t" != input.value && (propertySetters.type = function(node, type) {
         var value = node.value;
         node.type = type, node.value = value;
     }), input = null;
-    var div, pollutesGetAttribute = ((div = document.createElement("div")).random = "attribute", "attribute" == div.getAttribute("random"));
+    var pollutesGetAttribute = function(div) {
+        return div.random = "attribute", "attribute" == div.getAttribute("random");
+    }(document.createElement("div"));
     Element.implement({
         setProperty: function(name, value) {
             var setter = propertySetters[name.toLowerCase()];
             if (setter) setter(this, value);
             else {
-                if (pollutesGetAttribute) var attributeWhiteList = this.retrieve("$attributeWhiteList", {
-                });
+                if (pollutesGetAttribute) var attributeWhiteList = this.retrieve("$attributeWhiteList", {});
                 null == value ? (this.removeAttribute(name), pollutesGetAttribute && delete attributeWhiteList[name]) : (this.setAttribute(name, "" + value), pollutesGetAttribute && (attributeWhiteList[name] = !0));
             }
             return this;
@@ -2118,8 +2053,7 @@ Elements.prototype = {
             var getter = propertyGetters[name.toLowerCase()];
             if (getter) return getter(this);
             if (pollutesGetAttribute) {
-                var attr = this.getAttributeNode(name), attributeWhiteList = this.retrieve("$attributeWhiteList", {
-                });
+                var attr = this.getAttributeNode(name), attributeWhiteList = this.retrieve("$attributeWhiteList", {});
                 if (!attr) return null;
                 if (attr.expando && !attributeWhiteList[name]) {
                     var outer = this.outerHTML;
@@ -2152,17 +2086,17 @@ Elements.prototype = {
             var property = Element.Properties[prop];
             return property && property.erase ? property.erase.apply(this) : this.removeProperty(prop), this;
         },
-        hasClass: function(className) {
-            return this.className.clean().contains(className, " ");
+        hasClass: function(className1) {
+            return this.className.clean().contains(className1, " ");
         },
-        addClass: function(className) {
-            return this.hasClass(className) || (this.className = (this.className + " " + className).clean()), this;
+        addClass: function(className1) {
+            return this.hasClass(className1) || (this.className = (this.className + " " + className1).clean()), this;
         },
-        removeClass: function(className) {
-            return this.className = this.className.replace(new RegExp("(^|\\s)" + className + "(?:\\s|$)"), "$1"), this;
+        removeClass: function(className1) {
+            return this.className = this.className.replace(RegExp("(^|\\s)" + className1 + "(?:\\s|$)"), "$1"), this;
         },
-        toggleClass: function(className, force) {
-            return null == force && (force = !this.hasClass(className)), force ? this.addClass(className) : this.removeClass(className);
+        toggleClass: function(className1, force) {
+            return null == force && (force = !this.hasClass(className1)), force ? this.addClass(className1) : this.removeClass(className1);
         },
         adopt: function() {
             var fragment, parent = this, elements = Array.flatten(arguments), length = elements.length;
@@ -2208,14 +2142,11 @@ Elements.prototype = {
             }), queryString.join("&");
         }
     });
-    var collected = {
-    }, storage1 = {
-    }, get = function(uid) {
-        return storage1[uid] || (storage1[uid] = {
-        });
+    var collected = {}, storage = {}, get = function(uid) {
+        return storage[uid] || (storage[uid] = {});
     }, clean = function(item) {
         var uid = item.uniqueNumber;
-        return item.removeEvents && item.removeEvents(), item.clearAttributes && item.clearAttributes(), null != uid && (delete collected[uid], delete storage1[uid]), item;
+        return item.removeEvents && item.removeEvents(), item.clearAttributes && item.clearAttributes(), null != uid && (delete collected[uid], delete storage[uid]), item;
     }, formProps = {
         input: "checked",
         option: "selected",
@@ -2223,8 +2154,7 @@ Elements.prototype = {
     };
     Element.implement({
         destroy: function() {
-            var children = clean(this).getElementsByTagName("*");
-            return Array.each(children, clean), Element.dispose(this), null;
+            return Array.each(clean(this).getElementsByTagName("*"), clean), Element.dispose(this), null;
         },
         empty: function() {
             return Array.from(this.childNodes).each(Element.dispose), this;
@@ -2276,12 +2206,12 @@ Elements.prototype = {
             return get(Slick.uidOf(this))[property] = value, this;
         },
         eliminate: function(property) {
-            return delete get(Slick.uidOf(this))[property], this;
+            var storage = get(Slick.uidOf(this));
+            return delete storage[property], this;
         }
     }), window.attachEvent && !window.addEventListener && window.addListener("unload", function() {
         Object.each(collected, clean), window.CollectGarbage && CollectGarbage();
-    }), Element.Properties = {
-    }, Element.Properties = new Hash, Element.Properties.style = {
+    }), Element.Properties = {}, Element.Properties = new Hash(), Element.Properties.style = {
         set: function(style) {
             this.style.cssText = style;
         },
@@ -2303,54 +2233,57 @@ Elements.prototype = {
             this.innerHTML = "";
         }
     };
-    var div1 = document.createElement("div");
-    div1.innerHTML = "<nav></nav>";
-    var supportsHTML5Elements = 1 == div1.childNodes.length;
-    if (!supportsHTML5Elements) for(var tags = "abbr article aside audio canvas datalist details figcaption figure footer header hgroup mark meter nav output progress section summary time video".split(" "), fragment1 = document.createDocumentFragment(), l2 = tags.length; l2--;)fragment1.createElement(tags[l2]);
-    div1 = null;
+    var div = document.createElement("div");
+    div.innerHTML = "<nav></nav>";
+    var supportsHTML5Elements = 1 == div.childNodes.length;
+    if (!supportsHTML5Elements) for(var tags = "abbr article aside audio canvas datalist details figcaption figure footer header hgroup mark meter nav output progress section summary time video".split(" "), fragment = document.createDocumentFragment(), l = tags.length; l--;)fragment.createElement(tags[l]);
+    div = null;
     var supportsTableInnerHTML = Function.attempt(function() {
         return document.createElement("table").innerHTML = "<tr><td></td></tr>", !0;
-    }), tr = document.createElement("tr"), html1 = "<td></td>";
-    tr.innerHTML = html1;
-    var supportsTRInnerHTML = tr.innerHTML == html1;
-    tr = null, supportsTableInnerHTML && supportsTRInnerHTML && supportsHTML5Elements || (Element.Properties.html.set = (set = Element.Properties.html.set, (translations = {
-        table: [
-            1,
-            "<table>",
-            "</table>"
-        ],
-        select: [
-            1,
-            "<select>",
-            "</select>"
-        ],
-        tbody: [
-            2,
-            "<table><tbody>",
-            "</tbody></table>"
-        ],
-        tr: [
-            3,
-            "<table><tbody><tr>",
-            "</tr></tbody></table>"
-        ]
-    }).thead = translations.tfoot = translations.tbody, function(html) {
-        var wrap = translations[this.get("tag")];
-        if (wrap || supportsHTML5Elements || (wrap = [
-            0,
-            "",
-            ""
-        ]), !wrap) return set.call(this, html);
-        var level = wrap[0], wrapper = document.createElement("div"), target = wrapper;
-        for(supportsHTML5Elements || fragment1.appendChild(wrapper), wrapper.innerHTML = [
-            wrap[1],
-            html,
-            wrap[2]
-        ].flatten().join(""); level--;)target = target.firstChild;
-        this.empty().adopt(target.childNodes), supportsHTML5Elements || fragment1.removeChild(wrapper), wrapper = null;
-    }));
+    }), tr = document.createElement("tr"), html = "<td></td>";
+    tr.innerHTML = html;
+    var supportsTRInnerHTML = tr.innerHTML == html;
+    tr = null, supportsTableInnerHTML && supportsTRInnerHTML && supportsHTML5Elements || (Element.Properties.html.set = function(set) {
+        var translations = {
+            table: [
+                1,
+                "<table>",
+                "</table>"
+            ],
+            select: [
+                1,
+                "<select>",
+                "</select>"
+            ],
+            tbody: [
+                2,
+                "<table><tbody>",
+                "</tbody></table>"
+            ],
+            tr: [
+                3,
+                "<table><tbody><tr>",
+                "</tr></tbody></table>"
+            ]
+        };
+        return translations.thead = translations.tfoot = translations.tbody, function(html) {
+            var wrap = translations[this.get("tag")];
+            if (wrap || supportsHTML5Elements || (wrap = [
+                0,
+                "",
+                ""
+            ]), !wrap) return set.call(this, html);
+            var level = wrap[0], wrapper = document.createElement("div"), target = wrapper;
+            for(supportsHTML5Elements || fragment.appendChild(wrapper), wrapper.innerHTML = [
+                wrap[1],
+                html,
+                wrap[2]
+            ].flatten().join(""); level--;)target = target.firstChild;
+            this.empty().adopt(target.childNodes), supportsHTML5Elements || fragment.removeChild(wrapper);
+        };
+    }(Element.Properties.html.set));
     var testForm = document.createElement("form");
-    null.innerHTML = "<select><option>s</option></select>", "s" != null.firstChild.value && (Element.Properties.value = {
+    testForm.innerHTML = "<select><option>s</option></select>", "s" != testForm.firstChild.value && (Element.Properties.value = {
         set: function(value) {
             if ("select" != this.get("tag")) return this.setProperty("value", value);
             for(var options = this.getElements("option"), i = 0; i < options.length; i++){
@@ -2376,10 +2309,10 @@ Elements.prototype = {
             this.id = this.getAttributeNode("id").value = "";
         }
     });
-})(), (function() {
+}(), function() {
     var html = document.html, el = document.createElement("div");
-    null.style.color = "red", null.style.color = null;
-    var doesNotRemoveStyles = "red" == null.style.color;
+    el.style.color = "red", el.style.color = null;
+    var doesNotRemoveStyles = "red" == el.style.color;
     el = null, Element.Properties.styles = {
         set: function(styles) {
             this.setStyles(styles);
@@ -2437,14 +2370,14 @@ Elements.prototype = {
             }
             if (Browser.opera || Browser.ie) {
                 if (/^(height|width)$/.test(property) && !/px$/.test(result)) {
-                    var values = "width" == property ? [
+                    var size = 0;
+                    return ("width" == property ? [
                         "left",
                         "right"
                     ] : [
                         "top",
                         "bottom"
-                    ], size = 0;
-                    return values.each(function(value) {
+                    ]).each(function(value) {
                         size += this.getStyle("border-" + value + "-width").toInt() + this.getStyle("padding-" + value).toInt();
                     }, this), this["offset" + property.capitalize()] - size + "px";
                 }
@@ -2457,8 +2390,7 @@ Elements.prototype = {
             return this;
         },
         getStyles: function() {
-            var result = {
-            };
+            var result = {};
             return Array.flatten(arguments).each(function(key) {
                 result[key] = this.getStyle(key);
             }, this), result;
@@ -2507,18 +2439,12 @@ Elements.prototype = {
             return getOpacity(this);
         }
     }, Element.Styles = new Hash(Element.Styles), Element.ShortStyles = {
-        margin: {
-        },
-        padding: {
-        },
-        border: {
-        },
-        borderWidth: {
-        },
-        borderStyle: {
-        },
-        borderColor: {
-        }
+        margin: {},
+        padding: {},
+        border: {},
+        borderWidth: {},
+        borderStyle: {},
+        borderColor: {}
     }, [
         "Top",
         "Right",
@@ -2536,10 +2462,9 @@ Elements.prototype = {
         var bd = "border" + direction;
         Short.border[bd] = All[bd] = "@px @ rgb(@, @, @)";
         var bdw = bd + "Width", bds = bd + "Style", bdc = bd + "Color";
-        Short[bd] = {
-        }, Short.borderWidth[bdw] = Short[bd][bdw] = All[bdw] = "@px", Short.borderStyle[bds] = Short[bd][bds] = All[bds] = "@", Short.borderColor[bdc] = Short[bd][bdc] = All[bdc] = "rgb(@, @, @)";
+        Short[bd] = {}, Short.borderWidth[bdw] = Short[bd][bdw] = All[bdw] = "@px", Short.borderStyle[bds] = Short[bd][bds] = All[bds] = "@", Short.borderColor[bdc] = Short[bd][bdc] = All[bdc] = "rgb(@, @, @)";
     });
-})(), (function() {
+}(), function() {
     if (Element.Properties.events = {
         set: function(events) {
             this.addEvents(events);
@@ -2550,8 +2475,7 @@ Elements.prototype = {
         Document
     ].invoke("implement", {
         addEvent: function(type, fn) {
-            var events = this.retrieve("events", {
-            });
+            var events = this.retrieve("events", {});
             if (events[type] || (events[type] = {
                 keys: [],
                 values: []
@@ -2583,12 +2507,11 @@ Elements.prototype = {
             return this;
         },
         removeEvents: function(events) {
-            var type;
             if ("object" == typeOf(events)) {
                 for(type in events)this.removeEvent(type, events[type]);
                 return this;
             }
-            var attached = this.retrieve("events");
+            var type, attached = this.retrieve("events");
             if (!attached) return this;
             if (events) attached[events] && (attached[events].keys.each(function(fn) {
                 this.removeEvent(events, fn);
@@ -2683,7 +2606,7 @@ Elements.prototype = {
             return "radio" != this.type || "checked" == event.event.propertyName && this.checked;
         }
     }), Element.Events = new Hash(Element.Events);
-})(), (function() {
+}(), function() {
     var eventListenerSupport = !!window.addEventListener;
     Element.NativeEvents.focusin = Element.NativeEvents.focusout = 2;
     var bubbleUp = function(self, match, fn, event, target) {
@@ -2710,15 +2633,13 @@ Elements.prototype = {
         return {
             base: "focusin",
             remove: function(self, uid) {
-                var list = self.retrieve(_key + type + "listeners", {
-                })[uid];
+                var list = self.retrieve(_key + type + "listeners", {})[uid];
                 if (list && list.forms) for(var i = list.forms.length; i--;)list.forms[i].removeEvent(type, list.fns[i]);
             },
-            listen: function(self, match, fn, event1, target, uid) {
-                var form = "form" == target.get("tag") ? target : event1.target.getParent("form");
+            listen: function(self, match, fn, event, target, uid) {
+                var form = "form" == target.get("tag") ? target : event.target.getParent("form");
                 if (form) {
-                    var listeners = self.retrieve(_key + type + "listeners", {
-                    }), listener = listeners[uid] || {
+                    var listeners = self.retrieve(_key + type + "listeners", {}), listener = listeners[uid] || {
                         forms: [],
                         fns: []
                     }, forms = listener.forms, fns = listener.fns;
@@ -2735,7 +2656,7 @@ Elements.prototype = {
     }, inputObserver = function(type) {
         return {
             base: "focusin",
-            listen: function(self, match, fn, event2, target) {
+            listen: function(self, match, fn, event, target) {
                 var events = {
                     blur: function() {
                         this.removeEvents(events);
@@ -2743,7 +2664,7 @@ Elements.prototype = {
                 };
                 events[type] = function(event) {
                     bubbleUp(self, match, fn, event, target);
-                }, event2.target.addEvents(events);
+                }, event.target.addEvents(events);
             }
         };
     };
@@ -2765,13 +2686,11 @@ Elements.prototype = {
         };
     }, delegation = {
         addEvent: function(type, match, fn) {
-            var storage = this.retrieve("$delegates", {
-            }), stored = storage[type];
+            var storage = this.retrieve("$delegates", {}), stored = storage[type];
             if (stored) {
                 for(var _uid in stored)if (stored[_uid].fn == fn && stored[_uid].match == match) return this;
             }
-            var _type = type, _match = match, _fn = fn, _map = map[type] || {
-            };
+            var _type = type, _match = match, _fn = fn, _map = map[type] || {};
             type = _map.base || _type, match = function(target) {
                 return Slick.match(target, _match);
             };
@@ -2787,20 +2706,17 @@ Elements.prototype = {
             } : function(event, target) {
                 !target && event && event.target && (target = event.target), target && bubbleUp(self, match, fn, event, target);
             };
-            return stored || (stored = {
-            }), stored[uid] = {
+            return stored || (stored = {}), stored[uid] = {
                 match: _match,
                 fn: _fn,
                 delegator: delegator
             }, storage[_type] = stored, addEvent.call(this, type, delegator, _map.capture);
         },
         removeEvent: function(type, match, fn, _uid) {
-            var __uid, s, storage = this.retrieve("$delegates", {
-            }), stored = storage[type];
+            var __uid, s, storage = this.retrieve("$delegates", {}), stored = storage[type];
             if (!stored) return this;
             if (_uid) {
-                var _type = type, delegator = stored[_uid].delegator, _map = map[type] || {
-                };
+                var _type = type, delegator = stored[_uid].delegator, _map = map[type] || {};
                 return type = _map.base || _type, _map.remove && _map.remove(this, _uid), delete stored[_uid], storage[_type] = stored, removeEvent.call(this, type, delegator);
             }
             if (fn) {
@@ -2817,11 +2733,11 @@ Elements.prototype = {
         addEvent: relay(addEvent, delegation.addEvent),
         removeEvent: relay(removeEvent, delegation.removeEvent)
     });
-})(), (function() {
-    var element1 = document.createElement("div"), child = document.createElement("div");
-    element1.style.height = "0", element1.appendChild(child);
-    var brokenOffsetParent = child.offsetParent === element1;
-    element1 = child = null;
+}(), function() {
+    var element = document.createElement("div"), child = document.createElement("div");
+    element.style.height = "0", element.appendChild(child);
+    var brokenOffsetParent = child.offsetParent === element;
+    element = child = null;
     var isOffset = function(el) {
         return "static" != styleString(el, "position") || isBody(el);
     }, isOffsetStatic = function(el) {
@@ -2866,8 +2782,7 @@ Elements.prototype = {
             if (isBody(element) || "fixed" == styleString(element, "position")) return null;
             try {
                 return element.offsetParent;
-            } catch (e) {
-            }
+            } catch (e) {}
             return null;
         },
         getOffsets: function() {
@@ -2989,7 +2904,7 @@ Elements.prototype = {
         var doc = element.getDocument();
         return doc.compatMode && "CSS1Compat" != doc.compatMode ? doc.body : doc.html;
     }
-})(), Element.alias({
+}(), Element.alias({
     position: "setPosition"
 }), [
     Window,
@@ -3020,8 +2935,8 @@ Elements.prototype = {
     getLeft: function() {
         return this.getPosition().x;
     }
-}), (function() {
-    var Fx = this.Fx = new Class({
+}), function() {
+    var Fx1 = this.Fx = new Class({
         Implements: [
             Chain,
             Events,
@@ -3057,7 +2972,7 @@ Elements.prototype = {
             return now;
         },
         compute: function(from, to, delta) {
-            return Fx.compute(from, to, delta);
+            return Fx1.compute(from, to, delta);
         },
         check: function() {
             if (!this.isRunning()) return !0;
@@ -3065,7 +2980,7 @@ Elements.prototype = {
                 case "cancel":
                     return this.cancel(), !0;
                 case "chain":
-                    return this.chain(this.caller.pass(arguments, this)), !1;
+                    this.chain(this.caller.pass(arguments, this));
             }
             return !1;
         },
@@ -3073,7 +2988,7 @@ Elements.prototype = {
             if (!this.check(from, to)) return this;
             this.from = from, this.to = to, this.frame = this.options.frameSkip ? 0 : -1, this.time = null, this.transition = this.getTransition();
             var frames = this.options.frames, fps = this.options.fps, duration = this.options.duration;
-            return this.duration = Fx.Durations[duration] || duration.toInt(), this.frameInterval = 1000 / fps, this.frames = frames || Math.round(this.duration / this.frameInterval), this.fireEvent("start", this.subject), pushInstance.call(this, fps), this;
+            return this.duration = Fx1.Durations[duration] || duration.toInt(), this.frameInterval = 1000 / fps, this.frames = frames || Math.round(this.duration / this.frameInterval), this.fireEvent("start", this.subject), pushInstance.call(this, fps), this;
         },
         stop: function() {
             return this.isRunning() && (this.time = null, pullInstance.call(this, this.options.fps), this.frames == this.frame ? (this.fireEvent("complete", this.subject), this.callChain() || this.fireEvent("chainComplete", this.subject)) : this.fireEvent("stop", this.subject)), this;
@@ -3092,16 +3007,14 @@ Elements.prototype = {
             return list && list.contains(this);
         }
     });
-    Fx.compute = function(from, to, delta) {
+    Fx1.compute = function(from, to, delta) {
         return (to - from) * delta + from;
-    }, Fx.Durations = {
-        "short": 250,
+    }, Fx1.Durations = {
+        short: 250,
         normal: 500,
-        "long": 1000
+        long: 1000
     };
-    var instances = {
-    }, timers = {
-    }, loop = function() {
+    var instances = {}, timers = {}, loop = function() {
         for(var now = Date.now(), i = this.length; i--;){
             var instance = this[i];
             instance && instance.step(now);
@@ -3113,7 +3026,7 @@ Elements.prototype = {
         var list = instances[fps];
         list && (list.erase(this), !list.length && timers[fps] && (delete instances[fps], timers[fps] = clearInterval(timers[fps])));
     };
-})(), Fx.CSS = new Class({
+}(), Fx.CSS = new Class({
     Extends: Fx,
     prepare: function(element, property, values) {
         var from = (values = Array.from(values))[0], to = values[1];
@@ -3174,8 +3087,7 @@ Elements.prototype = {
     },
     search: function(selector) {
         if (Fx.CSS.Cache[selector]) return Fx.CSS.Cache[selector];
-        var to = {
-        }, selectorTest = new RegExp("^" + selector.escapeRegExp() + "$");
+        var to = {}, selectorTest = RegExp("^" + selector.escapeRegExp() + "$");
         return Array.each(document.styleSheets, function(sheet, j) {
             var href = sheet.href;
             if (!(href && href.contains("://")) || href.contains(document.domain)) {
@@ -3186,15 +3098,14 @@ Elements.prototype = {
                             return m.toLowerCase();
                         }) : null;
                         selectorText && selectorTest.test(selectorText) && Object.each(Element.Styles, function(value, style) {
-                            !rule.style[style] || Element.ShortStyles[style] || (value = String(rule.style[style]), to[style] = /^rgb/.test(value) ? value.rgbToHex() : value);
+                            rule.style[style] && !Element.ShortStyles[style] && (value = String(rule.style[style]), to[style] = /^rgb/.test(value) ? value.rgbToHex() : value);
                         });
                     }
                 });
             }
         }), Fx.CSS.Cache[selector] = to;
     }
-}), Fx.CSS.Cache = {
-}, Fx.CSS.Parsers = {
+}), Fx.CSS.Cache = {}, Fx.CSS.Parsers = {
     Color: {
         parse: function(value) {
             return value.match(/^#[0-9a-f]{3,6}$/i) ? value.hexToRgb(!0) : !!(value = value.match(/(\d+),\s*(\d+),\s*(\d+)/)) && [
@@ -3304,17 +3215,14 @@ Elements.prototype = {
         return this;
     },
     compute: function(from, to, delta) {
-        var now = {
-        };
+        var now = {};
         for(var p in from)now[p] = this.parent(from[p], to[p], delta);
         return now;
     },
     start: function(properties) {
         if (!this.check(properties)) return this;
         "string" == typeof properties && (properties = this.search(properties));
-        var from = {
-        }, to = {
-        };
+        var from = {}, to = {};
         for(var p in properties){
             var parsed = this.prepare(this.element, p, properties[p]);
             from[p] = parsed.from, to[p] = parsed.to;
@@ -3399,9 +3307,8 @@ Elements.prototype = {
     Fx.Transitions[transition] = new Fx.Transition(function(p) {
         return Math.pow(p, i + 2);
     });
-}), (function() {
-    var empty = function() {
-    }, progressSupport = "onprogress" in new Browser.Request, Request = this.Request = new Class({
+}), function() {
+    var empty = function() {}, progressSupport = "onprogress" in new Browser.Request(), Request1 = this.Request = new Class({
         Implements: [
             Chain,
             Events,
@@ -3491,7 +3398,7 @@ Elements.prototype = {
                 case "cancel":
                     return this.cancel(), !0;
                 case "chain":
-                    return this.chain(this.caller.pass(arguments, this)), !1;
+                    this.chain(this.caller.pass(arguments, this));
             }
             return !1;
         },
@@ -3554,8 +3461,7 @@ Elements.prototype = {
             var xhr = this.xhr;
             return xhr.abort(), clearTimeout(this.timer), xhr.onreadystatechange = empty, progressSupport && (xhr.onprogress = xhr.onloadstart = empty), this.xhr = new Browser.Request(), this.fireEvent("cancel"), this;
         }
-    }), methods = {
-    };
+    }), methods = {};
     [
         "get",
         "post",
@@ -3572,13 +3478,13 @@ Elements.prototype = {
             };
             return null != data && (object.data = data), this.send(object);
         };
-    }), Request.implement(methods), Element.Properties.send = {
+    }), Request1.implement(methods), Element.Properties.send = {
         set: function(options) {
             return this.get("send").cancel().setOptions(options), this;
         },
         get: function() {
             var send = this.retrieve("send");
-            return send || (send = new Request({
+            return send || (send = new Request1({
                 data: this,
                 link: "cancel",
                 method: this.get("method") || "post",
@@ -3594,7 +3500,7 @@ Elements.prototype = {
             }), this;
         }
     });
-})(), Request.HTML = new Class({
+}(), Request.HTML = new Class({
     Extends: Request,
     options: {
         update: !1,
@@ -3642,18 +3548,17 @@ Elements.prototype = {
             url: Type.isString
         })), this;
     }
-}), "undefined" == typeof JSON && (this.JSON = {
-}), JSON = new Hash({
+}), "undefined" == typeof JSON && (this.JSON = {}), JSON = new Hash({
     stringify: JSON.stringify,
     parse: JSON.parse
-}), (function() {
+}), function() {
     var special = {
         "\b": "\\b",
         "\t": "\\t",
         "\n": "\\n",
         "\f": "\\f",
         "\r": "\\r",
-        "\"": "\\\"",
+        '"': '\\"',
         "\\": "\\\\"
     }, escape = function(chr) {
         return special[chr] || "\\u" + ("0000" + chr.charCodeAt(0).toString(16)).slice(-4);
@@ -3665,7 +3570,7 @@ Elements.prototype = {
     } : function(obj) {
         switch(obj && obj.toJSON && (obj = obj.toJSON()), typeOf(obj)){
             case "string":
-                return "\"" + obj.replace(/[\x00-\x1f\\"]/g, escape) + "\"";
+                return '"' + obj.replace(/[\x00-\x1f\\"]/g, escape) + '"';
             case "array":
                 return "[" + obj.map(JSON.encode).clean() + "]";
             case "object":
@@ -3686,11 +3591,11 @@ Elements.prototype = {
         if (!string || "string" != typeOf(string)) return null;
         if (secure || JSON.secure) {
             if (JSON.parse) return JSON.parse(string);
-            if (!JSON.validate(string)) throw new Error("JSON could not decode the input; security is enabled and the value is not secure.");
+            if (!JSON.validate(string)) throw Error("JSON could not decode the input; security is enabled and the value is not secure.");
         }
         return eval("(" + string + ")");
     };
-})(), Request.JSON = new Class({
+}(), Request.JSON = new Class({
     Extends: Request,
     options: {
         secure: !0
@@ -3740,8 +3645,7 @@ var Cookie = new Class({
         return value ? decodeURIComponent(value[1]) : null;
     },
     dispose: function() {
-        return new Cookie(this.key, Object.merge({
-        }, this.options, {
+        return new Cookie(this.key, Object.merge({}, this.options, {
             duration: -1
         })).write(""), this;
     }
@@ -3752,42 +3656,41 @@ Cookie.write = function(key, value, options) {
     return new Cookie(key).read();
 }, Cookie.dispose = function(key, options) {
     return new Cookie(key, options).dispose();
-}, (function(window, document) {
-    var ready, loaded, shouldPoll, timer, checks = [], testElement = document.createElement("div"), domready = function() {
-        clearTimeout(timer), ready || (Browser.loaded = ready = !0, document.removeListener("DOMContentLoaded", domready).removeListener("readystatechange", check), document.fireEvent("domready"), window.fireEvent("domready"));
+}, function(window1, document1) {
+    var ready, loaded, shouldPoll, timer, checks = [], testElement = document1.createElement("div"), domready = function() {
+        clearTimeout(timer), ready || (Browser.loaded = ready = !0, document1.removeListener("DOMContentLoaded", domready).removeListener("readystatechange", check), document1.fireEvent("domready"), window1.fireEvent("domready"));
     }, check = function() {
         for(var i = checks.length; i--;)if (checks[i]()) return domready(), !0;
         return !1;
     }, poll = function() {
         clearTimeout(timer), check() || (timer = setTimeout(poll, 10));
     };
-    document.addListener("DOMContentLoaded", domready);
+    document1.addListener("DOMContentLoaded", domready);
     var doScrollWorks = function() {
         try {
             return testElement.doScroll(), !0;
-        } catch (e) {
-        }
+        } catch (e) {}
         return !1;
     };
-    testElement.doScroll && !doScrollWorks() && (checks.push(doScrollWorks), shouldPoll = !0), document.readyState && checks.push(function() {
-        var state = document.readyState;
+    testElement.doScroll && !doScrollWorks() && (checks.push(doScrollWorks), shouldPoll = !0), document1.readyState && checks.push(function() {
+        var state = document1.readyState;
         return "loaded" == state || "complete" == state;
-    }), "onreadystatechange" in document ? document.addListener("readystatechange", check) : shouldPoll = !0, shouldPoll && poll(), Element.Events.domready = {
+    }), "onreadystatechange" in document1 ? document1.addListener("readystatechange", check) : shouldPoll = !0, shouldPoll && poll(), Element.Events.domready = {
         onAdd: function(fn) {
             ready && fn.call(this);
         }
     }, Element.Events.load = {
         base: "load",
         onAdd: function(fn) {
-            loaded && this == window && fn.call(this);
+            loaded && this == window1 && fn.call(this);
         },
         condition: function() {
-            return this == window && (domready(), delete Element.Events.load), !0;
+            return this == window1 && (domready(), delete Element.Events.load), !0;
         }
-    }, window.addEvent("load", function() {
+    }, window1.addEvent("load", function() {
         loaded = !0;
     });
-})(window, document), (function() {
+}(window, document), function() {
     var Swiff = this.Swiff = new Class({
         Implements: Options,
         options: {
@@ -3795,18 +3698,15 @@ Cookie.write = function(key, value, options) {
             height: 1,
             width: 1,
             container: null,
-            properties: {
-            },
+            properties: {},
             params: {
                 quality: "high",
                 allowScriptAccess: "always",
                 wMode: "window",
                 swLiveConnect: !0
             },
-            callBacks: {
-            },
-            vars: {
-            }
+            callBacks: {},
+            vars: {}
         },
         toElement: function() {
             return this.object;
@@ -3814,21 +3714,20 @@ Cookie.write = function(key, value, options) {
         initialize: function(path, options) {
             this.instance = "Swiff_" + String.uniqueID(), this.setOptions(options), options = this.options;
             var id = this.id = options.id || this.instance, container = document.id(options.container);
-            Swiff.CallBacks[this.instance] = {
-            };
+            Swiff.CallBacks[this.instance] = {};
             var params = options.params, vars = options.vars, callBacks = options.callBacks, properties = Object.append({
                 height: options.height,
                 width: options.width
             }, options.properties), self = this;
-            for(var callBack in callBacks)Swiff.CallBacks[this.instance][callBack] = (function(option) {
+            for(var callBack in callBacks)Swiff.CallBacks[this.instance][callBack] = function(option) {
                 return function() {
                     return option.apply(self.object, arguments);
                 };
-            })(callBacks[callBack]), vars[callBack] = "Swiff.CallBacks." + this.instance + "." + callBack;
+            }(callBacks[callBack]), vars[callBack] = "Swiff.CallBacks." + this.instance + "." + callBack;
             params.flashVars = Object.toQueryString(vars), Browser.ie ? (properties.classid = "clsid:D27CDB6E-AE6D-11cf-96B8-444553540000", params.movie = path) : properties.type = "application/x-shockwave-flash", properties.data = path;
-            var build = "<object id=\"" + id + "\"";
-            for(var property in properties)build += " " + property + "=\"" + properties[property] + "\"";
-            for(var param in build += ">", params)params[param] && (build += "<param name=\"" + param + "\" value=\"" + params[param] + "\" />");
+            var build = '<object id="' + id + '"';
+            for(var property in properties)build += " " + property + '="' + properties[property] + '"';
+            for(var param in build += ">", params)params[param] && (build += '<param name="' + param + '" value="' + params[param] + '" />');
             build += "</object>", this.object = (container ? container.empty() : new Element("div")).set("html", build).firstChild;
         },
         replaces: function(element) {
@@ -3843,9 +3742,8 @@ Cookie.write = function(key, value, options) {
             ].append(arguments));
         }
     });
-    Swiff.CallBacks = {
-    }, Swiff.remote = function(obj, fn) {
-        var rs = obj.CallFunction("<invoke name=\"" + fn + "\" returntype=\"javascript\">" + __flash__argumentsToXML(arguments, 2) + "</invoke>");
+    Swiff.CallBacks = {}, Swiff.remote = function(obj, fn) {
+        var rs = obj.CallFunction('<invoke name="' + fn + '" returntype="javascript">' + __flash__argumentsToXML(arguments, 2) + "</invoke>");
         return eval(rs);
     };
-})();
+}();

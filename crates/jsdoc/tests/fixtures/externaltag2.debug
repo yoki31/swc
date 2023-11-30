@@ -2,70 +2,70 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                0,
+                1,
             ),
             hi: BytePos(
-                0,
+                1,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    0,
+                    1,
                 ),
                 hi: BytePos(
-                    34,
+                    35,
                 ),
                 ctxt: #0,
             },
-            value: Atom('Namespace provided by the browser.' type=dynamic),
+            value: "Namespace provided by the browser.",
         },
         tags: [
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        0,
+                        1,
                     ),
                     hi: BytePos(
-                        8,
+                        9,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            0,
+                            1,
                         ),
                         hi: BytePos(
-                            8,
+                            9,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('external' type=dynamic),
+                    value: "external",
                 },
                 tag: External(
                     ExternalTag {
                         span: Span {
                             lo: BytePos(
-                                0,
+                                1,
                             ),
                             hi: BytePos(
-                                8,
+                                9,
                             ),
                             ctxt: #0,
                         },
                         name: Text {
                             span: Span {
                                 lo: BytePos(
-                                    0,
+                                    1,
                                 ),
                                 hi: BytePos(
-                                    14,
+                                    15,
                                 ),
                                 ctxt: #0,
                             },
-                            value: Atom('XMLHttpRequest' type=static),
+                            value: "XMLHttpRequest",
                         },
                     },
                 ),
@@ -73,47 +73,47 @@
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        0,
+                        1,
                     ),
                     hi: BytePos(
-                        3,
+                        4,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            0,
+                            1,
                         ),
                         hi: BytePos(
-                            3,
+                            4,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('see' type=inline),
+                    value: "see",
                 },
                 tag: See(
                     SeeTag {
                         span: Span {
                             lo: BytePos(
-                                0,
+                                1,
                             ),
                             hi: BytePos(
-                                3,
+                                4,
                             ),
                             ctxt: #0,
                         },
                         text: Text {
                             span: Span {
                                 lo: BytePos(
-                                    0,
+                                    1,
                                 ),
                                 hi: BytePos(
-                                    47,
+                                    48,
                                 ),
                                 ctxt: #0,
                             },
-                            value: Atom('https://developer.mozilla.org/en/xmlhttprequest' type=dynamic),
+                            value: "https://developer.mozilla.org/en/xmlhttprequest",
                         },
                     },
                 ),
@@ -123,56 +123,56 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                134,
+                135,
             ),
             hi: BytePos(
-                134,
+                135,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    134,
+                    135,
                 ),
                 hi: BytePos(
-                    209,
+                    210,
                 ),
                 ctxt: #0,
             },
-            value: Atom('Extends the built in XMLHttpRequest to send data encoded with a secret key.' type=dynamic),
+            value: "Extends the built in XMLHttpRequest to send data encoded with a secret key.",
         },
         tags: [
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        134,
+                        135,
                     ),
                     hi: BytePos(
-                        139,
+                        140,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            134,
+                            135,
                         ),
                         hi: BytePos(
-                            139,
+                            140,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('class' type=static),
+                    value: "class",
                 },
                 tag: Class(
                     ClassTag {
                         span: Span {
                             lo: BytePos(
-                                134,
+                                135,
                             ),
                             hi: BytePos(
-                                139,
+                                140,
                             ),
                             ctxt: #0,
                         },
@@ -180,28 +180,28 @@
                             Text {
                                 span: Span {
                                     lo: BytePos(
-                                        134,
+                                        135,
                                     ),
                                     hi: BytePos(
-                                        150,
+                                        151,
                                     ),
                                     ctxt: #0,
                                 },
-                                value: Atom('EncryptedRequest' type=dynamic),
+                                value: "EncryptedRequest",
                             },
                         ),
                         name: Some(
                             Text {
                                 span: Span {
                                     lo: BytePos(
-                                        134,
+                                        135,
                                     ),
                                     hi: BytePos(
-                                        166,
+                                        167,
                                     ),
                                     ctxt: #0,
                                 },
-                                value: Atom('@extends external:XMLHttpRequest' type=dynamic),
+                                value: "@extends external:XMLHttpRequest",
                             },
                         ),
                     },

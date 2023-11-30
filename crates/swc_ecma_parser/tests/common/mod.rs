@@ -15,10 +15,7 @@ impl Fold for Normalizer {
             return node;
         }
 
-        node.retain(|v| match v {
-            ClassMember::Empty(..) => false,
-            _ => true,
-        });
+        node.retain(|v| !matches!(v, ClassMember::Empty(..)));
 
         node
     }
@@ -34,10 +31,7 @@ impl Fold for Normalizer {
             }),
             // Flatten comma expressions.
             Expr::Seq(SeqExpr { mut exprs, span }) => {
-                let need_work = exprs.iter().any(|n| match **n {
-                    Expr::Seq(..) => true,
-                    _ => false,
-                });
+                let need_work = exprs.iter().any(|n| matches!(**n, Expr::Seq(..)));
 
                 if need_work {
                     exprs = exprs.into_iter().fold(vec![], |mut v, e| {
@@ -55,15 +49,32 @@ impl Fold for Normalizer {
     }
 
     fn fold_number(&mut self, n: Number) -> Number {
-        let n = n.fold_children_with(self);
+        let mut n = n.fold_children_with(self);
 
         let val = serde_json::Number::from_f64(n.value);
         let val = match val {
             Some(v) => v,
-            None => return n,
+            None => {
+                if self.is_test262 {
+                    n.raw = None;
+                }
+
+                return n;
+            }
         };
+
         match val.as_f64() {
-            Some(value) => Number { value, ..n },
+            Some(value) => {
+                if self.is_test262 {
+                    Number {
+                        value,
+                        raw: None,
+                        ..n
+                    }
+                } else {
+                    Number { value, ..n }
+                }
+            }
             None => n,
         }
     }
@@ -109,14 +120,12 @@ impl Fold for Normalizer {
             PropName::Ident(Ident { span, sym, .. }) => PropName::Str(Str {
                 span,
                 value: sym,
-                has_escape: false,
-                kind: Default::default(),
+                raw: None,
             }),
             PropName::Num(num) => PropName::Str(Str {
                 span: num.span,
                 value: num.to_string().into(),
-                has_escape: false,
-                kind: Default::default(),
+                raw: None,
             }),
             _ => n,
         }
@@ -136,9 +145,8 @@ impl Fold for Normalizer {
         if self.is_test262 {
             Str {
                 span,
-                has_escape: false,
-                kind: Default::default(),
-                ..s
+                value: s.value,
+                raw: None,
             }
         } else {
             Str { span, ..s }

@@ -1,6 +1,23 @@
-use crate::babelify::{Babelify, Context};
 use copyless::BoxHelper;
-use swc_atoms::{js_word, JsWord};
+use serde::{Deserialize, Serialize};
+use swc_atoms::JsWord;
+use swc_common::Spanned;
+use swc_ecma_ast::{
+    Accessibility, Expr, MemberProp, Pat, TruePlusMinus, TsArrayType, TsAsExpr,
+    TsCallSignatureDecl, TsConditionalType, TsConstAssertion, TsConstructSignatureDecl,
+    TsConstructorType, TsEntityName, TsEnumDecl, TsEnumMember, TsEnumMemberId, TsExportAssignment,
+    TsExprWithTypeArgs, TsExternalModuleRef, TsFnOrConstructorType, TsFnParam, TsFnType,
+    TsImportEqualsDecl, TsImportType, TsIndexSignature, TsIndexedAccessType, TsInferType,
+    TsInterfaceBody, TsInterfaceDecl, TsIntersectionType, TsKeywordType, TsKeywordTypeKind, TsLit,
+    TsLitType, TsMappedType, TsMethodSignature, TsModuleBlock, TsModuleDecl, TsModuleName,
+    TsModuleRef, TsNamespaceBody, TsNamespaceDecl, TsNamespaceExportDecl, TsNonNullExpr,
+    TsOptionalType, TsParamProp, TsParamPropParam, TsParenthesizedType, TsPropertySignature,
+    TsQualifiedName, TsRestType, TsThisType, TsThisTypeOrIdent, TsTplLitType, TsTupleElement,
+    TsTupleType, TsType, TsTypeAliasDecl, TsTypeAnn, TsTypeAssertion, TsTypeElement, TsTypeLit,
+    TsTypeOperator, TsTypeOperatorOp, TsTypeParam, TsTypeParamDecl, TsTypeParamInstantiation,
+    TsTypePredicate, TsTypeQuery, TsTypeQueryExpr, TsTypeRef, TsUnionOrIntersectionType,
+    TsUnionType,
+};
 use swc_estree_ast::{
     Access, ArrayPattern, IdOrRest, IdOrString, Identifier, ObjectPattern, RestElement,
     TSAnyKeyword, TSArrayType, TSAsExpression, TSBigIntKeyword, TSBooleanKeyword,
@@ -21,23 +38,7 @@ use swc_estree_ast::{
     TSUndefinedKeyword, TSUnionType, TSUnknownKeyword, TSVoidKeyword,
 };
 
-use serde::{Deserialize, Serialize};
-use swc_common::Spanned;
-use swc_ecma_ast::{
-    Accessibility, Pat, TruePlusMinus, TsArrayType, TsAsExpr, TsCallSignatureDecl,
-    TsConditionalType, TsConstAssertion, TsConstructSignatureDecl, TsConstructorType, TsEntityName,
-    TsEnumDecl, TsEnumMember, TsEnumMemberId, TsExportAssignment, TsExprWithTypeArgs,
-    TsExternalModuleRef, TsFnOrConstructorType, TsFnParam, TsFnType, TsImportEqualsDecl,
-    TsImportType, TsIndexSignature, TsIndexedAccessType, TsInferType, TsInterfaceBody,
-    TsInterfaceDecl, TsIntersectionType, TsKeywordType, TsKeywordTypeKind, TsLit, TsLitType,
-    TsMappedType, TsMethodSignature, TsModuleBlock, TsModuleDecl, TsModuleName, TsModuleRef,
-    TsNamespaceBody, TsNamespaceDecl, TsNamespaceExportDecl, TsNonNullExpr, TsOptionalType,
-    TsParamProp, TsParamPropParam, TsParenthesizedType, TsPropertySignature, TsQualifiedName,
-    TsRestType, TsThisType, TsThisTypeOrIdent, TsTplLitType, TsTupleElement, TsTupleType, TsType,
-    TsTypeAliasDecl, TsTypeAnn, TsTypeAssertion, TsTypeElement, TsTypeLit, TsTypeOperator,
-    TsTypeOperatorOp, TsTypeParam, TsTypeParamDecl, TsTypeParamInstantiation, TsTypePredicate,
-    TsTypeQuery, TsTypeQueryExpr, TsTypeRef, TsUnionOrIntersectionType, TsUnionType,
-};
+use crate::babelify::{Babelify, Context};
 
 impl Babelify for TsTypeAnn {
     type Output = TSTypeAnnotation;
@@ -61,7 +62,7 @@ impl Babelify for TsFnType {
                 .into_iter()
                 .map(|p| p.babelify(ctx).into())
                 .collect(),
-            type_parameters: self.type_params.babelify(ctx),
+            type_parameters: self.type_params.babelify(ctx).map(From::from),
             type_annotation: Some(Box::alloc().init(self.type_ann.babelify(ctx))),
         }
     }
@@ -125,6 +126,9 @@ impl Babelify for TsTypeParam {
         TSTypeParameter {
             base: ctx.base(self.span),
             name: self.name.sym,
+            is_in: self.is_in,
+            is_out: self.is_out,
+            is_const: self.is_const,
             constraint: self.constraint.map(|c| Box::alloc().init(c.babelify(ctx))),
             default: self.default.map(|d| Box::alloc().init(d.babelify(ctx))),
         }
@@ -293,7 +297,7 @@ impl Babelify for TsIndexSignature {
     fn babelify(self, ctx: &Context) -> Self::Output {
         TSIndexSignature {
             base: ctx.base(self.span),
-            paramters: self
+            parameters: self
                 .params
                 .into_iter()
                 .map(|param| param.babelify(ctx).into())
@@ -726,9 +730,9 @@ impl Babelify for TsTypeOperatorOp {
 
     fn babelify(self, _ctx: &Context) -> Self::Output {
         match self {
-            TsTypeOperatorOp::KeyOf => js_word!("keyof"),
-            TsTypeOperatorOp::Unique => js_word!("unique"),
-            TsTypeOperatorOp::ReadOnly => js_word!("readonly"),
+            TsTypeOperatorOp::KeyOf => "keyof".into(),
+            TsTypeOperatorOp::Unique => "unique".into(),
+            TsTypeOperatorOp::ReadOnly => "readonly".into(),
         }
     }
 }
@@ -832,9 +836,23 @@ impl Babelify for TsExprWithTypeArgs {
     type Output = TSExpressionWithTypeArguments;
 
     fn babelify(self, ctx: &Context) -> Self::Output {
+        fn babelify_expr(expr: Expr, ctx: &Context) -> TSEntityName {
+            match expr {
+                Expr::Ident(id) => TSEntityName::Id(id.babelify(ctx)),
+                Expr::Member(e) => TSEntityName::Qualified(TSQualifiedName {
+                    base: ctx.base(e.span),
+                    left: Box::new(babelify_expr(*e.obj, ctx)),
+                    right: match e.prop {
+                        MemberProp::Ident(id) => id.babelify(ctx),
+                        _ => unreachable!(),
+                    },
+                }),
+                _ => unreachable!(),
+            }
+        }
         TSExpressionWithTypeArguments {
             base: ctx.base(self.span),
-            expression: self.expr.babelify(ctx),
+            expression: babelify_expr(*self.expr, ctx),
             type_parameters: self.type_args.map(|arg| arg.babelify(ctx)),
         }
     }

@@ -1,11 +1,11 @@
-use crate::babelify::{Babelify, Context};
 use copyless::BoxHelper;
 use serde::{Deserialize, Serialize};
 use swc_ecma_ast::{
     DefaultDecl, ExportAll, ExportDecl, ExportDefaultDecl, ExportDefaultExpr,
     ExportDefaultSpecifier, ExportNamedSpecifier, ExportNamespaceSpecifier, ExportSpecifier, Expr,
     ImportDecl, ImportDefaultSpecifier, ImportNamedSpecifier, ImportSpecifier,
-    ImportStarAsSpecifier, Lit, ModuleDecl, NamedExport, ObjectLit, Prop, PropName, PropOrSpread,
+    ImportStarAsSpecifier, Lit, ModuleDecl, ModuleExportName, NamedExport, ObjectLit, Prop,
+    PropName, PropOrSpread,
 };
 use swc_estree_ast::{
     ExportAllDeclaration, ExportDefaultDeclType, ExportDefaultDeclaration,
@@ -14,8 +14,11 @@ use swc_estree_ast::{
     ExportSpecifier as BabelExportSpecifier, ExportSpecifierType, IdOrString, ImportAttribute,
     ImportDeclaration, ImportDefaultSpecifier as BabelImportDefaultSpecifier, ImportKind,
     ImportNamespaceSpecifier, ImportSpecifier as BabelImportSpecifier, ImportSpecifierType,
-    ModuleDeclaration, TSExportAssignment, TSImportEqualsDeclaration, TSNamespaceExportDeclaration,
+    ModuleDeclaration, ModuleExportNameType, TSExportAssignment, TSImportEqualsDeclaration,
+    TSNamespaceExportDeclaration,
 };
+
+use crate::babelify::{Babelify, Context};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ModuleDeclOutput {
@@ -87,14 +90,14 @@ impl Babelify for ExportDecl {
             declaration: Some(Box::alloc().init(self.decl.babelify(ctx))),
             specifiers: Default::default(),
             source: Default::default(),
-            assertions: Default::default(),
+            with: Default::default(),
             export_kind: Default::default(),
         }
     }
 }
 
-fn convert_import_asserts(
-    asserts: Option<ObjectLit>,
+fn convert_import_attrs(
+    asserts: Option<Box<ObjectLit>>,
     ctx: &Context,
 ) -> Option<Vec<ImportAttribute>> {
     asserts.map(|obj| {
@@ -158,7 +161,7 @@ impl Babelify for ImportDecl {
             base: ctx.base(self.span),
             specifiers: self.specifiers.babelify(ctx),
             source: self.src.babelify(ctx),
-            assertions: convert_import_asserts(self.asserts, ctx),
+            with: convert_import_attrs(self.with, ctx),
             import_kind: if self.type_only {
                 Some(ImportKind::Type)
             } else {
@@ -175,8 +178,12 @@ impl Babelify for ExportAll {
         ExportAllDeclaration {
             base: ctx.base(self.span),
             source: self.src.babelify(ctx),
-            assertions: convert_import_asserts(self.asserts, ctx),
-            export_kind: None,
+            with: convert_import_attrs(self.with, ctx),
+            export_kind: if self.type_only {
+                Some(ExportKind::Type)
+            } else {
+                None
+            },
         }
     }
 }
@@ -190,7 +197,7 @@ impl Babelify for NamedExport {
             declaration: Default::default(),
             specifiers: self.specifiers.babelify(ctx),
             source: self.src.map(|s| s.babelify(ctx)),
-            assertions: convert_import_asserts(self.asserts, ctx),
+            with: convert_import_attrs(self.with, ctx),
             export_kind: if self.type_only {
                 Some(ExportKind::Type)
             } else {
@@ -264,7 +271,10 @@ impl Babelify for ImportNamedSpecifier {
         BabelImportSpecifier {
             base: ctx.base(self.span),
             local: self.local.clone().babelify(ctx),
-            imported: IdOrString::Id(self.imported.unwrap_or(self.local).babelify(ctx)),
+            imported: self
+                .imported
+                .unwrap_or(ModuleExportName::Ident(self.local))
+                .babelify(ctx),
             import_kind: if self.is_type_only {
                 Some(ImportKind::Type)
             } else {
@@ -316,12 +326,23 @@ impl Babelify for ExportNamedSpecifier {
         BabelExportSpecifier {
             base: ctx.base(self.span),
             local: self.orig.clone().babelify(ctx),
-            exported: IdOrString::Id(self.exported.unwrap_or(self.orig).babelify(ctx)),
+            exported: self.exported.unwrap_or(self.orig).babelify(ctx),
             export_kind: if self.is_type_only {
                 ExportKind::Type
             } else {
                 ExportKind::Value
             },
+        }
+    }
+}
+
+impl Babelify for ModuleExportName {
+    type Output = ModuleExportNameType;
+
+    fn babelify(self, ctx: &Context) -> Self::Output {
+        match self {
+            ModuleExportName::Ident(ident) => ModuleExportNameType::Ident(ident.babelify(ctx)),
+            ModuleExportName::Str(..) => unimplemented!("module string names unimplemented"),
         }
     }
 }

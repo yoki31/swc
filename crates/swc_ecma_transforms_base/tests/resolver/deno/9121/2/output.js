@@ -1,11 +1,11 @@
-var _ = 1;
-function wt() {
+var ___2 = 1;
+function wt__2() {
     if (u !== null) {
         if (y !== null) {
-            var ___2 = 2;
+            var ___3 = 2;
         }
     }
     if (i !== null) {
-        ___2 = 3;
+        ___3 = 3;
     }
 }

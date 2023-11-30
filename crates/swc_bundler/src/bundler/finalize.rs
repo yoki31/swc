@@ -1,18 +1,18 @@
-use crate::{hash::calc_hash, Bundle, BundleKind, Bundler, Load, ModuleType, Resolve};
-use ahash::AHashMap;
+use std::path::{Path, PathBuf};
+
 use anyhow::Error;
 use relative_path::RelativePath;
-use std::path::{Path, PathBuf};
-use swc_atoms::js_word;
-use swc_common::{util::move_map::MoveMap, FileName, DUMMY_SP};
+use swc_common::{collections::AHashMap, util::move_map::MoveMap, FileName, Mark, DUMMY_SP};
 use swc_ecma_ast::*;
 use swc_ecma_transforms_base::{
     fixer::fixer,
     helpers::{inject_helpers, HELPERS},
     hygiene::hygiene,
 };
-use swc_ecma_utils::{find_ids, private_ident, ExprFactory};
-use swc_ecma_visit::{noop_fold_type, noop_visit_type, Fold, FoldWith, Node, Visit, VisitWith};
+use swc_ecma_utils::{contains_top_level_await, find_pat_ids, private_ident, ExprFactory};
+use swc_ecma_visit::{noop_fold_type, Fold, FoldWith};
+
+use crate::{hash::calc_hash, Bundle, BundleKind, Bundler, Load, ModuleType, Resolve};
 
 impl<L, R> Bundler<'_, L, R>
 where
@@ -24,7 +24,11 @@ where
     /// - inject helpers
     /// - rename chunks
     /// - invoke fixer
-    pub(super) fn finalize(&self, bundles: Vec<Bundle>) -> Result<Vec<Bundle>, Error> {
+    pub(super) fn finalize(
+        &self,
+        bundles: Vec<Bundle>,
+        unresolved_mark: Mark,
+    ) -> Result<Vec<Bundle>, Error> {
         self.run(|| {
             let mut new = Vec::with_capacity(bundles.len());
             let mut renamed = AHashMap::default();
@@ -32,11 +36,15 @@ where
             for mut bundle in bundles {
                 bundle.module = self.optimize(bundle.module);
 
-                bundle.module = bundle.module.fold_with(&mut hygiene());
+                if !self.config.disable_hygiene {
+                    bundle.module = bundle.module.fold_with(&mut hygiene());
+                }
 
                 bundle.module = self.may_wrap_with_iife(bundle.module);
 
-                bundle.module = bundle.module.fold_with(&mut fixer(None));
+                if !self.config.disable_fixer {
+                    bundle.module = bundle.module.fold_with(&mut fixer(None));
+                }
 
                 {
                     // Inject swc helpers
@@ -48,8 +56,9 @@ where
 
                     let module = bundle.module;
 
-                    bundle.module =
-                        HELPERS.set(&swc_helpers, || module.fold_with(&mut inject_helpers()));
+                    bundle.module = HELPERS.set(&swc_helpers, || {
+                        module.fold_with(&mut inject_helpers(unresolved_mark))
+                    });
                 }
 
                 match bundle.kind {
@@ -63,7 +72,7 @@ where
 
                         helpers.add_to(&mut bundle.module.body);
 
-                        new.push(Bundle { ..bundle });
+                        new.push(bundle);
                     }
                     BundleKind::Lib { name } => {
                         let hash = calc_hash(self.cm.clone(), &bundle.module)?;
@@ -83,12 +92,8 @@ where
                                     )
                                     .into();
                                 }
-                                return format!(
-                                    "{}-{}",
-                                    path.file_stem().unwrap().to_string_lossy(),
-                                    hash,
-                                )
-                                .into();
+                                format!("{}-{}", path.file_stem().unwrap().to_string_lossy(), hash,)
+                                    .into()
                             })
                             .expect("javascript file should have name");
                         new_name.pop();
@@ -142,10 +147,7 @@ where
             return module;
         }
 
-        let mut top_level_await_finder = TopLevelAwaitFinder::default();
-        module.visit_with(&Invalid { span: DUMMY_SP }, &mut top_level_await_finder);
-
-        let is_async = top_level_await_finder.found;
+        let is_async = contains_top_level_await(&module);
 
         // Properties of returned object
         let mut props = vec![];
@@ -177,7 +179,7 @@ where
                                     ))));
                                 }
                                 Decl::Var(decl) => {
-                                    let ids: Vec<Ident> = find_ids(decl);
+                                    let ids: Vec<Ident> = find_pat_ids(decl);
                                     props.extend(
                                         ids.into_iter()
                                             .map(Prop::Shorthand)
@@ -205,7 +207,7 @@ where
                                         props.push(PropOrSpread::Prop(Box::new(Prop::KeyValue(
                                             KeyValueProp {
                                                 key: PropName::Ident(Ident::new(
-                                                    js_word!("default"),
+                                                    "default".into(),
                                                     DUMMY_SP,
                                                 )),
                                                 value: Box::new(Expr::Ident(s.exported)),
@@ -213,17 +215,32 @@ where
                                         ))));
                                     }
                                     ExportSpecifier::Named(s) => match s.exported {
-                                        Some(exported) => {
+                                        Some(ModuleExportName::Ident(exported)) => {
+                                            let orig = match s.orig {
+                                                ModuleExportName::Ident(ident) => ident,
+                                                ModuleExportName::Str(..) => unimplemented!(
+                                                    "module string names unimplemented"
+                                                ),
+                                            };
                                             props.push(PropOrSpread::Prop(Box::new(
                                                 Prop::KeyValue(KeyValueProp {
                                                     key: PropName::Ident(exported),
-                                                    value: Box::new(Expr::Ident(s.orig)),
+                                                    value: Box::new(Expr::Ident(orig)),
                                                 }),
                                             )));
                                         }
+                                        Some(ModuleExportName::Str(..)) => {
+                                            unimplemented!("module string names unimplemented")
+                                        }
                                         None => {
+                                            let orig = match s.orig {
+                                                ModuleExportName::Ident(ident) => ident,
+                                                ModuleExportName::Str(..) => unimplemented!(
+                                                    "module string names unimplemented"
+                                                ),
+                                            };
                                             props.push(PropOrSpread::Prop(Box::new(
-                                                Prop::Shorthand(s.orig),
+                                                Prop::Shorthand(orig),
                                             )));
                                         }
                                     },
@@ -242,7 +259,7 @@ where
                                 props.push(PropOrSpread::Prop(Box::new(Prop::KeyValue(
                                     KeyValueProp {
                                         key: PropName::Ident(Ident::new(
-                                            js_word!("default"),
+                                            "default".into(),
                                             export.span,
                                         )),
                                         value: Box::new(Expr::Ident(ident.clone())),
@@ -263,7 +280,7 @@ where
                                 props.push(PropOrSpread::Prop(Box::new(Prop::KeyValue(
                                     KeyValueProp {
                                         key: PropName::Ident(Ident::new(
-                                            js_word!("default"),
+                                            "default".into(),
                                             export.span,
                                         )),
                                         value: Box::new(Expr::Ident(ident.clone())),
@@ -289,12 +306,12 @@ where
                                 init: Some(export.expr),
                                 definite: false,
                             };
-                            Some(Stmt::Decl(Decl::Var(VarDecl {
+                            Some(Stmt::Decl(Decl::Var(Box::new(VarDecl {
                                 span: DUMMY_SP,
                                 kind: VarDeclKind::Const,
                                 declare: false,
                                 decls: vec![var],
-                            })))
+                            }))))
                         }
 
                         ModuleDecl::ExportAll(_) => None,
@@ -323,7 +340,7 @@ where
 
         let invoked_fn_expr = FnExpr {
             ident: None,
-            function: f,
+            function: Box::new(f),
         };
 
         let iife = Box::new(Expr::Call(CallExpr {
@@ -341,21 +358,6 @@ where
                 expr: iife,
             }))],
         }
-    }
-}
-
-#[derive(Default)]
-struct TopLevelAwaitFinder {
-    found: bool,
-}
-
-impl Visit for TopLevelAwaitFinder {
-    noop_visit_type!();
-
-    fn visit_stmts(&mut self, _: &[Stmt], _: &dyn Node) {}
-
-    fn visit_await_expr(&mut self, _: &AwaitExpr, _: &dyn Node) {
-        self.found = true;
     }
 }
 
@@ -400,17 +402,17 @@ where
                 .as_os_str()
                 .to_string_lossy();
             let base = RelativePath::new(&*base);
-            let v = base.relative(&*v);
+            let v = base.relative(v);
             let value = v.as_str();
             return ImportDecl {
-                src: Str {
-                    value: if value.starts_with(".") {
+                src: Box::new(Str {
+                    value: if value.starts_with('.') {
                         value.into()
                     } else {
                         format!("./{}", value).into()
                     },
-                    ..import.src
-                },
+                    ..*import.src
+                }),
                 ..import
             };
         }

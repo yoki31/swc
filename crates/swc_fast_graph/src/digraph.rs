@@ -3,25 +3,32 @@
 
 #![allow(dead_code)] // We don't want to modify copied source code.
 
+use std::{
+    cmp::Ordering,
+    fmt,
+    hash::{self, BuildHasherDefault, Hash},
+    iter::{Cloned, DoubleEndedIterator, FromIterator},
+    marker::PhantomData,
+    ops::Deref,
+    slice::Iter,
+};
+
 use indexmap::{
     map::{Iter as IndexMapIter, IterMut as IndexMapIterMut, Keys},
     IndexMap,
 };
 use petgraph::{
     graph::{node_index, Graph},
-    visit::{GraphBase, IntoNeighbors, IntoNeighborsDirected, NodeCount, Visitable},
+    visit::{
+        GraphBase, IntoNeighbors, IntoNeighborsDirected, IntoNodeIdentifiers, NodeCount,
+        NodeIndexable, Visitable,
+    },
     Directed, Direction, EdgeType, Incoming, IntoWeightedEdge, Outgoing, Undirected,
 };
-use std::{
-    cmp::Ordering,
-    fmt,
-    hash::{self, Hash},
-    iter::{Cloned, DoubleEndedIterator, FromIterator},
-    marker::PhantomData,
-    ops::Deref,
-    slice::Iter,
-};
+use rustc_hash::FxHasher;
 use swc_common::collections::AHashSet;
+
+type FxBuildHasher = BuildHasherDefault<FxHasher>;
 
 /// A `GraphMap` with directed edges.
 ///
@@ -55,8 +62,8 @@ pub type FastDiGraphMap<N, E> = FastGraphMap<N, E, Directed>;
 /// Depends on crate feature `graphmap` (default).
 #[derive(Clone)]
 pub struct FastGraphMap<N, E, Ty> {
-    nodes: IndexMap<N, Vec<(N, CompactDirection)>, ahash::RandomState>,
-    edges: IndexMap<(N, N), E, ahash::RandomState>,
+    nodes: IndexMap<N, Vec<(N, CompactDirection)>, FxBuildHasher>,
+    edges: IndexMap<(N, N), E, FxBuildHasher>,
     ty: PhantomData<Ty>,
 }
 
@@ -71,7 +78,7 @@ pub trait NodeTrait: Copy + Ord + Hash {}
 impl<N> NodeTrait for N where N: Copy + Ord + Hash {}
 
 // non-repr(usize) version of Direction
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum CompactDirection {
     Outgoing,
     Incoming,
@@ -177,7 +184,7 @@ where
 
     /// Add node `n` to the graph.
     pub fn add_node(&mut self, n: N) -> N {
-        self.nodes.entry(n).or_insert(Vec::new());
+        self.nodes.entry(n).or_default();
         n
     }
 
@@ -525,6 +532,7 @@ where
     Ty: EdgeType,
 {
     type Item = N;
+
     fn next(&mut self) -> Option<N> {
         if Ty::is_directed() {
             (&mut self.iter)
@@ -553,6 +561,7 @@ where
     Ty: EdgeType,
 {
     type Item = N;
+
     fn next(&mut self) -> Option<N> {
         if Ty::is_directed() {
             let self_dir = self.dir;
@@ -578,7 +587,7 @@ where
     Ty: EdgeType,
 {
     from: N,
-    edges: &'a IndexMap<(N, N), E, ahash::RandomState>,
+    edges: &'a IndexMap<(N, N), E, FxBuildHasher>,
     iter: Neighbors<'a, N, Ty>,
 }
 
@@ -589,6 +598,7 @@ where
     Ty: EdgeType,
 {
     type Item = (N, N, &'a E);
+
     fn next(&mut self) -> Option<Self::Item> {
         match self.iter.next() {
             None => None,
@@ -618,11 +628,9 @@ where
     Ty: EdgeType,
 {
     type Item = (N, N, &'a E);
+
     fn next(&mut self) -> Option<Self::Item> {
-        match self.inner.next() {
-            None => None,
-            Some((&(a, b), v)) => Some((a, b, v)),
-        }
+        self.inner.next().map(|(&(a, b), v)| (a, b, v))
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
@@ -674,6 +682,7 @@ where
     Ty: EdgeType,
 {
     type Item = (N, N, &'a mut E);
+
     fn next(&mut self) -> Option<Self::Item> {
         self.inner
             .next()
@@ -769,6 +778,7 @@ impl<'b, T> Ord for Ptr<'b, T> {
 
 impl<'b, T> Deref for Ptr<'b, T> {
     type Target = T;
+
     fn deref(&self) -> &T {
         self.0
     }
@@ -805,6 +815,7 @@ where
     Ty: EdgeType,
 {
     type Item = N;
+
     fn next(&mut self) -> Option<Self::Item> {
         self.iter.next().map(|(&n, _)| n)
     }
@@ -826,6 +837,7 @@ where
     Ty: EdgeType,
 {
     type Item = (N, &'a N);
+
     fn next(&mut self) -> Option<Self::Item> {
         self.iter.next().map(|(n, _)| (*n, n))
     }
@@ -835,7 +847,7 @@ impl<N, E, Ty> NodeCount for FastGraphMap<N, E, Ty>
 where
     N: Copy + PartialEq,
 {
-    fn node_count(self: &Self) -> usize {
+    fn node_count(&self) -> usize {
         self.nodes.len()
     }
 }
@@ -845,7 +857,6 @@ where
     N: Copy + PartialEq,
 {
     type EdgeId = (N, N);
-
     type NodeId = N;
 }
 
@@ -855,9 +866,11 @@ where
     Ty: EdgeType,
 {
     type Map = AHashSet<N>;
+
     fn visit_map(&self) -> AHashSet<N> {
         AHashSet::with_capacity_and_hasher(self.node_count(), Default::default())
     }
+
     fn reset_map(&self, map: &mut Self::Map) {
         map.clear();
     }
@@ -869,6 +882,7 @@ where
     Ty: EdgeType,
 {
     type Neighbors = Neighbors<'a, N, Ty>;
+
     fn neighbors(self, n: Self::NodeId) -> Self::Neighbors {
         self.neighbors(n)
     }
@@ -880,7 +894,49 @@ where
     Ty: EdgeType,
 {
     type NeighborsDirected = NeighborsDirected<'a, N, Ty>;
+
     fn neighbors_directed(self, n: N, dir: Direction) -> Self::NeighborsDirected {
         self.neighbors_directed(n, dir)
+    }
+}
+
+impl<'a, N, E: 'a, Ty> IntoNodeIdentifiers for &'a FastGraphMap<N, E, Ty>
+where
+    N: NodeTrait,
+    Ty: EdgeType,
+{
+    type NodeIdentifiers = NodeIdentifiers<'a, N, E, Ty>;
+
+    fn node_identifiers(self) -> Self::NodeIdentifiers {
+        NodeIdentifiers {
+            iter: self.nodes.iter(),
+            ty: self.ty,
+            edge_ty: PhantomData,
+        }
+    }
+}
+
+impl<N, E, Ty> NodeIndexable for FastGraphMap<N, E, Ty>
+where
+    N: NodeTrait,
+    Ty: EdgeType,
+{
+    fn node_bound(&self) -> usize {
+        self.node_count()
+    }
+
+    fn to_index(&self, ix: Self::NodeId) -> usize {
+        let (i, _, _) = self.nodes.get_full(&ix).unwrap();
+        i
+    }
+
+    fn from_index(&self, ix: usize) -> Self::NodeId {
+        assert!(
+            ix < self.nodes.len(),
+            "The requested index {} is out-of-bounds.",
+            ix
+        );
+        let (&key, _) = self.nodes.get_index(ix).unwrap();
+        key
     }
 }

@@ -1,6 +1,5 @@
 use super::*;
-use crate::token::Keyword;
-use swc_atoms::js_word;
+use crate::token::{IdentLike, Keyword};
 
 impl Context {
     pub(crate) fn is_reserved(self, word: &Word) -> bool {
@@ -46,74 +45,44 @@ impl Context {
             | Word::Keyword(Keyword::Delete) => true,
 
             // Future reserved word
-            Word::Ident(js_word!("enum")) => true,
+            Word::Ident(IdentLike::Known(known_ident!("enum"))) => true,
 
-            Word::Ident(js_word!("implements"))
-            | Word::Ident(js_word!("package"))
-            | Word::Ident(js_word!("protected"))
-            | Word::Ident(js_word!("interface"))
-            | Word::Ident(js_word!("private"))
-            | Word::Ident(js_word!("public"))
-                if self.strict =>
-            {
-                true
-            }
+            Word::Ident(IdentLike::Known(
+                known_ident!("implements")
+                | known_ident!("package")
+                | known_ident!("protected")
+                | known_ident!("interface")
+                | known_ident!("private")
+                | known_ident!("public"),
+            )) if self.strict => true,
 
             _ => false,
         }
     }
 
-    pub fn is_reserved_word(self, word: &JsWord) -> bool {
-        match *word {
-            js_word!("let") => self.strict,
-            js_word!("await") => self.in_async || self.strict,
-            js_word!("yield") => self.in_generator || self.strict,
+    pub fn is_reserved_word(self, word: &Atom) -> bool {
+        match &**word {
+            "let" => self.strict,
+            // SyntaxError in the module only, not in the strict.
+            // ```JavaScript
+            // function foo() {
+            //     "use strict";
+            //     let await = 1;
+            // }
+            // ```
+            "await" => self.in_async || self.module,
+            "yield" => self.in_generator || self.strict,
 
-            js_word!("null")
-            | js_word!("true")
-            | js_word!("false")
-            | js_word!("break")
-            | js_word!("case")
-            | js_word!("catch")
-            | js_word!("continue")
-            | js_word!("debugger")
-            | js_word!("default")
-            | js_word!("do")
-            | js_word!("export")
-            | js_word!("else")
-            | js_word!("finally")
-            | js_word!("for")
-            | js_word!("function")
-            | js_word!("if")
-            | js_word!("return")
-            | js_word!("switch")
-            | js_word!("throw")
-            | js_word!("try")
-            | js_word!("var")
-            | js_word!("const")
-            | js_word!("while")
-            | js_word!("with")
-            | js_word!("new")
-            | js_word!("this")
-            | js_word!("super")
-            | js_word!("class")
-            | js_word!("extends")
-            | js_word!("import")
-            | js_word!("in")
-            | js_word!("instanceof")
-            | js_word!("typeof")
-            | js_word!("void")
-            | js_word!("delete") => true,
+            "null" | "true" | "false" | "break" | "case" | "catch" | "continue" | "debugger"
+            | "default" | "do" | "export" | "else" | "finally" | "for" | "function" | "if"
+            | "return" | "switch" | "throw" | "try" | "var" | "const" | "while" | "with"
+            | "new" | "this" | "super" | "class" | "extends" | "import" | "in" | "instanceof"
+            | "typeof" | "void" | "delete" => true,
 
             // Future reserved word
-            js_word!("enum") => true,
+            "enum" => true,
 
-            js_word!("implements")
-            | js_word!("package")
-            | js_word!("protected")
-            | js_word!("interface")
-            | js_word!("private")
-            | js_word!("public")
+            "implements" | "package" | "protected" | "interface" | "private" | "public"
                 if self.strict =>
             {
                 true
@@ -124,7 +93,7 @@ impl Context {
     }
 }
 
-impl<'a, I: Tokens> Parser<I> {
+impl<I: Tokens> Parser<I> {
     /// Original context is restored when returned guard is dropped.
     pub(super) fn with_ctx(&mut self, ctx: Context) -> WithCtx<I> {
         let orig_ctx = self.ctx();
@@ -183,26 +152,18 @@ impl<'a, I: Tokens> Parser<I> {
         f(self)
     }
 
-    /// Creates a span from `start` to current pos.
-    pub(super) fn span(&mut self, start: BytePos) -> Span {
-        let end = last_pos!(self);
-        if cfg!(debug_assertions) && start > end {
-            unreachable!(
-                "assertion failed: (span.start <= span.end).
- start = {}, end = {}",
-                start.0, end.0
-            )
-        }
-        Span::new(start, end, Default::default())
-    }
-
     pub(super) fn syntax(&self) -> Syntax {
         self.input.syntax()
     }
 }
 pub trait ParseObject<Obj> {
     type Prop;
-    fn make_object(&mut self, span: Span, props: Vec<Self::Prop>) -> PResult<Obj>;
+    fn make_object(
+        &mut self,
+        span: Span,
+        props: Vec<Self::Prop>,
+        trailing_comma: Option<Span>,
+    ) -> PResult<Obj>;
     fn parse_object_prop(&mut self) -> PResult<Self::Prop>;
 }
 
@@ -214,12 +175,12 @@ impl<'w, I: Tokens> Deref for WithState<'w, I> {
     type Target = Parser<I>;
 
     fn deref(&self) -> &Parser<I> {
-        &self.inner
+        self.inner
     }
 }
 impl<'w, I: Tokens> DerefMut for WithState<'w, I> {
     fn deref_mut(&mut self) -> &mut Parser<I> {
-        &mut self.inner
+        self.inner
     }
 }
 impl<'w, I: Tokens> Drop for WithState<'w, I> {
@@ -236,12 +197,12 @@ impl<'w, I: Tokens> Deref for WithCtx<'w, I> {
     type Target = Parser<I>;
 
     fn deref(&self) -> &Parser<I> {
-        &self.inner
+        self.inner
     }
 }
 impl<'w, I: Tokens> DerefMut for WithCtx<'w, I> {
     fn deref_mut(&mut self) -> &mut Parser<I> {
-        &mut self.inner
+        self.inner
     }
 }
 
@@ -256,9 +217,9 @@ pub(super) trait ExprExt {
 
     /// "IsValidSimpleAssignmentTarget" from spec.
     fn is_valid_simple_assignment_target(&self, strict: bool) -> bool {
-        match *self.as_expr() {
-            Expr::Ident(Ident { ref sym, .. }) => {
-                if strict && (&*sym == "arguments" || &*sym == "eval") {
+        match self.as_expr() {
+            Expr::Ident(ident) => {
+                if strict && ident.is_reserved_in_strict_bind() {
                     return false;
                 }
                 true
@@ -272,11 +233,15 @@ pub(super) trait ExprExt {
             | Expr::Class(..)
             | Expr::Tpl(..)
             | Expr::TaggedTpl(..) => false,
-            Expr::Paren(ParenExpr { ref expr, .. }) => {
-                expr.is_valid_simple_assignment_target(strict)
-            }
+            Expr::Paren(ParenExpr { expr, .. }) => expr.is_valid_simple_assignment_target(strict),
 
-            Expr::Member(..) => true,
+            Expr::Member(MemberExpr { obj, .. }) => match obj.as_ref() {
+                Expr::Member(..) => obj.is_valid_simple_assignment_target(strict),
+                Expr::OptChain(..) => false,
+                _ => true,
+            },
+
+            Expr::SuperProp(..) => true,
 
             Expr::New(..) | Expr::Call(..) => false,
             // TODO: Spec only mentions `new.target`
@@ -294,6 +259,8 @@ pub(super) trait ExprExt {
 
             Expr::Seq(..) => false,
 
+            Expr::OptChain(..) => false,
+
             // MemberExpression is valid assignment target
             Expr::PrivateName(..) => false,
 
@@ -305,10 +272,11 @@ pub(super) trait ExprExt {
             | Expr::JSXFragment(..) => false,
 
             // typescript
-            Expr::OptChain(OptChainExpr { ref expr, .. })
-            | Expr::TsNonNull(TsNonNullExpr { ref expr, .. })
+            Expr::TsNonNull(TsNonNullExpr { ref expr, .. })
             | Expr::TsTypeAssertion(TsTypeAssertion { ref expr, .. })
-            | Expr::TsAs(TsAsExpr { ref expr, .. }) => {
+            | Expr::TsAs(TsAsExpr { ref expr, .. })
+            | Expr::TsInstantiation(TsInstantiation { ref expr, .. })
+            | Expr::TsSatisfies(TsSatisfiesExpr { ref expr, .. }) => {
                 expr.is_valid_simple_assignment_target(strict)
             }
 
@@ -321,7 +289,7 @@ pub(super) trait ExprExt {
 
 impl ExprExt for Box<Expr> {
     fn as_expr(&self) -> &Expr {
-        &*self
+        self
     }
 }
 impl ExprExt for Expr {

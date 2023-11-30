@@ -1,35 +1,57 @@
+#![deny(clippy::all)]
+#![allow(clippy::large_enum_variant)]
+
 //! AST definitions for CSS.
-pub use self::{at_rule::*, base::*, selector::*, style_rule::*, token::*, value::*};
-use is_macro::Is;
-use swc_common::{ast_node, Span};
+pub use self::{at_rule::*, base::*, selector::*, token::*, value::*};
 
 mod at_rule;
 mod base;
 mod selector;
-mod style_rule;
 mod token;
 mod value;
 
-#[ast_node("Stylesheet")]
-pub struct Stylesheet {
-    pub span: Span,
-    pub rules: Vec<Rule>,
+/// Returns true if the given value matches one of the given patterns.
+///
+/// The type of value and patterns should be identical.
+///
+/// # Examples
+///
+/// ```
+/// use swc_atoms::JsWord;
+/// use swc_atoms::js_word;
+/// use swc_css_ast::*;
+///
+/// assert!(matches_eq_ignore_ascii_case!(JsWord::from("A"), "a"));
+/// assert!(matches_eq_ignore_ascii_case!("A", "a"));
+/// ```
+#[macro_export]
+macro_rules! matches_eq_ignore_ascii_case {
+    ($value:expr, $($pat:expr),*) => {{
+        $(
+            $value.eq_ignore_ascii_case(&$pat) ||
+        )* false
+    }};
 }
 
-#[ast_node]
-#[derive(Is)]
-pub enum Rule {
-    #[tag("QualifiedRule")]
-    QualifiedRule(QualifiedRule),
-
-    #[tag("*")]
-    AtRule(AtRule),
-
-    #[tag("Tokens")]
-    Invalid(Tokens),
-}
-
-#[ast_node]
-pub struct Invalid {
-    pub span: Span,
+/// Returns true if the given value matches one of the given patterns.
+///
+/// The type of value and patterns should be identical.
+///
+/// # Examples
+///
+/// ```
+/// use swc_atoms::JsWord;
+/// use swc_atoms::js_word;
+/// use swc_css_ast::*;
+///
+/// assert!(matches_eq!(JsWord::from("a"), "a"));
+/// assert!(matches_eq!("a", "a"));
+/// ```
+#[macro_export]
+macro_rules! matches_eq {
+    ($value:expr, $($pat:expr),*) => {{
+        $(
+            $value == $pat ||
+        )* false
+    }};
 }

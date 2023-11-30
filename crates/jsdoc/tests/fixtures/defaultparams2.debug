@@ -2,81 +2,80 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                15,
+                16,
             ),
             hi: BytePos(
-                15,
+                16,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    15,
+                    16,
                 ),
                 hi: BytePos(
-                    49,
+                    50,
                 ),
                 ctxt: #0,
             },
-            value: Atom('Class representing pizza toppings.' type=dynamic),
+            value: "Class representing pizza toppings.",
         },
         tags: [],
     },
     JsDoc {
         span: Span {
             lo: BytePos(
-                83,
+                84,
             ),
             hi: BytePos(
-                83,
+                84,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    83,
+                    84,
                 ),
                 hi: BytePos(
-                    146,
+                    147,
                 ),
                 ctxt: #0,
             },
-            value: Atom('Set whether sardines are included in the pizza toppings.
-                 *' type=dynamic),
+            value: "Set whether sardines are included in the pizza toppings.\n     *",
         },
         tags: [
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        83,
+                        84,
                     ),
                     hi: BytePos(
-                        88,
+                        89,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            83,
+                            84,
                         ),
                         hi: BytePos(
-                            88,
+                            89,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('param' type=inline),
+                    value: "param",
                 },
                 tag: Parameter(
                     ParameterTag {
                         span: Span {
                             lo: BytePos(
-                                83,
+                                84,
                             ),
                             hi: BytePos(
-                                88,
+                                89,
                             ),
                             ctxt: #0,
                         },
@@ -85,27 +84,27 @@
                             Text {
                                 span: Span {
                                     lo: BytePos(
-                                        83,
+                                        84,
                                     ),
                                     hi: BytePos(
-                                        92,
+                                        93,
                                     ),
                                     ctxt: #0,
                                 },
-                                value: Atom('{boolean}' type=dynamic),
+                                value: "{boolean}",
                             },
                         ),
                         desc: Text {
                             span: Span {
                                 lo: BytePos(
-                                    83,
+                                    84,
                                 ),
                                 hi: BytePos(
-                                    139,
+                                    140,
                                 ),
                                 ctxt: #0,
                             },
-                            value: Atom('[bool] `true` to include sardines, `false` to omit them.' type=dynamic),
+                            value: "[bool] `true` to include sardines, `false` to omit them.",
                         },
                     },
                 ),

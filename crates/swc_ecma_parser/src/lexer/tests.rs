@@ -1,21 +1,32 @@
 extern crate test;
 
-use super::{
-    state::{lex, lex_module_errors, lex_tokens, lex_tokens_with_target, with_lexer},
-    *,
-};
+use std::{ops::Range, str};
+
+use swc_atoms::Atom;
+use swc_common::{BytePos, Span, SyntaxContext};
+use swc_ecma_ast::{AssignOp, AssignOp::*};
+use test::{black_box, Bencher};
+
+use super::state::{lex, lex_module_errors, lex_tokens, with_lexer};
 use crate::{
     error::{Error, SyntaxError},
     lexer::state::lex_errors,
+    token::{
+        BinOpToken::{self, *},
+        Keyword,
+        Keyword::*,
+        Token::{self, *},
+        TokenAndSpan, Word,
+    },
+    Syntax,
 };
-use std::{ops::Range, str};
-use swc_ecma_ast::EsVersion;
-use test::{black_box, Bencher};
 
 fn sp(r: Range<usize>) -> Span {
     Span {
-        lo: BytePos(r.start as u32),
-        hi: BytePos(r.end as u32),
+        // +1 as bytepos starts at 1
+        lo: BytePos((r.start + 1) as u32),
+        // +1 as bytepos starts at 1
+        hi: BytePos((r.end + 1) as u32),
         ctxt: Default::default(),
     }
 }
@@ -36,8 +47,11 @@ trait SpanRange: Sized {
 impl SpanRange for usize {
     fn into_span(self) -> Span {
         Span::new(
-            BytePos(self as _),
-            BytePos((self + 1usize) as _),
+            // +1 as bytepos starts at 1
+            BytePos((self + 1) as _),
+            // +1 as bytepos starts at 1
+            // +1 as hi is exclusive
+            BytePos((self + 1 + 1) as _),
             Default::default(),
         )
     }
@@ -50,8 +64,10 @@ impl SpanRange for Span {
 impl SpanRange for Range<usize> {
     fn into_span(self) -> Span {
         Span::new(
-            BytePos(self.start as _),
-            BytePos(self.end as _),
+            // +1 as bytepos starts at 1
+            BytePos((self.start + 1) as _),
+            // +1 as bytepos starts at 1
+            BytePos((self.end + 1) as _),
             Default::default(),
         )
     }
@@ -77,12 +93,18 @@ impl WithSpan for Token {
 }
 impl WithSpan for usize {
     fn into_token(self) -> Token {
-        Num(self as f64)
+        Num {
+            value: self as f64,
+            raw: self.to_string().into(),
+        }
     }
 }
 impl WithSpan for f64 {
     fn into_token(self) -> Token {
-        Num(self)
+        Num {
+            value: self,
+            raw: self.to_string().into(),
+        }
     }
 }
 impl<'a> WithSpan for &'a str {
@@ -105,7 +127,7 @@ impl WithSpan for BinOpToken {
         BinOp(self)
     }
 }
-impl WithSpan for AssignOpToken {
+impl WithSpan for AssignOp {
     fn into_token(self) -> Token {
         AssignOp(self)
     }
@@ -128,9 +150,7 @@ impl WithSpan for AssignOpToken {
 fn module_legacy_decimal() {
     assert_eq!(
         lex_module_errors(Syntax::default(), "08"),
-        vec![Error {
-            error: Box::new((sp(0..2), SyntaxError::LegacyDecimal)),
-        }]
+        vec![Error::new(sp(0..2), SyntaxError::LegacyDecimal)]
     );
 }
 
@@ -138,9 +158,7 @@ fn module_legacy_decimal() {
 fn module_legacy_comment_1() {
     assert_eq!(
         lex_module_errors(Syntax::default(), "<!-- foo oo"),
-        vec![Error {
-            error: Box::new((sp(0..11), SyntaxError::LegacyCommentInModule)),
-        }]
+        vec![Error::new(sp(0..11), SyntaxError::LegacyCommentInModule)]
     )
 }
 
@@ -148,9 +166,7 @@ fn module_legacy_comment_1() {
 fn module_legacy_comment_2() {
     assert_eq!(
         lex_module_errors(Syntax::default(), "-->"),
-        vec![Error {
-            error: Box::new((sp(0..3), SyntaxError::LegacyCommentInModule)),
-        }]
+        vec![Error::new(sp(0..3), SyntaxError::LegacyCommentInModule)]
     )
 }
 
@@ -159,7 +175,18 @@ fn test262_lexer_error_0001() {
     assert_eq!(
         lex(Syntax::default(), "123..a(1)"),
         vec![
-            123f64.span(0..4).lb(),
+            TokenAndSpan {
+                token: Num {
+                    value: 123.0,
+                    raw: "123.".into(),
+                },
+                had_line_break: true,
+                span: Span {
+                    lo: BytePos(1),
+                    hi: BytePos(5),
+                    ctxt: Default::default(),
+                }
+            },
             Dot.span(4..5),
             "a".span(5..6),
             LParen.span(6..7),
@@ -172,11 +199,11 @@ fn test262_lexer_error_0001() {
 #[test]
 fn test262_lexer_error_0002() {
     assert_eq!(
-        lex(Syntax::default(), r#"'use\x20strict';"#),
+        lex(Syntax::default(), r"'use\x20strict';"),
         vec![
             Token::Str {
                 value: "use strict".into(),
-                has_escape: true,
+                raw: "'use\\x20strict'".into(),
             }
             .span(0..15)
             .lb(),
@@ -187,10 +214,7 @@ fn test262_lexer_error_0002() {
 
 #[test]
 fn test262_lexer_error_0003() {
-    assert_eq!(
-        lex(Syntax::default(), r#"\u0061"#),
-        vec!["a".span(0..6).lb()]
-    );
+    assert_eq!(lex(Syntax::default(), r"\u0061"), vec!["a".span(0..6).lb()]);
 }
 
 #[test]
@@ -204,7 +228,7 @@ fn test262_lexer_error_0004() {
 #[test]
 fn ident_escape_unicode() {
     assert_eq!(
-        lex(Syntax::default(), r#"a\u0061"#),
+        lex(Syntax::default(), r"a\u0061"),
         vec!["aa".span(0..7).lb()]
     );
 }
@@ -214,7 +238,7 @@ fn ident_escape_unicode_2() {
     assert_eq!(lex(Syntax::default(), "℘℘"), vec!["℘℘".span(0..6).lb()]);
 
     assert_eq!(
-        lex(Syntax::default(), r#"℘\u2118"#),
+        lex(Syntax::default(), r"℘\u2118"),
         vec!["℘℘".span(0..9).lb()]
     );
 }
@@ -231,9 +255,8 @@ multiline`"
         vec![
             tok!('`'),
             Token::Template {
-                cooked: Some("this\nis\nmultiline".into()),
+                cooked: Ok("this\nis\nmultiline".into()),
                 raw: "this\nis\nmultiline".into(),
-                has_escape: false
             },
             tok!('`'),
         ]
@@ -247,9 +270,8 @@ fn tpl_raw_unicode_escape() {
         vec![
             tok!('`'),
             Token::Template {
-                cooked: Some(format!("{}", '\u{0010}').into()),
+                cooked: Ok(format!("{}", '\u{0010}').into()),
                 raw: "\\u{0010}".into(),
-                has_escape: true
             },
             tok!('`'),
         ]
@@ -259,41 +281,74 @@ fn tpl_raw_unicode_escape() {
 #[test]
 fn tpl_invalid_unicode_escape() {
     assert_eq!(
-        lex_tokens_with_target(Syntax::default(), EsVersion::Es2018, r"`\unicode`"),
+        lex_tokens(Syntax::default(), r"`\unicode`"),
         vec![
             tok!('`'),
             Token::Template {
-                cooked: None,
+                cooked: Err(Error::new(
+                    Span {
+                        lo: BytePos(2),
+                        hi: BytePos(4),
+                        ctxt: SyntaxContext::empty(),
+                    },
+                    SyntaxError::BadCharacterEscapeSequence {
+                        expected: "4 hex characters"
+                    }
+                )),
                 raw: "\\unicode".into(),
-                has_escape: true
             },
             tok!('`'),
         ]
     );
     assert_eq!(
-        lex_tokens_with_target(Syntax::default(), EsVersion::Es2017, r"`\unicode`"),
+        lex_tokens(Syntax::default(), r"`\u{`"),
         vec![
             tok!('`'),
-            Token::Error(Error {
-                error: Box::new((sp(1..3), SyntaxError::ExpectedHexChars { count: 4 })),
-            }),
             Token::Template {
-                cooked: Some("nicode".into()),
-                raw: "nicode".into(),
-                has_escape: false,
+                cooked: Err(Error::new(
+                    Span {
+                        lo: BytePos(2),
+                        hi: BytePos(5),
+                        ctxt: SyntaxContext::empty(),
+                    },
+                    SyntaxError::BadCharacterEscapeSequence {
+                        expected: "1-6 hex characters"
+                    }
+                )),
+                raw: "\\u{".into(),
             },
-            tok!('`')
+            tok!('`'),
         ]
-    )
+    );
+    assert_eq!(
+        lex_tokens(Syntax::default(), r"`\xhex`"),
+        vec![
+            tok!('`'),
+            Token::Template {
+                cooked: Err(Error::new(
+                    Span {
+                        lo: BytePos(2),
+                        hi: BytePos(4),
+                        ctxt: SyntaxContext::empty(),
+                    },
+                    SyntaxError::BadCharacterEscapeSequence {
+                        expected: "2 hex characters"
+                    }
+                )),
+                raw: "\\xhex".into(),
+            },
+            tok!('`'),
+        ]
+    );
 }
 
 #[test]
 fn str_escape() {
     assert_eq!(
-        lex_tokens(Syntax::default(), r#"'\n'"#),
+        lex_tokens(Syntax::default(), r"'\n'"),
         vec![Token::Str {
             value: "\n".into(),
-            has_escape: true
+            raw: "'\\n'".into(),
         }]
     );
 }
@@ -301,10 +356,10 @@ fn str_escape() {
 #[test]
 fn str_escape_2() {
     assert_eq!(
-        lex_tokens(Syntax::default(), r#"'\\n'"#),
+        lex_tokens(Syntax::default(), r"'\\n'"),
         vec![Token::Str {
             value: "\\n".into(),
-            has_escape: true
+            raw: "'\\\\n'".into(),
         }]
     );
 }
@@ -312,10 +367,10 @@ fn str_escape_2() {
 #[test]
 fn str_escape_3() {
     assert_eq!(
-        lex_tokens(Syntax::default(), r#"'\x00'"#),
+        lex_tokens(Syntax::default(), r"'\x00'"),
         vec![Token::Str {
             value: "\x00".into(),
-            has_escape: true
+            raw: "'\\x00'".into(),
         }]
     );
 }
@@ -323,10 +378,10 @@ fn str_escape_3() {
 #[test]
 fn str_escape_hex() {
     assert_eq!(
-        lex(Syntax::default(), r#"'\x61'"#),
+        lex(Syntax::default(), r"'\x61'"),
         vec![Token::Str {
             value: "a".into(),
-            has_escape: true,
+            raw: "'\\x61'".into(),
         }
         .span(0..6)
         .lb(),]
@@ -336,10 +391,10 @@ fn str_escape_hex() {
 #[test]
 fn str_escape_octal() {
     assert_eq!(
-        lex(Syntax::default(), r#"'Hello\012World'"#),
+        lex(Syntax::default(), r"'Hello\012World'"),
         vec![Token::Str {
             value: "Hello\nWorld".into(),
-            has_escape: true,
+            raw: "'Hello\\012World'".into(),
         }
         .span(0..16)
         .lb(),]
@@ -349,10 +404,10 @@ fn str_escape_octal() {
 #[test]
 fn str_escape_unicode_long() {
     assert_eq!(
-        lex(Syntax::default(), r#"'\u{00000000034}'"#),
+        lex(Syntax::default(), r"'\u{00000000034}'"),
         vec![Token::Str {
             value: "4".into(),
-            has_escape: true,
+            raw: "'\\u{00000000034}'".into(),
         }
         .span(0..17)
         .lb(),]
@@ -365,7 +420,9 @@ fn regexp_unary_void() {
         lex(Syntax::default(), "void /test/"),
         vec![
             Void.span(0..4).lb(),
-            Regex("test".into(), "".into()).span(5..11),
+            BinOp(Div).span(5),
+            Word(Word::Ident("test".into())).span(6..10),
+            BinOp(Div).span(10),
         ]
     );
     assert_eq!(
@@ -373,7 +430,9 @@ fn regexp_unary_void() {
         vec![
             Void.span(0..4).lb(),
             LParen.span(5..6),
-            Regex("test".into(), "".into()).span(6..12),
+            BinOp(Div).span(6),
+            Word(Word::Ident("test".into())).span(7..11),
+            BinOp(Div).span(11),
             RParen.span(12..13),
         ]
     );
@@ -432,13 +491,28 @@ fn simple_regex() {
         vec![
             "x".span(0).lb(),
             Assign.span(2),
-            Regex("42".into(), "i".into(),).span(4..9),
+            BinOp(Div).span(4),
+            42.span(5..7),
+            BinOp(Div).span(7),
+            Word(Word::Ident("i".into())).span(8),
         ],
     );
 
     assert_eq!(
         lex(Syntax::default(), "/42/"),
-        vec![Regex("42".into(), "".into()).span(0..4).lb(),]
+        vec![
+            TokenAndSpan {
+                token: Token::BinOp(BinOpToken::Div),
+                had_line_break: true,
+                span: Span {
+                    lo: BytePos(1),
+                    hi: BytePos(2),
+                    ctxt: Default::default(),
+                },
+            },
+            42.span(1..3),
+            BinOp(Div).span(3)
+        ]
     );
 }
 
@@ -457,7 +531,13 @@ fn complex_regex() {
             RParen,
             LBrace,
             RBrace,
-            Regex("42".into(), "i".into(),),
+            BinOp(Div),
+            Num {
+                value: 42.0,
+                raw: Atom::new("42")
+            },
+            BinOp(Div),
+            Word(Word::Ident("i".into())),
         ]
     )
 }
@@ -544,7 +624,9 @@ fn after_if() {
             RParen.span(4),
             LBrace.span(5),
             RBrace.span(6),
-            Regex("y".into(), "".into()).span(8..11),
+            Div.span(8),
+            "y".span(9),
+            Div.span(10),
             Dot.span(11),
             "test".span(12..16),
             LParen.span(16),
@@ -588,7 +670,9 @@ fn migrated_0002() {
         vec![
             "tokenize".span(0..8).lb(),
             LParen.span(8),
-            Regex("42".into(), "".into()).span(9..13),
+            BinOp(Div).span(9),
+            42.span(10..12),
+            BinOp(Div).span(12),
             RParen.span(13),
         ],
     )
@@ -620,7 +704,9 @@ fn migrated_0004() {
             RParen.span(11),
             LBrace.span(12),
             RBrace.span(13),
-            Regex("42".into(), "".into()).span(15..19),
+            BinOp(Div).span(15),
+            42.span(16..18),
+            BinOp(Div).span(18),
         ]
     );
 }
@@ -656,7 +742,20 @@ fn migrated_0006() {
         vec![
             LBrace.span(0).lb(),
             RBrace.span(1),
-            Regex("42".into(), "".into()).span(3..7),
+            BinOp(Div).span(3),
+            TokenAndSpan {
+                token: Num {
+                    value: 42.0,
+                    raw: "42".into(),
+                },
+                had_line_break: false,
+                span: Span {
+                    lo: BytePos(5),
+                    hi: BytePos(7),
+                    ctxt: Default::default(),
+                }
+            },
+            BinOp(Div).span(6),
         ],
     )
 }
@@ -667,15 +766,134 @@ fn str_lit() {
         lex_tokens(Syntax::default(), "'abcde'"),
         vec![Token::Str {
             value: "abcde".into(),
-            has_escape: false,
+            raw: "'abcde'".into(),
+        }],
+    );
+    assert_eq!(
+        lex_tokens(Syntax::default(), "\"abcde\""),
+        vec![Token::Str {
+            value: "abcde".into(),
+            raw: "\"abcde\"".into(),
+        }],
+    );
+    assert_eq!(
+        lex_tokens(Syntax::default(), "'русский'"),
+        vec![Token::Str {
+            value: "русский".into(),
+            raw: "'русский'".into(),
+        }],
+    );
+    assert_eq!(
+        lex_tokens(Syntax::default(), "'\\x32'"),
+        vec![Token::Str {
+            value: "2".into(),
+            raw: "'\\x32'".into(),
+        }],
+    );
+    assert_eq!(
+        lex_tokens(Syntax::default(), "'\\u1111'"),
+        vec![Token::Str {
+            value: "ᄑ".into(),
+            raw: "'\\u1111'".into(),
+        }],
+    );
+    assert_eq!(
+        lex_tokens(Syntax::default(), "'\\u{1111}'"),
+        vec![Token::Str {
+            value: "ᄑ".into(),
+            raw: "'\\u{1111}'".into(),
+        }],
+    );
+    assert_eq!(
+        lex_tokens(Syntax::default(), "'\t'"),
+        vec![Token::Str {
+            value: "\t".into(),
+            raw: "'\t'".into(),
+        }],
+    );
+    assert_eq!(
+        lex_tokens(Syntax::default(), "'\\n'"),
+        vec![Token::Str {
+            value: "\n".into(),
+            raw: "'\\n'".into(),
         }],
     );
     assert_eq!(
         lex_tokens(Syntax::default(), "'\\\nabc'"),
         vec![Token::Str {
             value: "abc".into(),
-            has_escape: true,
+            raw: "'\\\nabc'".into(),
         }]
+    );
+    assert_eq!(
+        lex_tokens(Syntax::default(), "''"),
+        vec![Token::Str {
+            value: "".into(),
+            raw: "''".into(),
+        }],
+    );
+    assert_eq!(
+        lex_tokens(Syntax::default(), "'\\''"),
+        vec![Token::Str {
+            value: "'".into(),
+            raw: "'\\''".into(),
+        }],
+    );
+    assert_eq!(
+        lex_tokens(Syntax::default(), "\"\""),
+        vec![Token::Str {
+            value: "".into(),
+            raw: "\"\"".into(),
+        }],
+    );
+    assert_eq!(
+        lex_tokens(Syntax::default(), "\"\\\"\""),
+        vec![Token::Str {
+            value: "\"".into(),
+            raw: "\"\\\"\"".into(),
+        }],
+    );
+    assert_eq!(
+        lex_tokens(Syntax::default(), "'\\0'"),
+        vec![Token::Str {
+            value: "\u{0000}".into(),
+            raw: "'\\0'".into(),
+        }],
+    );
+    assert_eq!(
+        lex_tokens(Syntax::default(), "'\\n'"),
+        vec![Token::Str {
+            value: "\n".into(),
+            raw: "'\\n'".into(),
+        }],
+    );
+    assert_eq!(
+        lex_tokens(Syntax::default(), "'\\r'"),
+        vec![Token::Str {
+            value: "\r".into(),
+            raw: "'\\r'".into(),
+        }],
+    );
+    assert_eq!(
+        lex_tokens(Syntax::default(), "'\\012'"),
+        vec![Token::Str {
+            value: "\n".into(),
+            raw: "'\\012'".into(),
+        }],
+    );
+    assert_eq!(
+        lex_tokens(Syntax::default(), "'\\07'"),
+        vec![Token::Str {
+            value: "\u{0007}".into(),
+            raw: "'\\07'".into(),
+        }],
+    );
+    assert_eq!(
+        lex_tokens(Syntax::default(), "'\\08'"),
+        vec![Token::Str {
+            value: "\u{0000}8".into(),
+            raw: "'\\08'".into(),
+        }],
     );
 }
 
@@ -687,8 +905,7 @@ fn tpl_empty() {
             tok!('`'),
             Template {
                 raw: "".into(),
-                cooked: Some("".into()),
-                has_escape: false
+                cooked: Ok("".into()),
             },
             tok!('`')
         ]
@@ -703,20 +920,37 @@ fn tpl() {
             tok!('`'),
             Template {
                 raw: "".into(),
-                cooked: Some("".into()),
-                has_escape: false
+                cooked: Ok("".into()),
             },
             tok!("${"),
             Word(Word::Ident("a".into())),
             tok!('}'),
             Template {
                 raw: "".into(),
-                cooked: Some("".into()),
-                has_escape: false
+                cooked: Ok("".into()),
             },
             tok!('`'),
         ]
-    )
+    );
+
+    assert_eq!(
+        lex_tokens(Syntax::default(), r"`te\nst${a}test`"),
+        vec![
+            tok!('`'),
+            Template {
+                raw: "te\\nst".into(),
+                cooked: Ok("te\nst".into()),
+            },
+            tok!("${"),
+            Word(Word::Ident("a".into())),
+            tok!('}'),
+            Template {
+                raw: "test".into(),
+                cooked: Ok("test".into()),
+            },
+            tok!('`'),
+        ]
+    );
 }
 
 #[test]
@@ -880,20 +1114,47 @@ fn issue_191() {
             tok!('`'),
             Token::Template {
                 raw: "".into(),
-                cooked: Some("".into()),
-                has_escape: false,
+                cooked: Ok("".into()),
             },
             tok!("${"),
             Token::Word(Word::Ident("foo".into())),
             tok!('}'),
             Token::Template {
                 raw: "<bar>".into(),
-                cooked: Some("<bar>".into()),
-                has_escape: false,
+                cooked: Ok("<bar>".into()),
             },
             tok!('`')
         ]
     );
+}
+
+#[test]
+fn issue_5722() {
+    assert_eq!(
+        lex_tokens(Default::default(), "`${{class: 0}}`"),
+        vec![
+            tok!('`'),
+            Template {
+                raw: "".into(),
+                cooked: Ok("".into()),
+            },
+            tok!("${"),
+            tok!('{'),
+            Word(Word::Keyword(Keyword::Class)),
+            tok!(':'),
+            Num {
+                value: 0.into(),
+                raw: "0".into()
+            },
+            tok!('}'),
+            tok!('}'),
+            Template {
+                raw: "".into(),
+                cooked: Ok("".into()),
+            },
+            tok!('`'),
+        ]
+    )
 }
 
 #[test]
@@ -941,7 +1202,7 @@ fn issue_299_01() {
             tok!('='),
             Token::Str {
                 value: "\\ ".into(),
-                has_escape: true
+                raw: "'\\ '".into(),
             },
             Token::JSXTagEnd,
             JSXText { raw: "ABC".into() },
@@ -975,7 +1236,313 @@ fn issue_299_02() {
             tok!('='),
             Token::Str {
                 value: "\\\\".into(),
-                has_escape: true
+                raw: "'\\\\'".into(),
+            },
+            Token::JSXTagEnd,
+            JSXText { raw: "ABC".into() },
+            JSXTagStart,
+            tok!('/'),
+            JSXName {
+                name: "Page".into()
+            },
+            JSXTagEnd,
+            Semi,
+        ]
+    );
+}
+
+#[test]
+fn jsx_string_1() {
+    assert_eq!(
+        lex_tokens(
+            crate::Syntax::Es(crate::EsConfig {
+                jsx: true,
+                ..Default::default()
+            }),
+            "<Page num='abc'>ABC</Page>;"
+        ),
+        vec![
+            Token::JSXTagStart,
+            Token::JSXName {
+                name: "Page".into()
+            },
+            Token::JSXName { name: "num".into() },
+            tok!('='),
+            Token::Str {
+                value: "abc".into(),
+                raw: "'abc'".into(),
+            },
+            Token::JSXTagEnd,
+            JSXText { raw: "ABC".into() },
+            JSXTagStart,
+            tok!('/'),
+            JSXName {
+                name: "Page".into()
+            },
+            JSXTagEnd,
+            Semi,
+        ]
+    );
+}
+
+#[test]
+fn jsx_string_2() {
+    assert_eq!(
+        lex_tokens(
+            crate::Syntax::Es(crate::EsConfig {
+                jsx: true,
+                ..Default::default()
+            }),
+            "<Page num=\"abc\">ABC</Page>;"
+        ),
+        vec![
+            Token::JSXTagStart,
+            Token::JSXName {
+                name: "Page".into()
+            },
+            Token::JSXName { name: "num".into() },
+            tok!('='),
+            Token::Str {
+                value: "abc".into(),
+                raw: "\"abc\"".into(),
+            },
+            Token::JSXTagEnd,
+            JSXText { raw: "ABC".into() },
+            JSXTagStart,
+            tok!('/'),
+            JSXName {
+                name: "Page".into()
+            },
+            JSXTagEnd,
+            Semi,
+        ]
+    );
+}
+
+#[test]
+fn jsx_string_3() {
+    assert_eq!(
+        lex_tokens(
+            crate::Syntax::Es(crate::EsConfig {
+                jsx: true,
+                ..Default::default()
+            }),
+            "<Page num='\n'>ABC</Page>;"
+        ),
+        vec![
+            Token::JSXTagStart,
+            Token::JSXName {
+                name: "Page".into()
+            },
+            Token::JSXName { name: "num".into() },
+            tok!('='),
+            Token::Str {
+                value: "\n".into(),
+                raw: "'\n'".into(),
+            },
+            Token::JSXTagEnd,
+            JSXText { raw: "ABC".into() },
+            JSXTagStart,
+            tok!('/'),
+            JSXName {
+                name: "Page".into()
+            },
+            JSXTagEnd,
+            Semi,
+        ]
+    );
+}
+
+#[test]
+fn jsx_string_4() {
+    assert_eq!(
+        lex_tokens(
+            crate::Syntax::Es(crate::EsConfig {
+                jsx: true,
+                ..Default::default()
+            }),
+            "<Page num='&sup3;'>ABC</Page>;"
+        ),
+        vec![
+            Token::JSXTagStart,
+            Token::JSXName {
+                name: "Page".into()
+            },
+            Token::JSXName { name: "num".into() },
+            tok!('='),
+            Token::Str {
+                value: "³".into(),
+                raw: "'&sup3;'".into(),
+            },
+            Token::JSXTagEnd,
+            JSXText { raw: "ABC".into() },
+            JSXTagStart,
+            tok!('/'),
+            JSXName {
+                name: "Page".into()
+            },
+            JSXTagEnd,
+            Semi,
+        ]
+    );
+}
+
+#[test]
+fn jsx_string_5() {
+    assert_eq!(
+        lex_tokens(
+            crate::Syntax::Es(crate::EsConfig {
+                jsx: true,
+                ..Default::default()
+            }),
+            "<Page num='&#42;'>ABC</Page>;"
+        ),
+        vec![
+            Token::JSXTagStart,
+            Token::JSXName {
+                name: "Page".into()
+            },
+            Token::JSXName { name: "num".into() },
+            tok!('='),
+            Token::Str {
+                value: "*".into(),
+                raw: "'&#42;'".into(),
+            },
+            Token::JSXTagEnd,
+            JSXText { raw: "ABC".into() },
+            JSXTagStart,
+            tok!('/'),
+            JSXName {
+                name: "Page".into()
+            },
+            JSXTagEnd,
+            Semi,
+        ]
+    );
+}
+
+#[test]
+fn jsx_string_6() {
+    assert_eq!(
+        lex_tokens(
+            crate::Syntax::Es(crate::EsConfig {
+                jsx: true,
+                ..Default::default()
+            }),
+            "<Page num='&#x23;'>ABC</Page>;"
+        ),
+        vec![
+            Token::JSXTagStart,
+            Token::JSXName {
+                name: "Page".into()
+            },
+            Token::JSXName { name: "num".into() },
+            tok!('='),
+            Token::Str {
+                value: "#".into(),
+                raw: "'&#x23;'".into(),
+            },
+            Token::JSXTagEnd,
+            JSXText { raw: "ABC".into() },
+            JSXTagStart,
+            tok!('/'),
+            JSXName {
+                name: "Page".into()
+            },
+            JSXTagEnd,
+            Semi,
+        ]
+    );
+}
+
+#[test]
+fn jsx_string_7() {
+    assert_eq!(
+        lex_tokens(
+            crate::Syntax::Es(crate::EsConfig {
+                jsx: true,
+                ..Default::default()
+            }),
+            "<Page num='&'>ABC</Page>;"
+        ),
+        vec![
+            Token::JSXTagStart,
+            Token::JSXName {
+                name: "Page".into()
+            },
+            Token::JSXName { name: "num".into() },
+            tok!('='),
+            Token::Str {
+                value: "&".into(),
+                raw: "'&'".into(),
+            },
+            Token::JSXTagEnd,
+            JSXText { raw: "ABC".into() },
+            JSXTagStart,
+            tok!('/'),
+            JSXName {
+                name: "Page".into()
+            },
+            JSXTagEnd,
+            Semi,
+        ]
+    );
+}
+
+#[test]
+fn jsx_string_8() {
+    assert_eq!(
+        lex_tokens(
+            crate::Syntax::Es(crate::EsConfig {
+                jsx: true,
+                ..Default::default()
+            }),
+            "<Page num='&;'>ABC</Page>;"
+        ),
+        vec![
+            Token::JSXTagStart,
+            Token::JSXName {
+                name: "Page".into()
+            },
+            Token::JSXName { name: "num".into() },
+            tok!('='),
+            Token::Str {
+                value: "&;".into(),
+                raw: "'&;'".into(),
+            },
+            Token::JSXTagEnd,
+            JSXText { raw: "ABC".into() },
+            JSXTagStart,
+            tok!('/'),
+            JSXName {
+                name: "Page".into()
+            },
+            JSXTagEnd,
+            Semi,
+        ]
+    );
+}
+
+#[test]
+fn jsx_string_9() {
+    assert_eq!(
+        lex_tokens(
+            crate::Syntax::Es(crate::EsConfig {
+                jsx: true,
+                ..Default::default()
+            }),
+            "<Page num='&&'>ABC</Page>;"
+        ),
+        vec![
+            Token::JSXTagStart,
+            Token::JSXName {
+                name: "Page".into()
+            },
+            Token::JSXName { name: "num".into() },
+            tok!('='),
+            Token::Str {
+                value: "&&".into(),
+                raw: "'&&'".into(),
             },
             Token::JSXTagEnd,
             JSXText { raw: "ABC".into() },
@@ -996,7 +1563,7 @@ fn issue_316() {
         lex_tokens(Default::default(), "'Hi\\r\\n..'"),
         vec![Token::Str {
             value: "Hi\r\n..".into(),
-            has_escape: true
+            raw: "'Hi\\r\\n..'".into(),
         }]
     );
 }
@@ -1008,7 +1575,7 @@ fn issue_401() {
         vec![
             Token::Str {
                 value: "17".into(),
-                has_escape: false
+                raw: "'17'".into(),
             },
             tok!("as"),
             tok!("const")
@@ -1049,18 +1616,13 @@ fn issue_481() {
 #[test]
 fn issue_915_1() {
     assert_eq!(
-        lex_tokens(
-            crate::Syntax::Es(crate::EsConfig {
-                ..Default::default()
-            }),
-            r##"encode("\r\n")"##
-        ),
+        lex_tokens(crate::Syntax::Es(Default::default()), r#"encode("\r\n")"#),
         vec![
             Word(Word::Ident("encode".into())),
             LParen,
             Token::Str {
                 value: "\r\n".into(),
-                has_escape: true
+                raw: "\"\\r\\n\"".into(),
             },
             RParen
         ]
@@ -1142,6 +1704,7 @@ fn lex_large_number(b: &mut Bencher) {
 }
 
 #[bench]
+#[allow(clippy::octal_escapes)]
 fn lex_escaped_char(b: &mut Bencher) {
     bench_simple(
         b,
@@ -1278,6 +1841,191 @@ fn issue_1272_2_js() {
 }
 
 #[test]
+fn issue_2853_1_js() {
+    let (tokens, errors) = lex_errors(crate::Syntax::Es(Default::default()), "const a = \"\\0a\"");
+
+    assert_eq!(errors, vec![]);
+    assert_eq!(
+        tokens,
+        vec![
+            Word(Word::Keyword(Keyword::Const)),
+            Word(Word::Ident("a".into())),
+            Token::AssignOp(AssignOp::Assign),
+            Token::Str {
+                value: "\u{0000}a".into(),
+                raw: "\"\\0a\"".into(),
+            }
+        ],
+    );
+}
+
+#[test]
+fn issue_2853_2_ts() {
+    let (tokens, errors) = lex_errors(
+        crate::Syntax::Typescript(Default::default()),
+        "const a = \"\\0a\"",
+    );
+
+    assert_eq!(errors, vec![]);
+    assert_eq!(
+        tokens,
+        vec![
+            Word(Word::Keyword(Keyword::Const)),
+            Word(Word::Ident("a".into())),
+            Token::AssignOp(AssignOp::Assign),
+            Token::Str {
+                value: "\u{0000}a".into(),
+                raw: "\"\\0a\"".into(),
+            }
+        ],
+    );
+}
+
+#[test]
+fn issue_2853_3_js() {
+    let (tokens, errors) = lex_errors(
+        crate::Syntax::Es(Default::default()),
+        "const a = \"\u{0000}a\"",
+    );
+
+    assert_eq!(errors, vec![]);
+    assert_eq!(
+        tokens,
+        vec![
+            Word(Word::Keyword(Keyword::Const)),
+            Word(Word::Ident("a".into())),
+            Token::AssignOp(AssignOp::Assign),
+            Token::Str {
+                value: "\u{0000}a".into(),
+                raw: "\"\u{0000}a\"".into(),
+            }
+        ],
+    );
+}
+
+#[test]
+fn issue_2853_4_ts() {
+    let (tokens, errors) = lex_errors(
+        crate::Syntax::Typescript(Default::default()),
+        "const a = \"\u{0000}a\"",
+    );
+
+    assert_eq!(errors, vec![]);
+    assert_eq!(
+        tokens,
+        vec![
+            Word(Word::Keyword(Keyword::Const)),
+            Word(Word::Ident("a".into())),
+            Token::AssignOp(AssignOp::Assign),
+            Token::Str {
+                value: "\u{0000}a".into(),
+                raw: "\"\u{0000}a\"".into(),
+            }
+        ],
+    );
+}
+
+#[test]
+fn issue_2853_5_jsx() {
+    let (tokens, errors) = lex_errors(
+        crate::Syntax::Es(crate::EsConfig {
+            jsx: true,
+            ..Default::default()
+        }),
+        "const a = \"\\0a\"",
+    );
+
+    assert_eq!(errors, vec![]);
+    assert_eq!(
+        tokens,
+        vec![
+            Word(Word::Keyword(Keyword::Const)),
+            Word(Word::Ident("a".into())),
+            Token::AssignOp(AssignOp::Assign),
+            Token::Str {
+                value: "\u{0000}a".into(),
+                raw: "\"\\0a\"".into(),
+            }
+        ]
+    );
+}
+
+#[test]
+fn issue_2853_6_tsx() {
+    let (tokens, errors) = lex_errors(
+        crate::Syntax::Typescript(crate::TsConfig {
+            tsx: true,
+            ..Default::default()
+        }),
+        "const a = \"\\0a\"",
+    );
+
+    assert_eq!(errors, vec![]);
+    assert_eq!(
+        tokens,
+        vec![
+            Word(Word::Keyword(Keyword::Const)),
+            Word(Word::Ident("a".into())),
+            Token::AssignOp(AssignOp::Assign),
+            Token::Str {
+                value: "\u{0000}a".into(),
+                raw: "\"\\0a\"".into(),
+            }
+        ]
+    );
+}
+
+#[test]
+fn issue_2853_7_jsx() {
+    let (tokens, errors) = lex_errors(
+        crate::Syntax::Es(crate::EsConfig {
+            jsx: true,
+            ..Default::default()
+        }),
+        "const a = \"\u{0000}a\"",
+    );
+
+    assert_eq!(errors, vec![]);
+    assert_eq!(
+        tokens,
+        vec![
+            Word(Word::Keyword(Keyword::Const)),
+            Word(Word::Ident("a".into())),
+            Token::AssignOp(AssignOp::Assign),
+            Token::Str {
+                value: "\u{0000}a".into(),
+                raw: "\"\u{0000}a\"".into(),
+            }
+        ]
+    );
+}
+
+#[test]
+fn issue_2853_8_tsx() {
+    let (tokens, errors) = lex_errors(
+        crate::Syntax::Typescript(crate::TsConfig {
+            tsx: true,
+            ..Default::default()
+        }),
+        "const a = \"\u{0000}a\"",
+    );
+
+    assert_eq!(errors, vec![]);
+    assert_eq!(
+        tokens,
+        vec![
+            Word(Word::Keyword(Keyword::Const)),
+            Word(Word::Ident("a".into())),
+            Token::AssignOp(AssignOp::Assign),
+            Token::Str {
+                value: "\u{0000}a".into(),
+                raw: "\"\u{0000}a\"".into(),
+            }
+        ]
+    );
+}
+
+#[test]
 #[ignore = "Raw token should be different. See https://github.com/denoland/deno/issues/9620"]
 fn normalize_tpl_carriage_return() {
     assert_eq!(
@@ -1288,4 +2036,126 @@ fn normalize_tpl_carriage_return() {
         lex_tokens(Syntax::default(), "`\r`"),
         lex_tokens(Syntax::default(), "`\n`")
     );
+}
+
+#[test]
+fn conflict_marker_trivia1() {
+    let (_, errors) = lex_errors(
+        Default::default(),
+        r#"
+class C {
+<<<<<<< HEAD
+    v = 1;
+=======
+    v = 2;
+>>>>>>> Branch-a
+}
+"#,
+    );
+
+    assert_eq!(errors.len(), 3);
+    assert!(errors.iter().all(|e| e.kind() == &SyntaxError::TS1185));
+}
+
+#[test]
+fn conflict_marker_trivia2() {
+    let (_, errors) = lex_errors(
+        crate::Syntax::Typescript(Default::default()),
+        r#"
+class C {
+  foo() {
+<<<<<<< B
+     a();
+  }
+=======
+     b();
+  }
+>>>>>>> A
+
+  public bar() { }
+}
+"#,
+    );
+
+    assert_eq!(errors.len(), 3);
+    assert!(errors.iter().all(|e| e.kind() == &SyntaxError::TS1185));
+}
+
+#[test]
+fn conflict_marker_trivia3() {
+    let (_, errors) = lex_errors(
+        crate::Syntax::Typescript(crate::TsConfig {
+            tsx: true,
+            ..Default::default()
+        }),
+        r#"
+const x = <div />
+<<<<<<< HEAD
+"#,
+    );
+
+    assert_eq!(errors.len(), 1);
+    assert!(errors.iter().all(|e| e.kind() == &SyntaxError::TS1185));
+}
+
+#[test]
+fn conflict_marker_trivia4() {
+    let (_, errors) = lex_errors(
+        crate::Syntax::Typescript(Default::default()),
+        r#"
+const x = <div>
+<<<<<<< HEAD
+"#,
+    );
+
+    assert_eq!(errors.len(), 1);
+    assert!(errors.iter().all(|e| e.kind() == &SyntaxError::TS1185));
+}
+
+#[test]
+fn conflict_marker_diff3_trivia1() {
+    let (_, errors) = lex_errors(
+        crate::Syntax::Typescript(Default::default()),
+        r#"
+class C {
+<<<<<<< HEAD
+    v = 1;
+||||||| merged common ancestors
+    v = 3;
+=======
+    v = 2;
+>>>>>>> Branch-a
+}
+"#,
+    );
+
+    assert_eq!(errors.len(), 4);
+    assert!(errors.iter().all(|e| e.kind() == &SyntaxError::TS1185));
+}
+
+#[test]
+fn conflict_marker_diff3_trivia2() {
+    let (_, errors) = lex_errors(
+        crate::Syntax::Typescript(Default::default()),
+        r#"
+class C {
+  foo() {
+<<<<<<< B
+     a();
+  }
+||||||| merged common ancestors
+     c();
+  }
+=======
+     b();
+  }
+>>>>>>> A
+
+  public bar() { }
+}
+"#,
+    );
+
+    assert_eq!(errors.len(), 4);
+    assert!(errors.iter().all(|e| e.kind() == &SyntaxError::TS1185));
 }

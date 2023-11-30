@@ -1,12 +1,12 @@
 //! 12.1 Identifiers
-use super::*;
-use crate::token::Keyword;
 use either::Either;
-use swc_atoms::js_word;
+use swc_atoms::atom;
 
-impl<'a, I: Tokens> Parser<I> {
+use super::*;
+use crate::token::{IdentLike, Keyword};
+
+impl<I: Tokens> Parser<I> {
     pub(super) fn parse_maybe_private_name(&mut self) -> PResult<Either<PrivateName, Ident>> {
-        let start = cur_pos!(self);
         let is_private = is!(self, '#');
 
         if is_private {
@@ -74,6 +74,21 @@ impl<'a, I: Tokens> Parser<I> {
         Ok(Ident::new(w, span!(self, start)))
     }
 
+    // https://tc39.es/ecma262/#prod-ModuleExportName
+    pub(super) fn parse_module_export_name(&mut self) -> PResult<ModuleExportName> {
+        let module_export_name = match cur!(self, false) {
+            Ok(&Token::Str { .. }) => match self.parse_lit()? {
+                Lit::Str(str_lit) => ModuleExportName::Str(str_lit),
+                _ => unreachable!(),
+            },
+            Ok(&Word(..)) => ModuleExportName::Ident(self.parse_ident_name()?),
+            _ => {
+                unexpected!(self, "identifier or string");
+            }
+        };
+        Ok(module_export_name)
+    }
+
     /// Identifier
     ///
     /// In strict mode, "yield" is SyntaxError if matched.
@@ -94,47 +109,61 @@ impl<'a, I: Tokens> Parser<I> {
             // Spec:
             // It is a Syntax Error if this phrase is contained in strict mode code and the
             // StringValue of IdentifierName is: "implements", "interface", "let",
-            // "package", "private", "protected",  "public", "static", or "yield".
+            // "package", "private", "protected", "public", "static", or "yield".
             match w {
-                Word::Ident(js_word!("enum")) => {
-                    p.emit_err(p.input.prev_span(), SyntaxError::InvalidIdentInStrict);
+                Word::Ident(ref name @ ident_like!("enum")) => {
+                    p.emit_err(
+                        p.input.prev_span(),
+                        SyntaxError::InvalidIdentInStrict(name.clone().into()),
+                    );
                 }
-                Word::Keyword(Keyword::Yield)
-                | Word::Ident(js_word!("static"))
-                | Word::Ident(js_word!("implements"))
-                | Word::Ident(js_word!("interface"))
-                | Word::Ident(js_word!("let"))
-                | Word::Ident(js_word!("package"))
-                | Word::Ident(js_word!("private"))
-                | Word::Ident(js_word!("protected"))
-                | Word::Ident(js_word!("public")) => {
-                    p.emit_strict_mode_err(p.input.prev_span(), SyntaxError::InvalidIdentInStrict);
+                Word::Keyword(name @ Keyword::Yield) | Word::Keyword(name @ Keyword::Let) => {
+                    p.emit_strict_mode_err(
+                        p.input.prev_span(),
+                        SyntaxError::InvalidIdentInStrict(name.into_js_word()),
+                    );
+                }
+
+                Word::Ident(
+                    ref name @ ident_like!("static")
+                    | ref name @ ident_like!("implements")
+                    | ref name @ ident_like!("interface")
+                    | ref name @ ident_like!("package")
+                    | ref name @ ident_like!("private")
+                    | ref name @ ident_like!("protected")
+                    | ref name @ ident_like!("public"),
+                ) => {
+                    p.emit_strict_mode_err(
+                        p.input.prev_span(),
+                        SyntaxError::InvalidIdentInStrict(name.clone().into()),
+                    );
                 }
                 _ => {}
             }
 
-            //TODO
             // Spec:
             // It is a Syntax Error if StringValue of IdentifierName is the same String
             // value as the StringValue of any ReservedWord except for yield or await.
-
             match w {
-                Word::Keyword(Keyword::Await) if p.input.syntax().typescript() => {
-                    Ok(js_word!("await"))
-                }
+                Word::Keyword(Keyword::Await) if p.ctx().in_declare => Ok(atom!("await")),
 
                 // It is a Syntax Error if the goal symbol of the syntactic grammar is Module
                 // and the StringValue of IdentifierName is "await".
-                Word::Keyword(Keyword::Await) if p.ctx().module => {
-                    syntax_error!(p, p.input.prev_span(), SyntaxError::ExpectedIdent)
+                Word::Keyword(Keyword::Await) if p.ctx().module | p.ctx().in_async => {
+                    syntax_error!(p, p.input.prev_span(), SyntaxError::InvalidIdentInAsync)
                 }
-                Word::Keyword(Keyword::This) if p.input.syntax().typescript() => {
-                    Ok(js_word!("this"))
+                Word::Keyword(Keyword::This) if p.input.syntax().typescript() => Ok(atom!("this")),
+                Word::Keyword(Keyword::Let) => Ok(atom!("let")),
+                Word::Ident(ident) => {
+                    if matches!(&ident, IdentLike::Other(arguments) if &**arguments == "arguments")
+                        && p.ctx().in_class_field
+                    {
+                        p.emit_err(p.input.prev_span(), SyntaxError::ArgumentsInClassField)
+                    }
+                    Ok(ident.into())
                 }
-                Word::Keyword(Keyword::Let) => Ok(js_word!("let")),
-                Word::Ident(ident) => Ok(ident),
-                Word::Keyword(Keyword::Yield) if incl_yield => Ok(js_word!("yield")),
-                Word::Keyword(Keyword::Await) if incl_await => Ok(js_word!("await")),
+                Word::Keyword(Keyword::Yield) if incl_yield => Ok(atom!("yield")),
+                Word::Keyword(Keyword::Await) if incl_await => Ok(atom!("await")),
                 Word::Keyword(..) | Word::Null | Word::True | Word::False => {
                     syntax_error!(p, p.input.prev_span(), SyntaxError::ExpectedIdent)
                 }
@@ -142,19 +171,5 @@ impl<'a, I: Tokens> Parser<I> {
         })?;
 
         Ok(Ident::new(word, span!(self, start)))
-    }
-}
-
-pub(super) trait MaybeOptionalIdentParser<Ident> {
-    fn parse_maybe_opt_binding_ident(&mut self) -> PResult<Ident>;
-}
-impl<I: Tokens> MaybeOptionalIdentParser<Ident> for Parser<I> {
-    fn parse_maybe_opt_binding_ident(&mut self) -> PResult<Ident> {
-        self.parse_binding_ident().map(|i| i.id)
-    }
-}
-impl<I: Tokens> MaybeOptionalIdentParser<Option<Ident>> for Parser<I> {
-    fn parse_maybe_opt_binding_ident(&mut self) -> PResult<Option<Ident>> {
-        self.parse_opt_binding_ident().map(|opt| opt.map(|i| i.id))
     }
 }

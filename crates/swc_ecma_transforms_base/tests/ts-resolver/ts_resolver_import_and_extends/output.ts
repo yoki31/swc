@@ -1,5 +1,6 @@
-import { Nullable } from 'nullable';
-import { Component } from 'react';
-class Foo extends Component {
+import { Nullable__2 } from "nullable";
+import { Component__2 } from "react";
+class Foo__2 extends Component__2<Nullable__2, {
+}> {
 }
-new Foo();
+new Foo__2();

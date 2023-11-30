@@ -1,7 +1,7 @@
-import { Nullable } from 'nullable';
-import { SomeOther } from 'some';
-import { Another } from 'some';
-class A extends Nullable {
-    other__0: Nullable<Another>;
+import { Nullable__2 } from "nullable";
+import { SomeOther__2 } from "some";
+import { Another__2 } from "some";
+class A__2 extends Nullable__2 {
+    other: Nullable__2<Another__2>;
 }
-new A();
+new A__2();

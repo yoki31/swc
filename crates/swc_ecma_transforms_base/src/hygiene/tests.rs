@@ -1,11 +1,12 @@
-use super::*;
-use crate::tests::{HygieneVisualizer, Tester};
 use swc_atoms::JsWord;
 use swc_common::{collections::AHashMap, hygiene::*, DUMMY_SP};
 use swc_ecma_parser::Syntax;
 use swc_ecma_utils::quote_ident;
 use swc_ecma_visit::{Fold, FoldWith};
 use testing::{assert_eq, DebugUsingDisplay};
+
+use super::*;
+use crate::tests::{HygieneVisualizer, Tester};
 
 struct Marker {
     map: AHashMap<JsWord, Mark>,
@@ -72,11 +73,11 @@ where
             })
         },
         expected,
-        Default::default(),
+        Default::default,
     )
 }
 
-fn test_module<F>(op: F, expected: &str, config: Config)
+fn test_module<F>(op: F, expected: &str, config: impl FnOnce() -> Config)
 where
     F: FnOnce(&mut crate::tests::Tester<'_>) -> Result<Module, ()>,
 {
@@ -86,7 +87,7 @@ where
         let hygiene_src = tester.print(&module.clone().fold_with(&mut HygieneVisualizer));
         println!("----- Hygiene -----\n{}", hygiene_src);
 
-        let module = module.fold_with(&mut hygiene_with_config(config));
+        let module = module.fold_with(&mut hygiene_with_config(config()));
 
         let actual = tester.print(&module);
 
@@ -101,7 +102,7 @@ where
             println!("----- Actual -----\n{}", actual);
             println!("----- Diff -----");
 
-            assert_eq!(DebugUsingDisplay(&*actual), DebugUsingDisplay(&*expected));
+            assert_eq!(DebugUsingDisplay(&actual), DebugUsingDisplay(&expected));
         }
 
         Ok(())
@@ -283,7 +284,7 @@ fn const_then_fn_param() {
                     .fold_with(&mut marker(&[("a", mark2)])),
             ])
         },
-        "const a1 = 1;
+        "const a = 1;
             function foo(a) {
                 use(a);
             }",
@@ -372,7 +373,7 @@ fn shorthand() {
             ])
         },
         "
-            let a1 = 1;
+            let a = 1;
             function foo() {
                 let a = 2;
                 use({ a })
@@ -413,7 +414,7 @@ fn mark_root() {
                 tester.parse_stmt("actual1.js", "var foo = 'bar';")?,
                 Stmt::Decl(Decl::Fn(FnDecl {
                     ident: quote_ident!("Foo"),
-                    function: Function {
+                    function: Box::new(Function {
                         span: DUMMY_SP,
                         is_async: false,
                         is_generator: false,
@@ -426,14 +427,14 @@ fn mark_root() {
                                     .fold_with(&mut marker(&[("foo", mark2)])),
                                 tester.parse_stmt(
                                     "actual3.js",
-                                    "_defineProperty(this, 'bar', foo);",
+                                    "_define_property(this, 'bar', foo);",
                                 )?,
                             ],
                         }),
                         params: vec![],
                         type_params: Default::default(),
                         return_type: Default::default(),
-                    },
+                    }),
 
                     declare: false,
                 })),
@@ -443,7 +444,7 @@ fn mark_root() {
 var foo = 'bar';
 function Foo() {
     var foo1 = 'foo';
-    _defineProperty(this, 'bar', foo);
+    _define_property(this, 'bar', foo);
 }
             ",
     );
@@ -496,10 +497,11 @@ fn fn_args() {
     test(
         |tester| {
             let mark1 = Mark::fresh(Mark::root());
+            let mark2 = Mark::fresh(Mark::root());
 
             Ok(vec![Stmt::Decl(Decl::Fn(FnDecl {
                 ident: quote_ident!("Foo"),
-                function: Function {
+                function: Box::new(Function {
                     span: DUMMY_SP,
                     is_async: false,
                     is_generator: false,
@@ -507,24 +509,25 @@ fn fn_args() {
                     body: Some(BlockStmt {
                         span: DUMMY_SP,
                         stmts: vec![tester
-                            .parse_stmt("actual1.js", "_defineProperty(this, 'force', force);")?],
+                            .parse_stmt("actual1.js", "_define_property(this, 'force', force);")?
+                            .fold_with(&mut marker(&[("force", mark2)]))],
                     }),
                     params: vec![Param {
                         span: DUMMY_SP,
                         decorators: vec![],
-                        pat: Pat::Ident(quote_ident!("force").into()),
+                        pat: quote_ident!("force").into(),
                     }
                     .fold_with(&mut marker(&[("force", mark1)]))],
                     type_params: Default::default(),
                     return_type: Default::default(),
-                },
+                }),
 
                 declare: false,
             }))])
         },
         "
         function Foo(force1) {
-            _defineProperty(this, 'force', force);
+            _define_property(this, 'force', force);
         }
         ",
     );
@@ -539,7 +542,7 @@ fn block_in_fn() {
 
             Ok(vec![Stmt::Decl(Decl::Fn(FnDecl {
                 ident: quote_ident!("Foo"),
-                function: Function {
+                function: Box::new(Function {
                     span: DUMMY_SP,
                     is_async: false,
                     is_generator: false,
@@ -558,7 +561,7 @@ fn block_in_fn() {
                     params: vec![],
                     type_params: Default::default(),
                     return_type: Default::default(),
-                },
+                }),
 
                 declare: false,
             }))])
@@ -592,7 +595,7 @@ fn flat_in_fn() {
 
             Ok(vec![Stmt::Decl(Decl::Fn(FnDecl {
                 ident: quote_ident!("Foo"),
-                function: Function {
+                function: Box::new(Function {
                     span: DUMMY_SP,
                     is_async: false,
                     is_generator: false,
@@ -611,7 +614,7 @@ fn flat_in_fn() {
                     params: vec![],
                     type_params: Default::default(),
                     return_type: Default::default(),
-                },
+                }),
 
                 declare: false,
             }))])
@@ -634,7 +637,7 @@ fn params_in_fn() {
 
             Ok(vec![Stmt::Decl(Decl::Fn(FnDecl {
                 ident: quote_ident!("Foo"),
-                function: Function {
+                function: Box::new(Function {
                     span: DUMMY_SP,
                     is_async: false,
                     is_generator: false,
@@ -647,21 +650,17 @@ fn params_in_fn() {
                         Param {
                             span: DUMMY_SP,
                             decorators: Default::default(),
-                            pat: Pat::Ident(
-                                Ident::new("param".into(), DUMMY_SP.apply_mark(mark1)).into(),
-                            ),
+                            pat: Ident::new("param".into(), DUMMY_SP.apply_mark(mark1)).into(),
                         },
                         Param {
                             span: DUMMY_SP,
                             decorators: Default::default(),
-                            pat: Pat::Ident(
-                                Ident::new("param".into(), DUMMY_SP.apply_mark(mark2)).into(),
-                            ),
+                            pat: Ident::new("param".into(), DUMMY_SP.apply_mark(mark2)).into(),
                         },
                     ],
                     type_params: Default::default(),
                     return_type: Default::default(),
-                },
+                }),
 
                 declare: false,
             }))])
@@ -707,7 +706,7 @@ fn for_x() {
                     .parse_stmt(
                         "actual1.js",
                         "for (var _ref of []){
-                            var { a } = _ref, b = _objectWithoutProperties(_ref, ['a']);
+                            var { a } = _ref, b = _object_without_properties(_ref, ['a']);
                         }",
                     )?
                     .fold_with(&mut marker(&[("_ref", mark1)])),
@@ -715,7 +714,7 @@ fn for_x() {
                     .parse_stmt(
                         "actual2.js",
                         "for (var _ref of []){
-                            var { a } = _ref, b = _objectWithoutProperties(_ref, ['a']);
+                            var { a } = _ref, b = _object_without_properties(_ref, ['a']);
                         }",
                     )?
                     .fold_with(&mut marker(&[("_ref", mark2)])),
@@ -724,7 +723,7 @@ fn for_x() {
                         "actual3.js",
                         "async function a() {
                             for await (var _ref of []){
-                                var { a } = _ref, b = _objectWithoutProperties(_ref, ['a']);
+                                var { a } = _ref, b = _object_without_properties(_ref, ['a']);
                             }
                         }",
                     )?
@@ -732,16 +731,16 @@ fn for_x() {
             ])
         },
         "
-        for (var _ref2 of []){
-            var { a } = _ref2, b = _objectWithoutProperties(_ref2, ['a']);
+        for (var _ref of []){
+            var { a } = _ref, b = _object_without_properties(_ref, ['a']);
         }
 
         for (var _ref1 of []){
-            var { a } = _ref1, b = _objectWithoutProperties(_ref1, ['a']);
+            var { a } = _ref1, b = _object_without_properties(_ref1, ['a']);
         }
         async function a() {
             for await (var _ref of []){
-                var { a } = _ref, b = _objectWithoutProperties(_ref, ['a']);
+                var { a } = _ref, b = _object_without_properties(_ref, ['a']);
             }
         }
         ",
@@ -796,7 +795,7 @@ fn nested_fn_param_with_same_name() {
                     "actual1.js",
                     "
                     function _three() {
-                        _three = _asyncToGenerator(function*(a, param, c, param) {
+                        _three = _async_to_generator(function*(a, param, c, param) {
                         });
                         return _three.apply(this, arguments);
                     }
@@ -809,7 +808,7 @@ fn nested_fn_param_with_same_name() {
         },
         "
         function _three() {
-            _three = _asyncToGenerator(function*(a, param, c, param1) {
+            _three = _async_to_generator(function*(a, param, c, param1) {
             });
             return _three.apply(this, arguments);
         }
@@ -831,18 +830,18 @@ fn regression_001() {
                     "actual1.js",
                     "var Foo = function() {
     function Foo() {
-        _classCallCheck(this, Foo);
+        _class_call_check(this, Foo);
         foo.set(this, {
              writable: true, value: 0
         });
     }
-    _createClass(Foo, [{
+    _create_class(Foo, [{
              key: 'test', value: function test(other) {
                     var old, _obj, old, _obj;
-                     _classPrivateFieldSet(this, foo, (old = +_classPrivateFieldGet(this, foo)) + \
-                     1), old;
-                     _classPrivateFieldSet(_obj = other.obj, foo, (old = \
-                     +_classPrivateFieldGet(_obj, foo)) + 1), old;
+                     _class_private_field_set(this, foo, (old = +_class_private_field_get(this, \
+                     foo)) + 1), old;
+                     _class_private_field_set(_obj = other.obj, foo, (old = \
+                     +_class_private_field_get(_obj, foo)) + 1), old;
                 }
         }]);
     return Foo;
@@ -856,18 +855,18 @@ fn regression_001() {
         },
         "var Foo = function() {
     function Foo() {
-        _classCallCheck(this, Foo);
+        _class_call_check(this, Foo);
         foo.set(this, {
              writable: true, value: 0
         });
     }
-    _createClass(Foo, [{
+    _create_class(Foo, [{
              key: 'test', value: function test(other) {
                 var old, _obj, old1, _obj1;
-                _classPrivateFieldSet(this, foo, (old = +_classPrivateFieldGet(this, foo)) + 1), \
-         old;
-                _classPrivateFieldSet(_obj = other.obj, foo, (old1 = +_classPrivateFieldGet(_obj1, \
-         foo)) + 1), old1;
+                _class_private_field_set(this, foo, (old = +_class_private_field_get(this, foo)) + \
+         1), old;
+                _class_private_field_set(_obj = other.obj, foo, (old1 = \
+         +_class_private_field_get(_obj1, foo)) + 1), old1;
                 }
         }]);
     return Foo;
@@ -886,13 +885,13 @@ fn regression_002() {
             Ok(vec![tester
                 .parse_stmt(
                     "actual1.js",
-                    "_createClass(Foo, [{
+                    "_create_class(Foo, [{
              key: 'test', value: function test(other) {
                     var old, _obj, old, _obj;
-                     _classPrivateFieldSet(this, foo, (old = +_classPrivateFieldGet(this, foo)) + \
-                     1), old;
-                     _classPrivateFieldSet(_obj = other.obj, foo, (old = \
-                     +_classPrivateFieldGet(_obj, foo)) + 1), old;
+                     _class_private_field_set(this, foo, (old = +_class_private_field_get(this, \
+                     foo)) + 1), old;
+                     _class_private_field_set(_obj = other.obj, foo, (old = \
+                     +_class_private_field_get(_obj, foo)) + 1), old;
                 }
         }])",
                 )?
@@ -901,13 +900,13 @@ fn regression_002() {
                     &[mark1, mark2, mark1, mark1, mark2, mark2],
                 )]))])
         },
-        "_createClass(Foo, [{
+        "_create_class(Foo, [{
              key: 'test', value: function test(other) {
                     var old, _obj, old1, _obj;
-                     _classPrivateFieldSet(this, foo, (old = +_classPrivateFieldGet(this, foo)) + \
-         1), old;
-                     _classPrivateFieldSet(_obj = other.obj, foo, (old1 = \
-         +_classPrivateFieldGet(_obj, foo)) + 1), old1;
+                     _class_private_field_set(this, foo, (old = +_class_private_field_get(this, \
+         foo)) + 1), old;
+                     _class_private_field_set(_obj = other.obj, foo, (old1 = \
+         +_class_private_field_get(_obj, foo)) + 1), old1;
                 }
         }]);",
     );
@@ -924,10 +923,10 @@ fn regression_003() {
                 .parse_stmts(
                     "actual1.js",
                     "var old, _obj, old, _obj;
-                     _classPrivateFieldSet(this, foo, (old = +_classPrivateFieldGet(this, foo)) + \
-                     1), old;
-                     _classPrivateFieldSet(_obj = other.obj, foo, (old = \
-                     +_classPrivateFieldGet(_obj, foo)) + 1), old;",
+                     _class_private_field_set(this, foo, (old = +_class_private_field_get(this, \
+                     foo)) + 1), old;
+                     _class_private_field_set(_obj = other.obj, foo, (old = \
+                     +_class_private_field_get(_obj, foo)) + 1), old;",
                 )?
                 .fold_with(&mut OnceMarker::new(&[(
                     "old",
@@ -935,10 +934,10 @@ fn regression_003() {
                 )])))
         },
         "var old, _obj, old1, _obj;
-                     _classPrivateFieldSet(this, foo, (old = +_classPrivateFieldGet(this, foo)) + \
-         1), old;
-                     _classPrivateFieldSet(_obj = other.obj, foo, (old1 = \
-         +_classPrivateFieldGet(_obj, foo)) + 1), old1;",
+                     _class_private_field_set(this, foo, (old = +_class_private_field_get(this, \
+         foo)) + 1), old;
+                     _class_private_field_set(_obj = other.obj, foo, (old1 = \
+         +_class_private_field_get(_obj, foo)) + 1), old1;",
     );
 }
 
@@ -999,7 +998,7 @@ fn module_01() {
         },
         "import foo from 'src1';
         import foo1 from 'src2';",
-        Default::default(),
+        Default::default,
     );
 }
 
@@ -1020,7 +1019,7 @@ fn module_02() {
         },
         "import {foo} from 'src1';
         import {foo as foo1} from 'src2';",
-        Default::default(),
+        Default::default,
     );
 }
 
@@ -1043,7 +1042,7 @@ fn module_03() {
         "var foo = 1;
         var foo1 = 2;
         export {foo1 as foo}",
-        Default::default(),
+        Default::default,
     );
 }
 
@@ -1065,7 +1064,7 @@ fn issue_281_01() {
         "label: {
             break label
         }",
-        Default::default(),
+        Default::default,
     );
 }
 
@@ -1095,16 +1094,16 @@ fn issue_281_02() {
                     &[mark1, mark2, mark3, mark2],
                 )])))
         },
-        "function foo(e) {
+        "function foo(e1) {
             e: {
                 try {
-                } catch (e) {
+                } catch (e1) {
                     o = null;
                     break e
                 }
             }
         }",
-        Default::default(),
+        Default::default,
     );
 }
 
@@ -1136,7 +1135,7 @@ fn issue_295_01() {
             }
         }
         ",
-        Default::default(),
+        Default::default,
     );
 }
 
@@ -1170,7 +1169,7 @@ fn issue_295_02() {
             }
         }
         ",
-        Default::default(),
+        Default::default,
     );
 }
 
@@ -1192,7 +1191,7 @@ fn exported_function() {
         "const foo = {};
         function foo1(){}
       export { foo1 as foo };",
-        Default::default(),
+        Default::default,
     );
 }
 
@@ -1214,7 +1213,7 @@ fn exported_class_1() {
         "var Foo = {};
         class Foo1 {}
         export { Foo1 as Foo };",
-        Default::default(),
+        Default::default,
     );
 }
 
@@ -1246,8 +1245,9 @@ fn issue_1279() {
             }
         };
         ",
-        Config {
+        || Config {
             keep_class_names: true,
+            ..Default::default()
         },
     );
 }
@@ -1286,8 +1286,9 @@ fn issue_1507() {
             }
         };
         ",
-        Config {
+        || Config {
             keep_class_names: true,
+            ..Default::default()
         },
     );
 }
@@ -1634,12 +1635,12 @@ fn issue_2297_1() {
             Ok(stmts)
         },
         "
-        var _bar1 = require('./Bar');
+        var _bar = require('./Bar');
         var makeX = function(props) {
-            var _bar = props.bar;
-            var list = _bar.list;
+            var _bar1 = props.bar;
+            var list = _bar1.list;
             return list.map(function() {
-                return _bar1.bar;
+                return _bar.bar;
             });
         };
         ",

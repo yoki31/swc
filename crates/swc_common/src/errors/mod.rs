@@ -8,6 +8,18 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use std::{
+    borrow::Cow,
+    cell::RefCell,
+    error, fmt,
+    io::Write,
+    panic,
+    sync::atomic::{AtomicUsize, Ordering::SeqCst},
+};
+
+#[cfg(feature = "tty-emitter")]
+use termcolor::{Color, ColorSpec};
+
 use self::Level::*;
 pub use self::{
     diagnostic::{Diagnostic, DiagnosticId, DiagnosticStyledString, SubDiagnostic},
@@ -19,18 +31,8 @@ use crate::{
     rustc_data_structures::stable_hasher::StableHasher,
     sync::{Lock, LockCell, Lrc},
     syntax_pos::{BytePos, FileLinesResult, FileName, Loc, MultiSpan, Span, NO_EXPANSION},
+    SpanSnippetError,
 };
-use scoped_tls::scoped_thread_local;
-use std::{
-    borrow::Cow,
-    cell::RefCell,
-    error, fmt,
-    io::Write,
-    panic,
-    sync::atomic::{AtomicUsize, Ordering::SeqCst},
-};
-#[cfg(feature = "tty-emitter")]
-use termcolor::{Color, ColorSpec};
 
 mod diagnostic;
 mod diagnostic_builder;
@@ -39,11 +41,17 @@ mod lock;
 mod snippet;
 mod styled_buffer;
 
-#[derive(Copy, Clone, Debug, PartialEq, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(
     feature = "diagnostic-serde",
     derive(serde::Serialize, serde::Deserialize)
 )]
+#[cfg_attr(
+    any(feature = "rkyv-impl"),
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
+#[cfg_attr(feature = "rkyv-impl", archive(check_bytes))]
+#[cfg_attr(feature = "rkyv-impl", archive_attr(repr(u32)))]
 pub enum Applicability {
     MachineApplicable,
     HasPlaceholders,
@@ -51,11 +59,17 @@ pub enum Applicability {
     Unspecified,
 }
 
-#[derive(Clone, Debug, PartialEq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(
     feature = "diagnostic-serde",
     derive(serde::Serialize, serde::Deserialize)
 )]
+#[cfg_attr(
+    any(feature = "rkyv-impl"),
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
+#[cfg_attr(feature = "rkyv-impl", archive(check_bytes))]
+#[cfg_attr(feature = "rkyv-impl", archive_attr(repr(C)))]
 pub struct CodeSuggestion {
     /// Each substitute can have multiple variants due to multiple
     /// applicable suggestions
@@ -97,21 +111,33 @@ pub struct CodeSuggestion {
     pub applicability: Applicability,
 }
 
-#[derive(Clone, Debug, PartialEq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 /// See the docs on `CodeSuggestion::substitutions`
 #[cfg_attr(
     feature = "diagnostic-serde",
     derive(serde::Serialize, serde::Deserialize)
 )]
+#[cfg_attr(
+    any(feature = "rkyv-impl"),
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
+#[cfg_attr(feature = "rkyv-impl", archive(check_bytes))]
+#[cfg_attr(feature = "rkyv-impl", archive_attr(repr(C)))]
 pub struct Substitution {
     pub parts: Vec<SubstitutionPart>,
 }
 
-#[derive(Clone, Debug, PartialEq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(
     feature = "diagnostic-serde",
     derive(serde::Serialize, serde::Deserialize)
 )]
+#[cfg_attr(
+    any(feature = "rkyv-impl"),
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
+#[cfg_attr(feature = "rkyv-impl", archive(check_bytes))]
+#[cfg_attr(feature = "rkyv-impl", archive_attr(repr(C)))]
 pub struct SubstitutionPart {
     pub span: Span,
     pub snippet: String,
@@ -127,6 +153,7 @@ pub trait SourceMapper: crate::sync::Send + crate::sync::Sync {
     fn merge_spans(&self, sp_lhs: Span, sp_rhs: Span) -> Option<Span>;
     fn call_span_if_macro(&self, sp: Span) -> Span;
     fn doctest_offset_line(&self, line: usize) -> usize;
+    fn span_to_snippet(&self, sp: Span) -> Result<String, Box<SpanSnippetError>>;
 }
 
 impl CodeSuggestion {
@@ -286,6 +313,43 @@ impl error::Error for ExplicitBug {
 /// A handler deals with errors; certain errors
 /// (fatal, bug, unimpl) may cause immediate exit,
 /// others log errors for later reporting.
+///
+/// # Example
+///
+/// `swc` provides a global-like variable ([HANDLER]) of type `Handler` that can
+/// be used to report errors.
+///
+/// You can refer to [the lint rules](https://github.com/swc-project/swc/tree/main/crates/swc_ecma_lints/src/rules) for other example usages.
+/// All lint rules have code for error reporting.
+///
+/// ## Error reporting in swc
+///
+/// ```rust,ignore
+/// use swc_common::errors::HANDLER;
+///
+/// # fn main() {
+///     HANDLER.with(|handler| {
+///         // You can access the handler for the current file using HANDLER.with.
+///
+///         // We now report an error
+///
+///         // `struct_span_err` creates a builder for a diagnostic.
+///         // The span passed to `struct_span_err` will used to point the problematic code.
+///         //
+///         // You may provide additional information, like a previous declaration of parameter.
+///         handler
+///             .struct_span_err(
+///                 span,
+///                 &format!("`{}` used as parameter more than once", js_word),
+///             )
+///             .span_note(
+///                 old_span,
+///                 &format!("previous definition of `{}` here", js_word),
+///             )
+///             .emit();
+///     });
+/// # }
+/// ```
 pub struct Handler {
     pub flags: HandlerFlags,
 
@@ -349,6 +413,7 @@ impl Drop for Handler {
 
 impl Handler {
     #[cfg(feature = "tty-emitter")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "tty-emitter")))]
     pub fn with_tty_emitter(
         color_config: ColorConfig,
         can_emit_warnings: bool,
@@ -367,6 +432,7 @@ impl Handler {
     }
 
     #[cfg(feature = "tty-emitter")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "tty-emitter")))]
     pub fn with_tty_emitter_and_flags(
         color_config: ColorConfig,
         cm: Option<Lrc<SourceMapperDyn>>,
@@ -450,6 +516,7 @@ impl Handler {
         }
         result
     }
+
     pub fn struct_span_warn_with_code<'a, S: Into<MultiSpan>>(
         &'a self,
         sp: S,
@@ -464,6 +531,7 @@ impl Handler {
         }
         result
     }
+
     pub fn struct_warn<'a>(&'a self, msg: &str) -> DiagnosticBuilder<'a> {
         let mut result = DiagnosticBuilder::new(self, Level::Warning, msg);
         if !self.flags.can_emit_warnings {
@@ -471,6 +539,7 @@ impl Handler {
         }
         result
     }
+
     pub fn struct_span_err<'a, S: Into<MultiSpan>>(
         &'a self,
         sp: S,
@@ -480,6 +549,7 @@ impl Handler {
         result.set_span(sp);
         result
     }
+
     pub fn struct_span_err_with_code<'a, S: Into<MultiSpan>>(
         &'a self,
         sp: S,
@@ -491,11 +561,13 @@ impl Handler {
         result.code(code);
         result
     }
+
     // FIXME: This method should be removed (every error should have an associated
     // error code).
     pub fn struct_err<'a>(&'a self, msg: &str) -> DiagnosticBuilder<'a> {
         DiagnosticBuilder::new(self, Level::Error, msg)
     }
+
     pub fn struct_err_with_code<'a>(
         &'a self,
         msg: &str,
@@ -505,6 +577,7 @@ impl Handler {
         result.code(code);
         result
     }
+
     pub fn struct_span_fatal<'a, S: Into<MultiSpan>>(
         &'a self,
         sp: S,
@@ -514,6 +587,7 @@ impl Handler {
         result.set_span(sp);
         result
     }
+
     pub fn struct_span_fatal_with_code<'a, S: Into<MultiSpan>>(
         &'a self,
         sp: S,
@@ -525,6 +599,7 @@ impl Handler {
         result.code(code);
         result
     }
+
     pub fn struct_fatal<'a>(&'a self, msg: &str) -> DiagnosticBuilder<'a> {
         DiagnosticBuilder::new(self, Level::Fatal, msg)
     }
@@ -543,6 +618,7 @@ impl Handler {
         self.emit(&sp.into(), msg, Fatal);
         FatalError
     }
+
     pub fn span_fatal_with_code<S: Into<MultiSpan>>(
         &self,
         sp: S,
@@ -552,9 +628,11 @@ impl Handler {
         self.emit_with_code(&sp.into(), msg, code, Fatal);
         FatalError
     }
+
     pub fn span_err<S: Into<MultiSpan>>(&self, sp: S, msg: &str) {
         self.emit(&sp.into(), msg, Error);
     }
+
     pub fn mut_span_err<'a, S: Into<MultiSpan>>(
         &'a self,
         sp: S,
@@ -564,19 +642,24 @@ impl Handler {
         result.set_span(sp);
         result
     }
+
     pub fn span_err_with_code<S: Into<MultiSpan>>(&self, sp: S, msg: &str, code: DiagnosticId) {
         self.emit_with_code(&sp.into(), msg, code, Error);
     }
+
     pub fn span_warn<S: Into<MultiSpan>>(&self, sp: S, msg: &str) {
         self.emit(&sp.into(), msg, Warning);
     }
+
     pub fn span_warn_with_code<S: Into<MultiSpan>>(&self, sp: S, msg: &str, code: DiagnosticId) {
         self.emit_with_code(&sp.into(), msg, code, Warning);
     }
+
     pub fn span_bug<S: Into<MultiSpan>>(&self, sp: S, msg: &str) -> ! {
         self.emit(&sp.into(), msg, Bug);
         panic!("{}", ExplicitBug);
     }
+
     pub fn delay_span_bug<S: Into<MultiSpan>>(&self, sp: S, msg: &str) {
         if self.flags.treat_err_as_bug {
             // FIXME: don't abort here if report_delayed_bugs is off
@@ -586,29 +669,36 @@ impl Handler {
         diagnostic.set_span(sp.into());
         self.delay_as_bug(diagnostic);
     }
+
     fn delay_as_bug(&self, diagnostic: Diagnostic) {
         if self.flags.report_delayed_bugs {
             DiagnosticBuilder::new_diagnostic(self, diagnostic.clone()).emit();
         }
         self.delayed_span_bugs.borrow_mut().push(diagnostic);
     }
+
     pub fn span_bug_no_panic<S: Into<MultiSpan>>(&self, sp: S, msg: &str) {
         self.emit(&sp.into(), msg, Bug);
     }
+
     pub fn span_note_without_error<S: Into<MultiSpan>>(&self, sp: S, msg: &str) {
         self.emit(&sp.into(), msg, Note);
     }
+
     pub fn span_note_diag<'a>(&'a self, sp: Span, msg: &str) -> DiagnosticBuilder<'a> {
         let mut db = DiagnosticBuilder::new(self, Note, msg);
         db.set_span(sp);
         db
     }
+
     pub fn span_unimpl<S: Into<MultiSpan>>(&self, sp: S, msg: &str) -> ! {
         self.span_bug(sp, &format!("unimplemented {}", msg));
     }
+
     pub fn failure(&self, msg: &str) {
         DiagnosticBuilder::new(self, FailureNote, msg).emit()
     }
+
     pub fn fatal(&self, msg: &str) -> FatalError {
         if self.flags.treat_err_as_bug {
             self.bug(msg);
@@ -616,6 +706,7 @@ impl Handler {
         DiagnosticBuilder::new(self, Fatal, msg).emit();
         FatalError
     }
+
     pub fn err(&self, msg: &str) {
         if self.flags.treat_err_as_bug {
             self.bug(msg);
@@ -623,19 +714,23 @@ impl Handler {
         let mut db = DiagnosticBuilder::new(self, Error, msg);
         db.emit();
     }
+
     pub fn warn(&self, msg: &str) {
         let mut db = DiagnosticBuilder::new(self, Warning, msg);
         db.emit();
     }
+
     pub fn note_without_error(&self, msg: &str) {
         let mut db = DiagnosticBuilder::new(self, Note, msg);
         db.emit();
     }
+
     pub fn bug(&self, msg: &str) -> ! {
         let mut db = DiagnosticBuilder::new(self, Bug, msg);
         db.emit();
         panic!("{}", ExplicitBug);
     }
+
     pub fn unimpl(&self, msg: &str) -> ! {
         self.bug(&format!("unimplemented {}", msg));
     }
@@ -707,6 +802,7 @@ impl Handler {
         }
         FatalError.raise();
     }
+
     pub fn emit(&self, msp: &MultiSpan, msg: &str, lvl: Level) {
         if lvl == Warning && !self.flags.can_emit_warnings {
             return;
@@ -718,6 +814,7 @@ impl Handler {
             self.abort_if_errors();
         }
     }
+
     pub fn emit_with_code(&self, msp: &MultiSpan, msg: &str, code: DiagnosticId, lvl: Level) {
         if lvl == Warning && !self.flags.can_emit_warnings {
             return;
@@ -779,11 +876,17 @@ impl Handler {
     }
 }
 
-#[derive(Copy, PartialEq, Clone, Hash, Debug)]
+#[derive(Copy, PartialEq, Eq, Clone, Hash, Debug)]
 #[cfg_attr(
     feature = "diagnostic-serde",
     derive(serde::Serialize, serde::Deserialize)
 )]
+#[cfg_attr(
+    any(feature = "rkyv-impl"),
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
+#[cfg_attr(feature = "rkyv-impl", archive(check_bytes))]
+#[cfg_attr(feature = "rkyv-impl", archive_attr(repr(u32)))]
 pub enum Level {
     Bug,
     Fatal,
@@ -840,14 +943,11 @@ impl Level {
     }
 
     pub fn is_failure_note(self) -> bool {
-        match self {
-            FailureNote => true,
-            _ => false,
-        }
+        matches!(self, FailureNote)
     }
 }
 
-scoped_thread_local!(
+better_scoped_tls::scoped_tls!(
     /// Used for error reporting in transform.
     ///
     /// This should be only used for errors from the api which does not returning errors.
@@ -855,5 +955,7 @@ scoped_thread_local!(
     /// e.g.
     ///  - `parser` should not use this.
     ///  - `transforms` should use this to report error, as it does not return [Result].
+    ///
+    /// See [Handler] for actual usage examples.
     pub static HANDLER: Handler
 );

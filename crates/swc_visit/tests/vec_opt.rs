@@ -1,15 +1,13 @@
-use std::any::Any;
+#![allow(clippy::ptr_arg)]
+
 use swc_visit::define;
 
-/// Visitable nodes.
-pub trait Node: Any {}
-
-impl<T: ?Sized> Node for T where T: Any {}
-
+#[derive(Debug, PartialEq)]
 pub struct Item {
     pub vec_opt1: Vec<Option<Item>>,
     pub vec_opt2: Vec<Option<Enum>>,
 }
+#[derive(Debug, PartialEq)]
 pub enum Enum {
     Item(Item),
 }

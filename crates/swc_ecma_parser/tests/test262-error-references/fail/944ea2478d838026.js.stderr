@@ -1,6 +1,0 @@
-error: Generator cannot be labelled
- --> $DIR/tests/test262-parser/fail/944ea2478d838026.js:1:8
-  |
-1 | label: function* a(){}
-  |        ^^^^^^^^^^^^^^^
-

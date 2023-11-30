@@ -1,12 +1,14 @@
-use self::scope::Scope;
-use crate::{Hook, Load, ModuleId, Resolve};
-use anyhow::{Context, Error};
 use std::collections::HashMap;
+
+use anyhow::{Context, Error};
 use swc_atoms::JsWord;
 use swc_common::{
     collections::AHashMap, sync::Lrc, FileName, Globals, Mark, SourceMap, SyntaxContext, GLOBALS,
 };
 use swc_ecma_ast::Module;
+
+use self::scope::Scope;
+use crate::{Hook, Load, ModuleId, Resolve};
 
 mod chunk;
 mod export;
@@ -30,6 +32,14 @@ pub struct Config {
     /// This option exists mainly for testing. As inlining and dce removes all
     /// temporary variables, it's really hard to see what's going on.
     pub disable_inliner: bool,
+
+    /// Useful if you are going to minify the code.
+    pub disable_hygiene: bool,
+
+    pub disable_fixer: bool,
+
+    /// Disable tree-shaking optimization.
+    pub disable_dce: bool,
 
     /// List of modules which should be preserved.
     pub external_modules: Vec<JsWord>,
@@ -76,6 +86,8 @@ where
 {
     config: Config,
 
+    unresolved_mark: Mark,
+
     globals: &'a Globals,
     cm: Lrc<SourceMap>,
     loader: L,
@@ -109,7 +121,7 @@ where
         config: Config,
         hook: Box<dyn 'a + Hook>,
     ) -> Self {
-        GLOBALS.set(&globals, || {
+        GLOBALS.set(globals, || {
             let helper_ctxt = SyntaxContext::empty().apply_mark(Mark::fresh(Mark::root()));
             tracing::debug!("Helper ctxt: {:?}", helper_ctxt);
             let synthesized_ctxt = SyntaxContext::empty().apply_mark(Mark::fresh(Mark::root()));
@@ -128,12 +140,15 @@ where
                 injected_ctxt,
                 scope: Default::default(),
                 hook,
+                unresolved_mark: Mark::new(),
             }
         })
     }
+
     pub(crate) fn is_external(&self, src: &JsWord) -> bool {
         return self.config.external_modules.iter().any(|v| v == src);
     }
+
     ///
     ///
     ///
@@ -183,7 +198,7 @@ where
 
         let bundles = self.chunk(local)?;
 
-        let bundles = self.finalize(bundles)?;
+        let bundles = self.finalize(bundles, self.unresolved_mark)?;
 
         #[cfg(feature = "concurrent")]
         {

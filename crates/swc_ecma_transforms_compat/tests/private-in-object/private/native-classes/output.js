@@ -1,3 +1,4 @@
+var _bar = /*#__PURE__*/ new WeakMap();
 class Foo {
     static test() {
         return Foo === Foo;
@@ -6,7 +7,7 @@ class Foo {
         return _bar.has(this);
     }
     constructor(){
-        _bar.set(this, {
+        _class_private_field_init(this, _bar, {
             writable: true,
             value: "bar"
         });
@@ -16,4 +17,3 @@ var _foo = {
     writable: true,
     value: "foo"
 };
-var _bar = new WeakMap();

@@ -1,5 +1,6 @@
-use super::*;
 use swc_ecma_transforms_testing::test;
+
+use super::*;
 
 fn tr() -> impl Fold {
     display_name()
@@ -12,14 +13,6 @@ test!(
     r#"
 foo = createReactClass({});
 bar = React.createClass({});
-"#,
-    r#"
-foo = createReactClass({
-    displayName: "foo"
-});
-bar = React.createClass({
-    displayName: "bar"
-});
 "#
 );
 
@@ -30,14 +23,6 @@ test!(
     r#"
 var foo = qux(createReactClass({}));
 var bar = qux(React.createClass({}));
-"#,
-    r#"
-var foo = qux(createReactClass({
-    displayName: "foo"
-}));
-var bar = qux(React.createClass({
-    displayName: "bar"
-}));
 "#
 );
 
@@ -52,18 +37,7 @@ test!(
 ({
     bar: React.createClass({})
 });
-"#,
-    r#"
-({
-    foo: createReactClass({
-        displayName: "foo"
-    })
-});
-({
-    bar: React.createClass({
-        displayName: "bar"
-    })
-});"#
+"#
 );
 
 test!(
@@ -73,13 +47,15 @@ test!(
     r#"
 var foo = createReactClass({});
 var bar = React.createClass({});
-"#,
+"#
+);
+
+test!(
+    ::swc_ecma_parser::Syntax::default(),
+    |_| tr(),
+    assignment_expression_with_member,
     r#"
-var foo = createReactClass({
-    displayName: "foo"
-});
-var bar = React.createClass({
-    displayName: "bar"
-});
+foo.x = createReactClass({});
+class A extends B { render() { super.x = React.createClass({}) } };
 "#
 );

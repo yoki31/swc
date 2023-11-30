@@ -1,8 +1,8 @@
-use serde::Deserialize;
 use std::path::PathBuf;
-use swc_common::chain;
-use swc_ecma_parser::{EsConfig, Syntax};
-use swc_ecma_transforms_base::pass::noop;
+
+use serde::Deserialize;
+use swc_common::{chain, Mark};
+use swc_ecma_transforms_base::resolver;
 use swc_ecma_transforms_compat::{
     es2015::classes,
     es2022::{class_properties, private_in_object},
@@ -27,16 +27,17 @@ enum PluginConfig {
 fn fixture(input: PathBuf) {
     let parent = input.parent().unwrap();
 
-    let options: TestOptions = parse_options(&parent);
+    let options: TestOptions = parse_options(parent);
 
     let output = parent.join("output.js");
     test_fixture(
-        Syntax::Es(EsConfig {
-            private_in_object: true,
-            ..Default::default()
-        }),
+        Default::default(),
         &|t| {
-            let mut pass: Box<dyn Fold> = Box::new(noop());
+            let unresolved_mark = Mark::new();
+            let top_level_mark = Mark::new();
+
+            let mut pass: Box<dyn Fold> =
+                Box::new(resolver(unresolved_mark, top_level_mark, false));
 
             let mut class_props = false;
 
@@ -46,6 +47,8 @@ fn fixture(input: PathBuf) {
                     PluginConfig::Name(name) => (name, serde_json::Value::Null),
                 };
 
+                let loose = input.to_string_lossy().contains("private-loose");
+
                 match &**name {
                     "proposal-private-property-in-object" => {}
 
@@ -54,9 +57,18 @@ fn fixture(input: PathBuf) {
                             class_props = true;
                             pass = Box::new(chain!(
                                 pass,
-                                class_properties(class_properties::Config {
-                                    loose: input.to_string_lossy().contains("private-loose")
-                                })
+                                class_properties(
+                                    Some(t.comments.clone()),
+                                    class_properties::Config {
+                                        set_public_fields: loose,
+                                        constant_super: loose,
+                                        no_document_all: loose,
+                                        private_as_properties: loose,
+                                        pure_getter: loose,
+                                        static_blocks_mark: Mark::new(),
+                                    },
+                                    unresolved_mark
+                                ),
                             ));
                         }
                     }
@@ -66,15 +78,27 @@ fn fixture(input: PathBuf) {
                             class_props = true;
                             pass = Box::new(chain!(
                                 pass,
-                                class_properties(class_properties::Config {
-                                    loose: input.to_string_lossy().contains("private-loose")
-                                })
+                                class_properties(
+                                    Some(t.comments.clone()),
+                                    class_properties::Config {
+                                        set_public_fields: loose,
+                                        constant_super: loose,
+                                        no_document_all: loose,
+                                        private_as_properties: loose,
+                                        pure_getter: loose,
+                                        static_blocks_mark: Mark::new(),
+                                    },
+                                    unresolved_mark,
+                                )
                             ));
                         }
                     }
 
                     "transform-classes" => {
-                        pass = Box::new(chain!(pass, classes(Some(t.comments.clone()))));
+                        pass = Box::new(chain!(
+                            pass,
+                            classes(Some(t.comments.clone()), Default::default())
+                        ));
                     }
 
                     _ => {
@@ -89,5 +113,6 @@ fn fixture(input: PathBuf) {
         },
         &input,
         &output,
+        Default::default(),
     )
 }

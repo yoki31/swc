@@ -1,11 +1,12 @@
-use super::get_prototype_of;
 use std::iter;
-use swc_atoms::js_word;
-use swc_common::{Mark, Span, DUMMY_SP};
+
+use swc_common::{util::take::Take, Mark, Span, DUMMY_SP};
 use swc_ecma_ast::*;
 use swc_ecma_transforms_base::helper;
-use swc_ecma_utils::{alias_ident_for, is_rest_arguments, quote_ident, ExprFactory};
-use swc_ecma_visit::{noop_fold_type, Fold, FoldWith};
+use swc_ecma_utils::{is_rest_arguments, quote_ident, ExprFactory};
+use swc_ecma_visit::{noop_visit_mut_type, VisitMut, VisitMutWith};
+
+use super::get_prototype_of;
 
 /// Process function body.
 ///
@@ -30,7 +31,7 @@ pub struct SuperFieldAccessFolder<'a> {
 
     pub folding_constructor: bool,
 
-    /// True while folding **injected** `_defineProperty` call
+    /// True while folding **injected** `_define_property` call
     pub in_injected_define_property_call: bool,
 
     /// True while folding a function / class.
@@ -38,92 +39,125 @@ pub struct SuperFieldAccessFolder<'a> {
 
     /// `Some(mark)` if `var this2 = this`is required.
     pub this_alias_mark: Option<Mark>,
+
+    /// assumes super is never changed, payload is the name of super class
+    pub constant_super: bool,
+
+    pub super_class: &'a Option<Ident>,
+
+    pub in_pat: bool,
 }
 
 macro_rules! mark_nested {
     ($name:ident, $T:tt) => {
-        fn $name(&mut self, n: $T) -> $T {
-            // injected `_defineProperty` should be handled like method
+        fn $name(&mut self, n: &mut $T) {
+            // injected `_define_property` should be handled like method
             if self.folding_constructor && !self.in_injected_define_property_call {
                 let old = self.in_nested_scope;
                 self.in_nested_scope = true;
-                let n = n.fold_children_with(self);
+                n.visit_mut_children_with(self);
                 self.in_nested_scope = old;
-                n
             } else {
-                n.fold_children_with(self)
+                n.visit_mut_children_with(self)
             }
         }
     };
 }
 
-/// TODO: VisitMut
-impl<'a> Fold for SuperFieldAccessFolder<'a> {
-    noop_fold_type!();
+impl<'a> VisitMut for SuperFieldAccessFolder<'a> {
+    noop_visit_mut_type!();
 
     // mark_nested!(fold_function, Function);
-    mark_nested!(fold_class, Class);
+    mark_nested!(visit_mut_class, Class);
 
-    fold_only_key!();
+    visit_mut_only_key!();
 
-    fn fold_function(&mut self, n: Function) -> Function {
+    fn visit_mut_expr(&mut self, n: &mut Expr) {
+        match n {
+            Expr::This(ThisExpr { span }) if self.in_nested_scope => {
+                *n = Expr::Ident(quote_ident!(
+                    span.apply_mark(
+                        *self
+                            .this_alias_mark
+                            .get_or_insert_with(|| Mark::fresh(Mark::root()))
+                    ),
+                    "_this"
+                ));
+            }
+            // We pretend method folding mode for while folding injected `_define_property`
+            // calls.
+            Expr::Call(CallExpr {
+                callee: Callee::Expr(expr),
+                ..
+            }) if expr.is_ident_ref_to("_define_property") => {
+                let old = self.in_injected_define_property_call;
+                self.in_injected_define_property_call = true;
+                n.visit_mut_children_with(self);
+                self.in_injected_define_property_call = old;
+            }
+            Expr::SuperProp(..) => {
+                self.visit_mut_super_member_get(n);
+            }
+            Expr::Update(UpdateExpr { arg, .. }) if arg.is_super_prop() => {
+                if let Expr::SuperProp(SuperPropExpr {
+                    obj: Super {
+                        span: super_token, ..
+                    },
+                    prop,
+                    ..
+                }) = &**arg
+                {
+                    *arg = Box::new(self.super_to_update_call(*super_token, prop.clone()));
+                }
+            }
+            Expr::Assign(AssignExpr {
+                ref left,
+                op: op!("="),
+                right,
+                ..
+            }) if is_assign_to_super_prop(left) => {
+                right.visit_mut_with(self);
+                self.visit_mut_super_member_set(n)
+            }
+            Expr::Assign(AssignExpr { left, right, .. }) if is_assign_to_super_prop(left) => {
+                right.visit_mut_with(self);
+                self.visit_mut_super_member_update(n);
+            }
+            Expr::Call(CallExpr {
+                callee: Callee::Expr(callee_expr),
+                args,
+                ..
+            }) if callee_expr.is_super_prop() => {
+                args.visit_mut_children_with(self);
+
+                self.visit_mut_super_member_call(n);
+            }
+            _ => {
+                n.visit_mut_children_with(self);
+            }
+        }
+    }
+
+    fn visit_mut_pat(&mut self, n: &mut Pat) {
+        let in_pat = self.in_pat;
+        self.in_pat = true;
+        n.visit_mut_children_with(self);
+        self.in_pat = in_pat;
+    }
+
+    fn visit_mut_function(&mut self, n: &mut Function) {
         if self.folding_constructor {
-            return n;
+            return;
         }
 
         if self.folding_constructor && !self.in_injected_define_property_call {
             let old = self.in_nested_scope;
             self.in_nested_scope = true;
-            let n = n.fold_children_with(self);
+            n.visit_mut_children_with(self);
             self.in_nested_scope = old;
-            n
         } else {
-            n.fold_children_with(self)
+            n.visit_mut_children_with(self);
         }
-    }
-
-    fn fold_expr(&mut self, n: Expr) -> Expr {
-        match n {
-            Expr::This(ThisExpr { span }) if self.in_nested_scope => {
-                if self.this_alias_mark.is_none() {
-                    self.this_alias_mark = Some(Mark::fresh(Mark::root()));
-                }
-
-                return Expr::Ident(quote_ident!(
-                    span.apply_mark(self.this_alias_mark.unwrap()),
-                    "_this"
-                ));
-            }
-            _ => {}
-        }
-
-        // We pretend method folding mode for while folding injected `_defineProperty`
-        // calls.
-        match n {
-            Expr::Call(CallExpr {
-                callee: ExprOrSuper::Expr(ref expr),
-                ..
-            }) => match &**expr {
-                Expr::Ident(Ident {
-                    sym: js_word!("_defineProperty"),
-                    ..
-                }) => {
-                    let old = self.in_injected_define_property_call;
-                    self.in_injected_define_property_call = true;
-                    let n = n.fold_children_with(self);
-                    self.in_injected_define_property_call = old;
-                    return n;
-                }
-                _ => {}
-            },
-            _ => {}
-        }
-
-        let n = self.fold_super_member_call(n);
-        let n = self.fold_super_member_set(n);
-        let n = self.fold_super_member_get(n);
-
-        n.fold_children_with(self)
     }
 }
 
@@ -134,71 +168,68 @@ impl<'a> SuperFieldAccessFolder<'a> {
     /// ```
     /// # out
     /// ```js
-    /// _get(_getPrototypeOf(Clazz.prototype), 'foo', this).call(this, a)
+    /// _get(_get_prototype_of(Clazz.prototype), 'foo', this).call(this, a)
     /// ```
-    fn fold_super_member_call(&mut self, n: Expr) -> Expr {
-        match n {
-            Expr::Call(CallExpr {
-                callee: ExprOrSuper::Expr(ref callee_expr),
-                ref args,
-                ref type_args,
+    fn visit_mut_super_member_call(&mut self, n: &mut Expr) {
+        if let Expr::Call(CallExpr {
+            callee: Callee::Expr(callee_expr),
+            args,
+            ..
+        }) = n
+        {
+            if let Expr::SuperProp(SuperPropExpr {
+                obj: Super {
+                    span: super_token, ..
+                },
+                prop,
                 ..
-            }) => match &**callee_expr {
-                Expr::Member(MemberExpr {
-                    obj:
-                        ExprOrSuper::Super(Super {
-                            span: super_token, ..
-                        }),
-                    prop,
-                    computed,
-                    ..
-                }) => {
-                    let this = match self.constructor_this_mark {
-                        Some(mark) => quote_ident!(DUMMY_SP.apply_mark(mark), "_this").as_arg(),
-                        _ => ThisExpr { span: DUMMY_SP }.as_arg(),
-                    };
-
-                    let callee = self.super_to_get_call(*super_token, prop.clone(), *computed);
-                    let mut args = args.clone();
-
-                    if args.len() == 1 && is_rest_arguments(&args[0]) {
-                        return Expr::Call(CallExpr {
-                            span: DUMMY_SP,
-                            callee: MemberExpr {
+            }) = &**callee_expr
+            {
+                let this = match self.this_alias_mark.or(self.constructor_this_mark) {
+                    Some(mark) => {
+                        let ident = quote_ident!(DUMMY_SP.apply_mark(mark), "_this").as_arg();
+                        // in constant super, call will be the only place where a assert is needed
+                        if self.constant_super {
+                            CallExpr {
                                 span: DUMMY_SP,
-                                obj: ExprOrSuper::Expr(Box::new(callee)),
-                                prop: Box::new(Expr::Ident(quote_ident!("apply"))),
-                                computed: false,
+                                callee: helper!(assert_this_initialized),
+                                args: vec![ident],
+                                type_args: Default::default(),
                             }
-                            .as_callee(),
-                            args: iter::once(this)
-                                .chain(iter::once({
-                                    let mut arg = args.pop().unwrap();
-                                    arg.spread = None;
-                                    arg
-                                }))
-                                .collect(),
-                            type_args: type_args.clone(),
-                        });
-                    }
-
-                    return Expr::Call(CallExpr {
-                        span: DUMMY_SP,
-                        callee: MemberExpr {
-                            span: DUMMY_SP,
-                            obj: ExprOrSuper::Expr(Box::new(callee)),
-                            prop: Box::new(Expr::Ident(quote_ident!("call"))),
-                            computed: false,
+                            .as_arg()
+                        } else {
+                            ident
                         }
-                        .as_callee(),
-                        args: iter::once(this).chain(args).collect(),
-                        type_args: type_args.clone(),
+                    }
+                    _ => ThisExpr { span: DUMMY_SP }.as_arg(),
+                };
+
+                let callee = self.super_to_get_call(*super_token, prop.clone());
+                let mut args = args.clone();
+
+                if args.len() == 1 && is_rest_arguments(&args[0]) {
+                    *n = Expr::Call(CallExpr {
+                        span: DUMMY_SP,
+                        callee: callee.make_member(quote_ident!("apply")).as_callee(),
+                        args: iter::once(this)
+                            .chain(iter::once({
+                                let mut arg = args.pop().unwrap();
+                                arg.spread = None;
+                                arg
+                            }))
+                            .collect(),
+                        type_args: Default::default(),
                     });
+                    return;
                 }
 
-                _ => n,
-            },
-            _ => n,
+                *n = Expr::Call(CallExpr {
+                    span: DUMMY_SP,
+                    callee: callee.make_member(quote_ident!("call")).as_callee(),
+                    args: iter::once(this).chain(args).collect(),
+                    type_args: Default::default(),
+                });
+            }
         }
     }
 
@@ -207,98 +238,48 @@ impl<'a> SuperFieldAccessFolder<'a> {
     /// super.foo = bar
     /// # out
     /// ```js
-    /// _set(_getPrototypeOf(Clazz.prototype), "foo", bar, this, true)
+    /// _set(_get_prototype_of(Clazz.prototype), "foo", bar, this, true)
     /// ```
-    fn fold_super_member_set(&mut self, n: Expr) -> Expr {
-        match n {
-            Expr::Update(UpdateExpr {
-                span,
-                arg,
-                op,
-                prefix,
-            }) => match *arg {
-                Expr::Member(MemberExpr {
-                    obj:
-                        ExprOrSuper::Super(Super {
-                            span: super_token, ..
-                        }),
-                    prop,
-                    ..
-                }) => {
-                    let op = match op {
-                        op!("++") => op!("+="),
-                        op!("--") => op!("-="),
-                    };
-
-                    self.super_to_set_call(
-                        super_token,
-                        true,
+    fn visit_mut_super_member_set(&mut self, n: &mut Expr) {
+        if let Expr::Assign(AssignExpr {
+            left,
+            op: op @ op!("="),
+            right,
+            ..
+        }) = n
+        {
+            match left {
+                PatOrExpr::Expr(expr) => {
+                    if let Expr::SuperProp(SuperPropExpr {
+                        obj: Super { span: super_token },
                         prop,
-                        op,
-                        Box::new(Expr::Lit(Lit::Num(Number {
-                            span: DUMMY_SP,
-                            value: 1.0,
-                        }))),
-                    )
+                        ..
+                    }) = &mut **expr
+                    {
+                        *n = self.super_to_set_call(*super_token, prop.take(), *op, right.take());
+                    }
                 }
-                _ => Expr::Update(UpdateExpr {
-                    span,
-                    arg,
-                    op,
-                    prefix,
-                }),
-            },
-
-            Expr::Assign(AssignExpr {
-                span,
-                mut left,
-                op,
-                right,
-            }) => {
-                if let PatOrExpr::Expr(expr) = left {
-                    match *expr {
-                        Expr::Member(MemberExpr {
+                PatOrExpr::Pat(pat) => {
+                    if let Pat::Expr(expr) = &mut **pat {
+                        if let Expr::SuperProp(SuperPropExpr {
                             obj:
-                                ExprOrSuper::Super(Super {
+                                Super {
                                     span: super_token, ..
-                                }),
+                                },
                             prop,
                             ..
-                        }) => return self.super_to_set_call(super_token, false, prop, op, right),
-                        _ => {
-                            left = PatOrExpr::Expr(expr);
+                        }) = &mut **expr
+                        {
+                            *n = self.super_to_set_call(
+                                *super_token,
+                                prop.take(),
+                                *op,
+                                right.take(),
+                            );
                         }
                     }
                 }
-
-                if let PatOrExpr::Pat(pat) = left {
-                    match *pat {
-                        Pat::Expr(expr) => match *expr {
-                            Expr::Member(MemberExpr {
-                                obj:
-                                    ExprOrSuper::Super(Super {
-                                        span: super_token, ..
-                                    }),
-                                prop,
-                                ..
-                            }) => {
-                                return self.super_to_set_call(super_token, false, prop, op, right);
-                            }
-                            _ => {
-                                left = PatOrExpr::Pat(Box::new(Pat::Expr(expr)));
-                            }
-                        },
-                        _ => left = PatOrExpr::Pat(pat),
-                    }
-                };
-                Expr::Assign(AssignExpr {
-                    span,
-                    left: left.fold_children_with(self),
-                    op,
-                    right,
-                })
             }
-            _ => n,
         }
     }
 
@@ -308,23 +289,173 @@ impl<'a> SuperFieldAccessFolder<'a> {
     /// ```
     /// # out
     /// ```js
-    /// _get(_getPrototypeOf(Clazz.prototype), 'foo', this)
+    /// _get(_get_prototype_of(Clazz.prototype), 'foo', this)
     /// ```
-    fn fold_super_member_get(&mut self, n: Expr) -> Expr {
-        match n {
-            Expr::Member(MemberExpr {
-                obj: ExprOrSuper::Super(Super { span: super_token }),
-                prop,
-                computed,
-                ..
-            }) => self.super_to_get_call(super_token, prop, computed),
+    fn visit_mut_super_member_get(&mut self, n: &mut Expr) {
+        if let Expr::SuperProp(SuperPropExpr {
+            obj: Super { span: super_token },
+            prop,
+            ..
+        }) = n
+        {
+            let super_token = *super_token;
+            prop.visit_mut_children_with(self);
 
-            _ => n,
+            let prop = prop.take();
+            *n = if self.in_pat {
+                self.super_to_update_call(super_token, prop)
+            } else {
+                self.super_to_get_call(super_token, prop)
+            };
         }
     }
 
-    fn super_to_get_call(&mut self, super_token: Span, prop: Box<Expr>, computed: bool) -> Expr {
-        let proto_arg = get_prototype_of(if self.is_static {
+    fn visit_mut_super_member_update(&mut self, n: &mut Expr) {
+        if let Expr::Assign(AssignExpr { left, op, .. }) = n {
+            debug_assert_ne!(*op, op!("="));
+
+            match left {
+                PatOrExpr::Expr(expr) => {
+                    if let Expr::SuperProp(SuperPropExpr {
+                        obj: Super { span: super_token },
+                        prop,
+                        ..
+                    }) = *expr.take()
+                    {
+                        *expr = Box::new(self.super_to_update_call(super_token, prop));
+                    }
+                }
+                PatOrExpr::Pat(pat) => {
+                    if let Pat::Expr(expr) = &mut **pat {
+                        if let Expr::SuperProp(SuperPropExpr {
+                            obj:
+                                Super {
+                                    span: super_token, ..
+                                },
+                            prop,
+                            ..
+                        }) = *expr.take()
+                        {
+                            *expr = Box::new(self.super_to_update_call(super_token, prop));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn super_to_get_call(&mut self, super_token: Span, prop: SuperProp) -> Expr {
+        if self.constant_super {
+            Expr::Member(MemberExpr {
+                span: super_token,
+                obj: Box::new({
+                    let name = self.super_class.clone().unwrap_or_else(|| {
+                        quote_ident!(if self.is_static { "Function" } else { "Object" })
+                    });
+                    // in static default super class is Function.prototype
+                    if self.is_static && self.super_class.is_some() {
+                        Expr::Ident(name)
+                    } else {
+                        name.make_member(quote_ident!("prototype"))
+                    }
+                }),
+                prop: match prop {
+                    SuperProp::Ident(i) => MemberProp::Ident(i),
+                    SuperProp::Computed(c) => MemberProp::Computed(c),
+                },
+            })
+        } else {
+            let proto_arg = self.proto_arg();
+
+            let prop_arg = prop_arg(prop).as_arg();
+
+            let this_arg = self.this_arg(super_token).as_arg();
+
+            Expr::Call(CallExpr {
+                span: super_token,
+                callee: helper!(get),
+                args: vec![proto_arg.as_arg(), prop_arg, this_arg],
+                type_args: Default::default(),
+            })
+        }
+    }
+
+    fn super_to_set_call(
+        &mut self,
+        super_token: Span,
+        prop: SuperProp,
+        op: AssignOp,
+        rhs: Box<Expr>,
+    ) -> Expr {
+        debug_assert_eq!(op, op!("="));
+
+        let this_expr = Box::new(match self.constructor_this_mark {
+            Some(mark) => quote_ident!(super_token.apply_mark(mark), "_this").into(),
+            None => ThisExpr { span: super_token }.into(),
+        });
+
+        if self.constant_super {
+            let left = Expr::Member(MemberExpr {
+                span: super_token,
+                obj: this_expr,
+                prop: match prop {
+                    SuperProp::Ident(i) => MemberProp::Ident(i),
+                    SuperProp::Computed(c) => MemberProp::Computed(c),
+                },
+            });
+
+            Expr::Assign(AssignExpr {
+                span: super_token,
+                left: PatOrExpr::Expr(left.into()),
+                op,
+                right: rhs,
+            })
+        } else {
+            let proto_arg = self.proto_arg();
+
+            let prop_arg = prop_arg(prop).as_arg();
+
+            Expr::Call(CallExpr {
+                span: super_token,
+                callee: helper!(set),
+                args: vec![
+                    proto_arg.as_arg(),
+                    prop_arg,
+                    rhs.as_arg(),
+                    this_expr.as_arg(),
+                    // strict
+                    true.as_arg(),
+                ],
+                type_args: Default::default(),
+            })
+        }
+    }
+
+    fn super_to_update_call(&mut self, super_token: Span, prop: SuperProp) -> Expr {
+        let proto_arg = self.proto_arg();
+
+        let prop_arg = prop_arg(prop).as_arg();
+
+        let this_arg = self.this_arg(super_token).as_arg();
+
+        let expr = Expr::Call(CallExpr {
+            span: super_token,
+            callee: helper!(update),
+            args: vec![
+                proto_arg.as_arg(),
+                prop_arg,
+                this_arg,
+                // strict
+                true.as_arg(),
+            ],
+            type_args: Default::default(),
+        });
+
+        expr.make_member(quote_ident!("_"))
+    }
+
+    fn proto_arg(&mut self) -> Expr {
+        let expr = if self.is_static {
             // Foo
             Expr::Ident(self.class_name.clone())
         } else {
@@ -332,192 +463,62 @@ impl<'a> SuperFieldAccessFolder<'a> {
             self.class_name
                 .clone()
                 .make_member(quote_ident!("prototype"))
-        })
-        .as_arg();
-
-        let prop_arg = match *prop {
-            Expr::Ident(Ident {
-                sym: ref value,
-                span,
-                ..
-            }) if !computed => Expr::Lit(Lit::Str(Str {
-                span,
-                value: value.clone(),
-                has_escape: false,
-                kind: Default::default(),
-            })),
-            ref expr => expr.clone(),
-        }
-        .as_arg();
-
-        let this_arg = match self.constructor_this_mark {
-            Some(mark) => {
-                let this = quote_ident!(super_token.apply_mark(mark), "_this");
-
-                CallExpr {
-                    span: DUMMY_SP,
-                    callee: helper!(assert_this_initialized, "assertThisInitialized"),
-                    args: vec![this.as_arg()],
-                    type_args: Default::default(),
-                }
-                .as_arg()
-            }
-            _ => ThisExpr { span: super_token }.as_arg(),
         };
 
-        Expr::Call(CallExpr {
-            span: super_token,
-            callee: helper!(get, "get"),
-            args: vec![proto_arg, prop_arg, this_arg],
-            type_args: Default::default(),
-        })
+        if self.constant_super {
+            return expr;
+        }
+
+        let mut proto_arg = get_prototype_of(expr);
+
+        if let Some(mark) = self.constructor_this_mark {
+            let this = quote_ident!(DUMMY_SP.apply_mark(mark), "_this");
+
+            proto_arg = Expr::Seq(SeqExpr {
+                span: DUMMY_SP,
+                exprs: vec![
+                    Expr::Call(CallExpr {
+                        span: DUMMY_SP,
+                        callee: helper!(assert_this_initialized),
+                        args: vec![this.as_arg()],
+                        type_args: Default::default(),
+                    })
+                    .into(),
+                    proto_arg.into(),
+                ],
+            })
+        }
+
+        proto_arg
     }
 
-    fn super_to_set_call(
-        &mut self,
-        super_token: Span,
-        is_update: bool,
-        prop: Box<Expr>,
-        op: AssignOp,
-        rhs: Box<Expr>,
-    ) -> Expr {
-        let mut ref_ident = alias_ident_for(&rhs, "_ref");
-        ref_ident.span = ref_ident.span.apply_mark(Mark::fresh(Mark::root()));
-
-        let mut update_ident = alias_ident_for(&rhs, "_superRef");
-        update_ident.span = update_ident.span.apply_mark(Mark::fresh(Mark::root()));
-
-        if op != op!("=") {
-            // Memoize
-            self.vars.push(VarDeclarator {
-                span: DUMMY_SP,
-                name: Pat::Ident(ref_ident.clone().into()),
-                init: None,
-                definite: false,
-            });
-
-            if is_update {
-                self.vars.push(VarDeclarator {
-                    span: DUMMY_SP,
-                    name: Pat::Ident(update_ident.clone().into()),
-                    init: None,
-                    definite: false,
-                });
-            }
+    fn this_arg(&self, super_token: Span) -> Expr {
+        match self.constructor_this_mark {
+            Some(mark) => quote_ident!(super_token.apply_mark(mark), "_this").into(),
+            None => ThisExpr { span: super_token }.into(),
         }
+    }
+}
 
-        let proto_arg = get_prototype_of(
-            self.class_name
-                .clone()
-                .make_member(quote_ident!("prototype")),
-        )
-        .as_arg();
+fn is_assign_to_super_prop(left: &PatOrExpr) -> bool {
+    match left {
+        PatOrExpr::Expr(expr) => expr.is_super_prop(),
+        PatOrExpr::Pat(pat) => match &**pat {
+            Pat::Expr(expr) => expr.is_super_prop(),
+            _ => false,
+        },
+    }
+}
 
-        let prop_arg = match *prop {
-            Expr::Ident(Ident {
-                sym: ref value,
-                span,
-                ..
-            }) => Expr::Lit(Lit::Str(Str {
-                span,
-                value: value.clone(),
-                has_escape: false,
-                kind: Default::default(),
-            })),
-            ref e => e.clone(),
-        };
-        let prop_arg = match op {
-            op!("=") => prop_arg.as_arg(),
-            _ => AssignExpr {
-                span: DUMMY_SP,
-                left: PatOrExpr::Pat(Box::new(Pat::Ident(ref_ident.clone().into()))),
-                op: op!("="),
-                right: prop,
-            }
-            .as_arg(),
-        };
-
-        let rhs_arg = match op {
-            op!("=") => rhs.as_arg(),
-            _ => {
-                let left = Box::new(self.super_to_get_call(
-                    super_token,
-                    Box::new(Expr::Ident(ref_ident)),
-                    true,
-                ));
-                let left = if is_update {
-                    Box::new(
-                        AssignExpr {
-                            span: DUMMY_SP,
-                            left: PatOrExpr::Pat(Box::new(Pat::Ident(update_ident.clone().into()))),
-                            op: op!("="),
-                            right: Box::new(Expr::Unary(UnaryExpr {
-                                span: DUMMY_SP,
-                                op: op!(unary, "+"),
-                                arg: left,
-                            })),
-                        }
-                        .into(),
-                    )
-                } else {
-                    left
-                };
-
-                BinExpr {
-                    span: DUMMY_SP,
-                    left,
-                    op: match op {
-                        op!("=") => unreachable!(),
-
-                        op!("+=") => op!(bin, "+"),
-                        op!("-=") => op!(bin, "-"),
-                        op!("*=") => op!("*"),
-                        op!("/=") => op!("/"),
-                        op!("%=") => op!("%"),
-                        op!("<<=") => op!("<<"),
-                        op!(">>=") => op!(">>"),
-                        op!(">>>=") => op!(">>>"),
-                        op!("|=") => op!("|"),
-                        op!("&=") => op!("&"),
-                        op!("^=") => op!("^"),
-                        op!("**=") => op!("**"),
-                        op!("&&=") => op!("&&"),
-                        op!("||=") => op!("||"),
-                        op!("??=") => op!("??"),
-                    },
-                    right: rhs,
-                }
-                .as_arg()
-            }
-        };
-
-        let this_arg = ThisExpr { span: super_token }.as_arg();
-
-        let expr = Expr::Call(CallExpr {
-            span: super_token,
-            callee: helper!(set, "set"),
-            args: vec![
-                proto_arg,
-                prop_arg,
-                rhs_arg,
-                this_arg,
-                // strict
-                Lit::Bool(Bool {
-                    span: DUMMY_SP,
-                    value: true,
-                })
-                .as_arg(),
-            ],
-            type_args: Default::default(),
-        });
-
-        if is_update {
-            Expr::Seq(SeqExpr {
-                span: DUMMY_SP,
-                exprs: vec![Box::new(expr), Box::new(Expr::Ident(update_ident))],
-            })
-        } else {
-            expr
-        }
+fn prop_arg(prop: SuperProp) -> Expr {
+    match prop {
+        SuperProp::Ident(Ident {
+            sym: value, span, ..
+        }) => Expr::Lit(Lit::Str(Str {
+            span,
+            raw: None,
+            value,
+        })),
+        SuperProp::Computed(c) => *c.expr,
     }
 }

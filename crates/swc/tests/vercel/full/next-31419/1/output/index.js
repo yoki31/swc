@@ -1,51 +1,68 @@
-import * as a from "@swc/helpers";
-import b from "regenerator-runtime";
-Promise.all(assignAll).then(function(c) {
-    var d = a.asyncToGenerator(b.mark(function a(c) {
-        var d, e, f, g;
-        return b.wrap(function(a) {
-            for(;;)switch(a.prev = a.next){
-                case 0:
-                    d = "DELETE FROM \"TABLE\" WHERE \"UUID\" IN ( ", a.t0 = regeneratorRuntime.keys(obj);
-                case 2:
-                    if ((a.t1 = a.t0()).done) {
-                        a.next = 12;
-                        break;
-                    }
-                    return f = obj[e = a.t1.value], d += "'".concat(f.id, "', "), a.next = 8, listOfUser(f.id);
-                case 8:
-                    (g = a.sent).forEach(function(a) {
-                        insertQuery += "INSERT INTO \"TABLE\"(\"UUID\", id, other_ids_here) VALUES ('".concat(uuidv4(), "', '").concat(f.id, "', now());");
-                    }), a.next = 2;
-                    break;
-                case 12:
-                case "end":
-                    return a.stop();
-            }
-        }, a);
+var r;
+import { _ as e } from "@swc/helpers/_/_async_to_generator";
+import { _ as t } from "@swc/helpers/_/_ts_generator";
+import { _ as n } from "@swc/helpers/_/_ts_values";
+Promise.all(assignAll).then((r = e(function(r) {
+    var e, s, i, c, o, a;
+    return t(this, function(u) {
+        switch(u.label){
+            case 0:
+                for(c in e = function(e) {
+                    var n;
+                    return t(this, function(t) {
+                        switch(t.label){
+                            case 0:
+                                return n = r[e], s += "'".concat(n.id, "', "), [
+                                    4,
+                                    listOfUser(n.id)
+                                ];
+                            case 1:
+                                return t.sent().forEach(function(r) {
+                                    insertQuery += 'INSERT INTO "TABLE"("UUID", id, other_ids_here) VALUES (\''.concat(uuidv4(), "', '").concat(n.id, "', now());");
+                                }), [
+                                    2
+                                ];
+                        }
+                    });
+                }, s = 'DELETE FROM "TABLE" WHERE "UUID" IN ( ', i = [], r)i.push(c);
+                o = 0, u.label = 1;
+            case 1:
+                if (!(o < i.length)) return [
+                    3,
+                    4
+                ];
+                return a = i[o], [
+                    5,
+                    n(e(a))
+                ];
+            case 2:
+                u.sent(), u.label = 3;
+            case 3:
+                return o++, [
+                    3,
+                    1
+                ];
+            case 4:
+                return [
+                    2
+                ];
+        }
+    });
+}), function(e) {
+    return r.apply(this, arguments);
+}));
+export var listOfUser = function(r) {
+    var n;
+    return new Promise((n = e(function(e, n) {
+        var s;
+        return t(this, function(t) {
+            return s = 'Select Distinct id from "TABLE" Where id = \''.concat(r, "' And user_id IS not null"), postgreSQL.query(s, null, function(r, t) {
+                r ? n(r) : e(t.rows);
+            }), [
+                2
+            ];
+        });
+    }), function(r, e) {
+        return n.apply(this, arguments);
     }));
-    return function() {
-        return d.apply(this, arguments);
-    };
-}());
-export var listOfUser = function(c) {
-    return new Promise(function(d, e) {
-        var f = a.asyncToGenerator(b.mark(function a(d, e) {
-            var f;
-            return b.wrap(function(a) {
-                for(;;)switch(a.prev = a.next){
-                    case 0:
-                        f = "Select Distinct id from \"TABLE\" Where id = '".concat(c, "' And user_id IS not null"), postgreSQL.query(f, null, function(a, b) {
-                            a ? (void 0)(a) : (void 0)(b.rows);
-                        });
-                    case 2:
-                    case "end":
-                        return a.stop();
-                }
-            }, a);
-        }));
-        return function() {
-            return f.apply(this, arguments);
-        };
-    }());
 };

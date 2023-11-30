@@ -5,53 +5,53 @@
                 0,
             ),
             hi: BytePos(
-                0,
+                1,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    0,
+                    1,
                 ),
                 hi: BytePos(
-                    0,
+                    1,
                 ),
                 ctxt: #0,
             },
-            value: Atom('' type=static),
+            value: "",
         },
         tags: [
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        0,
+                        1,
                     ),
                     hi: BytePos(
-                        9,
+                        10,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            0,
+                            1,
                         ),
                         hi: BytePos(
-                            9,
+                            10,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('namespace' type=static),
+                    value: "namespace",
                 },
                 tag: Namespace(
                     NamespaceTag {
                         span: Span {
                             lo: BytePos(
-                                0,
+                                1,
                             ),
                             hi: BytePos(
-                                9,
+                                10,
                             ),
                             ctxt: #0,
                         },
@@ -65,24 +65,24 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                42,
+                43,
             ),
             hi: BytePos(
-                42,
+                43,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    42,
+                    43,
                 ),
                 hi: BytePos(
-                    53,
+                    54,
                 ),
                 ctxt: #0,
             },
-            value: Atom('document me' type=dynamic),
+            value: "document me",
         },
         tags: [],
     },
@@ -92,53 +92,53 @@
                 0,
             ),
             hi: BytePos(
-                93,
+                94,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    93,
+                    94,
                 ),
                 hi: BytePos(
-                    93,
+                    94,
                 ),
                 ctxt: #0,
             },
-            value: Atom('' type=static),
+            value: "",
         },
         tags: [
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        93,
+                        94,
                     ),
                     hi: BytePos(
-                        102,
+                        103,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            93,
+                            94,
                         ),
                         hi: BytePos(
-                            102,
+                            103,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('namespace' type=static),
+                    value: "namespace",
                 },
                 tag: Namespace(
                     NamespaceTag {
                         span: Span {
                             lo: BytePos(
-                                93,
+                                94,
                             ),
                             hi: BytePos(
-                                102,
+                                103,
                             ),
                             ctxt: #0,
                         },
@@ -152,48 +152,48 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                133,
+                134,
             ),
             hi: BytePos(
-                133,
+                134,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    133,
+                    134,
                 ),
                 hi: BytePos(
-                    144,
+                    145,
                 ),
                 ctxt: #0,
             },
-            value: Atom('document me' type=dynamic),
+            value: "document me",
         },
         tags: [],
     },
     JsDoc {
         span: Span {
             lo: BytePos(
-                183,
+                184,
             ),
             hi: BytePos(
-                183,
+                184,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    183,
+                    184,
                 ),
                 hi: BytePos(
-                    194,
+                    195,
                 ),
                 ctxt: #0,
             },
-            value: Atom('document me' type=dynamic),
+            value: "document me",
         },
         tags: [],
     },

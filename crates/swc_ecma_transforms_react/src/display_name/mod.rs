@@ -1,5 +1,5 @@
 use std::ops::DerefMut;
-use swc_atoms::js_word;
+
 use swc_common::DUMMY_SP;
 use swc_ecma_ast::*;
 use swc_ecma_utils::quote_ident;
@@ -27,32 +27,32 @@ impl VisitMut for DisplayName {
             return;
         }
 
-        if let Some(Expr::Member(MemberExpr {
-            prop,
-            computed: false,
-            ..
-        })) = expr.left.as_expr()
+        if let Some(
+            Expr::Member(MemberExpr {
+                prop: MemberProp::Ident(prop),
+                ..
+            })
+            | Expr::SuperProp(SuperPropExpr {
+                prop: SuperProp::Ident(prop),
+                ..
+            }),
+        ) = expr.left.as_expr()
         {
-            if let Expr::Ident(ref prop) = &**prop {
-                expr.right.visit_mut_with(&mut Folder {
-                    name: Some(Box::new(Expr::Lit(Lit::Str(Str {
-                        span: prop.span,
-                        value: prop.sym.clone(),
-                        has_escape: false,
-                        kind: Default::default(),
-                    })))),
-                });
-                return;
-            }
-        }
+            return expr.right.visit_mut_with(&mut Folder {
+                name: Some(Box::new(Expr::Lit(Lit::Str(Str {
+                    span: prop.span,
+                    raw: None,
+                    value: prop.sym.clone(),
+                })))),
+            });
+        };
 
         if let Some(ident) = expr.left.as_ident() {
             expr.right.visit_mut_with(&mut Folder {
                 name: Some(Box::new(Expr::Lit(Lit::Str(Str {
                     span: ident.span,
+                    raw: None,
                     value: ident.sym.clone(),
-                    has_escape: false,
-                    kind: Default::default(),
                 })))),
             });
         }
@@ -61,62 +61,46 @@ impl VisitMut for DisplayName {
     fn visit_mut_module_decl(&mut self, decl: &mut ModuleDecl) {
         decl.visit_mut_children_with(self);
 
-        match decl {
-            ModuleDecl::ExportDefaultExpr(e) => {
-                e.visit_mut_with(&mut Folder {
-                    name: Some(Box::new(Expr::Lit(Lit::Str(Str {
-                        span: DUMMY_SP,
-                        value: "input".into(),
-                        has_escape: false,
-                        kind: Default::default(),
-                    })))),
-                });
-            }
-            _ => {}
+        if let ModuleDecl::ExportDefaultExpr(e) = decl {
+            e.visit_mut_with(&mut Folder {
+                name: Some(Box::new(Expr::Lit(Lit::Str(Str {
+                    span: DUMMY_SP,
+                    raw: None,
+                    value: "input".into(),
+                })))),
+            });
         }
     }
 
     fn visit_mut_prop(&mut self, prop: &mut Prop) {
         prop.visit_mut_children_with(self);
 
-        match prop {
-            Prop::KeyValue(KeyValueProp { key, value }) => {
-                value.visit_mut_with(&mut Folder {
-                    name: Some(match key {
-                        PropName::Ident(ref i) => Box::new(Expr::Lit(Lit::Str(Str {
-                            span: i.span,
-                            value: i.sym.clone(),
-                            has_escape: false,
-                            kind: StrKind::Normal {
-                                contains_quote: false,
-                            },
-                        }))),
-                        PropName::Str(ref s) => Box::new(Expr::Lit(Lit::Str(s.clone()))),
-                        PropName::Num(n) => Box::new(Expr::Lit(Lit::Num(*n))),
-                        PropName::BigInt(ref b) => Box::new(Expr::Lit(Lit::BigInt(b.clone()))),
-                        PropName::Computed(ref c) => c.expr.clone(),
-                    }),
-                });
-            }
-            _ => {}
+        if let Prop::KeyValue(KeyValueProp { key, value }) = prop {
+            value.visit_mut_with(&mut Folder {
+                name: Some(match key {
+                    PropName::Ident(ref i) => Box::new(Expr::Lit(Lit::Str(Str {
+                        span: i.span,
+                        raw: None,
+                        value: i.sym.clone(),
+                    }))),
+                    PropName::Str(ref s) => Box::new(Expr::Lit(Lit::Str(s.clone()))),
+                    PropName::Num(ref n) => Box::new(Expr::Lit(Lit::Num(n.clone()))),
+                    PropName::BigInt(ref b) => Box::new(Expr::Lit(Lit::BigInt(b.clone()))),
+                    PropName::Computed(ref c) => c.expr.clone(),
+                }),
+            });
         }
     }
 
     fn visit_mut_var_declarator(&mut self, decl: &mut VarDeclarator) {
-        match decl.name {
-            Pat::Ident(ref ident) => {
-                decl.init.visit_mut_with(&mut Folder {
-                    name: Some(Box::new(Expr::Lit(Lit::Str(Str {
-                        span: ident.id.span,
-                        value: ident.id.sym.clone(),
-                        has_escape: false,
-                        kind: StrKind::Normal {
-                            contains_quote: false,
-                        },
-                    })))),
-                });
-            }
-            _ => {}
+        if let Pat::Ident(ref ident) = decl.name {
+            decl.init.visit_mut_with(&mut Folder {
+                name: Some(Box::new(Expr::Lit(Lit::Str(Str {
+                    span: ident.id.span,
+                    value: ident.id.sym.clone(),
+                    raw: None,
+                })))),
+            });
         }
     }
 }
@@ -134,7 +118,7 @@ impl VisitMut for Folder {
     fn visit_mut_call_expr(&mut self, expr: &mut CallExpr) {
         expr.visit_mut_children_with(self);
 
-        if is_create_class_call(&expr) {
+        if is_create_class_call(expr) {
             let name = match self.name.take() {
                 Some(name) => name,
                 None => return,
@@ -142,39 +126,25 @@ impl VisitMut for Folder {
             add_display_name(expr, name)
         }
     }
+
     /// Don't recurse into object.
     fn visit_mut_object_lit(&mut self, _: &mut ObjectLit) {}
 }
 
 fn is_create_class_call(call: &CallExpr) -> bool {
     let callee = match &call.callee {
-        ExprOrSuper::Super(_) => return false,
-        ExprOrSuper::Expr(callee) => &**callee,
+        Callee::Super(_) | Callee::Import(_) => return false,
+        Callee::Expr(callee) => &**callee,
     };
 
     match callee {
-        Expr::Member(MemberExpr {
-            obj: ExprOrSuper::Expr(obj),
-            prop,
-            computed: false,
-            ..
-        }) => match &**obj {
-            Expr::Ident(Ident {
-                sym: js_word!("React"),
-                ..
-            }) => match &**prop {
-                Expr::Ident(Ident {
-                    sym: js_word!("createClass"),
-                    ..
-                }) => return true,
-                _ => {}
-            },
-            _ => {}
-        },
-        Expr::Ident(Ident {
-            sym: js_word!("createReactClass"),
-            ..
-        }) => return true,
+        Expr::Member(MemberExpr { obj, prop, .. }) if prop.is_ident_with("createClass") => {
+            if obj.is_ident_ref_to("React") {
+                return true;
+            }
+        }
+
+        Expr::Ident(Ident { sym, .. }) if &**sym == "createReactClass" => return true,
         _ => {}
     }
 
@@ -191,7 +161,7 @@ fn add_display_name(call: &mut CallExpr, name: Box<Expr>) {
     };
 
     for prop in &*props {
-        if is_key_display_name(&*prop) {
+        if is_key_display_name(prop) {
             return;
         }
     }
@@ -205,13 +175,13 @@ fn add_display_name(call: &mut CallExpr, name: Box<Expr>) {
 fn is_key_display_name(prop: &PropOrSpread) -> bool {
     match *prop {
         PropOrSpread::Prop(ref prop) => match **prop {
-            Prop::Shorthand(ref i) => i.sym == js_word!("displayName"),
+            Prop::Shorthand(ref i) => i.sym == "displayName",
             Prop::Method(MethodProp { ref key, .. })
             | Prop::Getter(GetterProp { ref key, .. })
             | Prop::Setter(SetterProp { ref key, .. })
             | Prop::KeyValue(KeyValueProp { ref key, .. }) => match *key {
-                PropName::Ident(ref i) => i.sym == js_word!("displayName"),
-                PropName::Str(ref s) => s.value == js_word!("displayName"),
+                PropName::Ident(ref i) => i.sym == "displayName",
+                PropName::Str(ref s) => s.value == "displayName",
                 PropName::Num(..) => false,
                 PropName::BigInt(..) => false,
                 PropName::Computed(..) => false,

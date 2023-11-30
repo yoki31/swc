@@ -2,66 +2,66 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                40,
+                41,
             ),
             hi: BytePos(
-                40,
+                41,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    40,
+                    41,
                 ),
                 hi: BytePos(
-                    40,
+                    41,
                 ),
                 ctxt: #0,
             },
-            value: Atom('' type=static),
+            value: "",
         },
         tags: [
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        40,
+                        41,
                     ),
                     hi: BytePos(
-                        48,
+                        49,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            40,
+                            41,
                         ),
                         hi: BytePos(
-                            48,
+                            49,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('memberof' type=dynamic),
+                    value: "memberof",
                 },
                 tag: MemberOf(
                     MemberOfTag {
                         span: Span {
                             lo: BytePos(
-                                40,
+                                41,
                             ),
                             hi: BytePos(
-                                48,
+                                49,
                             ),
                             ctxt: #0,
                         },
                         parent_name_path: NamePath {
                             span: Span {
                                 lo: BytePos(
-                                    40,
+                                    41,
                                 ),
                                 hi: BytePos(
-                                    40,
+                                    41,
                                 ),
                                 ctxt: #0,
                             },
@@ -69,14 +69,14 @@
                                 Text {
                                     span: Span {
                                         lo: BytePos(
-                                            40,
+                                            41,
                                         ),
                                         hi: BytePos(
-                                            50,
+                                            51,
                                         ),
                                         ctxt: #0,
                                     },
-                                    value: Atom('Observable' type=dynamic),
+                                    value: "Observable",
                                 },
                             ],
                         },
@@ -88,66 +88,66 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                96,
+                97,
             ),
             hi: BytePos(
-                106,
+                107,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    96,
+                    97,
                 ),
                 hi: BytePos(
-                    96,
+                    97,
                 ),
                 ctxt: #0,
             },
-            value: Atom('' type=static),
+            value: "",
         },
         tags: [
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        96,
+                        97,
                     ),
                     hi: BytePos(
-                        104,
+                        105,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            96,
+                            97,
                         ),
                         hi: BytePos(
-                            104,
+                            105,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('memberof' type=dynamic),
+                    value: "memberof",
                 },
                 tag: MemberOf(
                     MemberOfTag {
                         span: Span {
                             lo: BytePos(
-                                96,
+                                97,
                             ),
                             hi: BytePos(
-                                104,
+                                105,
                             ),
                             ctxt: #0,
                         },
                         parent_name_path: NamePath {
                             span: Span {
                                 lo: BytePos(
-                                    96,
+                                    97,
                                 ),
                                 hi: BytePos(
-                                    106,
+                                    107,
                                 ),
                                 ctxt: #0,
                             },
@@ -155,14 +155,14 @@
                                 Text {
                                     span: Span {
                                         lo: BytePos(
-                                            96,
+                                            97,
                                         ),
                                         hi: BytePos(
-                                            106,
+                                            107,
                                         ),
                                         ctxt: #0,
                                     },
-                                    value: Atom('Observable' type=dynamic),
+                                    value: "Observable",
                                 },
                             ],
                         },

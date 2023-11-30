@@ -3,28 +3,24 @@
 //! This module exists because this is way easier than using copying requires
 //! files.
 
-use self::common::*;
+use std::{collections::HashMap, fs::write, path::PathBuf, process::Command};
+
 use anyhow::Error;
 use ntest::timeout;
-use std::{
-    collections::HashMap,
-    fs::write,
-    path::PathBuf,
-    process::{Command, Stdio},
-};
-use swc_atoms::js_word;
 use swc_bundler::{Bundler, Load, ModuleRecord};
-use swc_common::{collections::AHashSet, FileName, Mark, Span, GLOBALS};
+use swc_common::{collections::AHashSet, errors::HANDLER, FileName, Mark, Span, GLOBALS};
 use swc_ecma_ast::*;
 use swc_ecma_codegen::{
     text_writer::{omit_trailing_semi, JsWriter, WriteJs},
     Emitter,
 };
 use swc_ecma_minifier::option::MangleOptions;
-use swc_ecma_transforms_base::{fixer::fixer, resolver::resolver_with_mark};
-use swc_ecma_utils::{find_ids, Id};
-use swc_ecma_visit::{Node, Visit, VisitMutWith, VisitWith};
+use swc_ecma_transforms_base::{fixer::fixer, resolver};
+use swc_ecma_utils::find_pat_ids;
+use swc_ecma_visit::{Visit, VisitMutWith, VisitWith};
 use testing::assert_eq;
+
+use self::common::*;
 
 #[path = "common/mod.rs"]
 mod common;
@@ -315,25 +311,25 @@ fn deno_8302() {
 #[test]
 #[timeout(60000)]
 fn deno_8399_1() {
-    run("tests/deno/issue-8399-1/input.ts", &[]);
+    run("tests/deno/issue-8399/1/input.ts", &[]);
 }
 
 #[test]
 #[timeout(60000)]
 fn deno_8399_2() {
-    run("tests/deno/issue-8399-2/input.ts", &[]);
+    run("tests/deno/issue-8399/2/input.ts", &[]);
 }
 
 #[test]
 #[timeout(60000)]
 fn deno_8486_1() {
-    run("tests/deno/issue-8486-1/input.ts", &["myCLI"]);
+    run("tests/deno/issue-8486/1/input.ts", &["myCLI"]);
 }
 
 #[test]
 #[timeout(60000)]
 fn deno_7288_1() {
-    run("tests/deno/deno-7288-1/input.ts", &[]);
+    run("tests/deno/deno-7288/1/input.ts", &[]);
 }
 
 #[test]
@@ -988,15 +984,12 @@ fn run(url: &str, exports: &[&str]) {
 
     ::testing::run_test2(false, |cm, _| {
         let fm = cm.load_file(&path).unwrap();
-        let loader = Loader { cm: cm.clone() };
+        let loader = Loader { cm };
         let module = loader.load(&fm.name).unwrap().module;
 
         let mut actual_exports = collect_exports(&module).into_iter().collect::<Vec<_>>();
         actual_exports.sort();
-        let mut expected_exports = exports
-            .into_iter()
-            .map(|s| s.to_string())
-            .collect::<Vec<_>>();
+        let mut expected_exports = exports.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         expected_exports.sort();
 
         assert_eq!(expected_exports, actual_exports);
@@ -1011,92 +1004,100 @@ fn run(url: &str, exports: &[&str]) {
         .arg("run")
         .arg("--no-check")
         .arg(&path)
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status()
-        .unwrap();
+        .output()
+        .expect("failed to get output from deno");
 
-    std::mem::forget(dir);
+    if !output.status.success() {
+        std::mem::forget(dir);
 
-    dbg!(output);
-    assert!(output.success());
+        panic!(
+            "failed to execute:\n{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )
+    }
 }
 
 fn bundle(url: &str, minify: bool) -> String {
-    let result = testing::run_test2(false, |cm, _handler| {
+    testing::run_test2(false, |cm, handler| {
         GLOBALS.with(|globals| {
-            let mut bundler = Bundler::new(
-                globals,
-                cm.clone(),
-                Loader { cm: cm.clone() },
-                NodeResolver,
-                swc_bundler::Config {
-                    require: false,
-                    disable_inliner: false,
-                    ..Default::default()
-                },
-                Box::new(Hook),
-            );
-            let mut entries = HashMap::new();
-            entries.insert(
-                "main".to_string(),
-                if url.starts_with("http") {
-                    FileName::Custom(url.to_string())
-                } else {
-                    FileName::Real(url.to_string().into())
-                },
-            );
-            let output = bundler.bundle(entries).unwrap();
-            let mut module = output.into_iter().next().unwrap().module;
-
-            if minify {
-                let top_level_mark = Mark::fresh(Mark::root());
-
-                module.visit_mut_with(&mut resolver_with_mark(top_level_mark));
-
-                module = swc_ecma_minifier::optimize(
-                    module,
+            HANDLER.set(&handler, || {
+                let mut bundler = Bundler::new(
+                    globals,
                     cm.clone(),
-                    None,
-                    None,
-                    &swc_ecma_minifier::option::MinifyOptions {
-                        compress: Some(Default::default()),
-                        mangle: Some(MangleOptions {
-                            top_level: true,
-                            ..Default::default()
-                        }),
+                    Loader { cm: cm.clone() },
+                    NodeResolver,
+                    swc_bundler::Config {
+                        require: false,
+                        disable_inliner: false,
                         ..Default::default()
                     },
-                    &swc_ecma_minifier::option::ExtraOptions { top_level_mark },
+                    Box::new(Hook),
                 );
-                module.visit_mut_with(&mut fixer(None));
-            }
-
-            let mut buf = vec![];
-            {
-                let mut wr: Box<dyn WriteJs> =
-                    Box::new(JsWriter::new(cm.clone(), "\n", &mut buf, None));
+                let mut entries = HashMap::new();
+                entries.insert(
+                    "main".to_string(),
+                    if url.starts_with("http") {
+                        FileName::Custom(url.to_string())
+                    } else {
+                        FileName::Real(url.to_string().into())
+                    },
+                );
+                let output = bundler.bundle(entries).unwrap();
+                let mut module = output.into_iter().next().unwrap().module;
 
                 if minify {
-                    wr = Box::new(omit_trailing_semi(wr));
+                    let unresolved_mark = Mark::new();
+                    let top_level_mark = Mark::new();
+
+                    module.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
+
+                    module = swc_ecma_minifier::optimize(
+                        module.into(),
+                        cm.clone(),
+                        None,
+                        None,
+                        &swc_ecma_minifier::option::MinifyOptions {
+                            compress: Some(Default::default()),
+                            mangle: Some(MangleOptions {
+                                top_level: Some(true),
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        },
+                        &swc_ecma_minifier::option::ExtraOptions {
+                            unresolved_mark,
+                            top_level_mark,
+                        },
+                    )
+                    .expect_module();
+                    module.visit_mut_with(&mut fixer(None));
                 }
 
-                Emitter {
-                    cfg: swc_ecma_codegen::Config { minify },
-                    cm: cm.clone(),
-                    comments: None,
-                    wr,
-                }
-                .emit_module(&module)
-                .unwrap();
-            }
+                let mut buf = vec![];
+                {
+                    let mut wr: Box<dyn WriteJs> =
+                        Box::new(JsWriter::new(cm.clone(), "\n", &mut buf, None));
 
-            Ok(String::from_utf8_lossy(&buf).to_string())
+                    if minify {
+                        wr = Box::new(omit_trailing_semi(wr));
+                    }
+
+                    Emitter {
+                        cfg: swc_ecma_codegen::Config::default().with_minify(minify),
+                        cm: cm.clone(),
+                        comments: None,
+                        wr,
+                    }
+                    .emit_module(&module)
+                    .unwrap();
+                }
+
+                Ok(String::from_utf8_lossy(&buf).to_string())
+            })
         })
     })
-    .unwrap();
-
-    result
+    .unwrap()
 }
 
 struct Hook;
@@ -1107,27 +1108,27 @@ impl swc_bundler::Hook for Hook {
         span: Span,
         module_record: &ModuleRecord,
     ) -> Result<Vec<KeyValueProp>, Error> {
+        let file_name = module_record.file_name.to_string();
+
         Ok(vec![
             KeyValueProp {
-                key: PropName::Ident(Ident::new(js_word!("url"), span)),
+                key: PropName::Ident(Ident::new("url".into(), span)),
                 value: Box::new(Expr::Lit(Lit::Str(Str {
                     span,
-                    value: module_record.file_name.to_string().into(),
-                    has_escape: false,
-                    kind: Default::default(),
+                    raw: None,
+                    value: file_name.into(),
                 }))),
             },
             KeyValueProp {
-                key: PropName::Ident(Ident::new(js_word!("main"), span)),
+                key: PropName::Ident(Ident::new("main".into(), span)),
                 value: Box::new(if module_record.is_entry {
                     Expr::Member(MemberExpr {
                         span,
-                        obj: ExprOrSuper::Expr(Box::new(Expr::MetaProp(MetaPropExpr {
-                            meta: Ident::new(js_word!("import"), span),
-                            prop: Ident::new(js_word!("meta"), span),
-                        }))),
-                        prop: Box::new(Expr::Ident(Ident::new(js_word!("main"), span))),
-                        computed: false,
+                        obj: Box::new(Expr::MetaProp(MetaPropExpr {
+                            span,
+                            kind: MetaPropKind::ImportMeta,
+                        })),
+                        prop: MemberProp::Ident(Ident::new("main".into(), span)),
                     })
                 } else {
                     Expr::Lit(Lit::Bool(Bool { span, value: false }))
@@ -1139,7 +1140,7 @@ impl swc_bundler::Hook for Hook {
 
 fn collect_exports(module: &Module) -> AHashSet<String> {
     let mut v = ExportCollector::default();
-    module.visit_with(module, &mut v);
+    module.visit_with(&mut v);
 
     v.exports
 }
@@ -1150,20 +1151,37 @@ struct ExportCollector {
 }
 
 impl Visit for ExportCollector {
-    fn visit_export_specifier(&mut self, s: &ExportSpecifier, _: &dyn Node) {
+    fn visit_export_specifier(&mut self, s: &ExportSpecifier) {
         match s {
             ExportSpecifier::Namespace(ns) => {
-                self.exports.insert(ns.name.sym.to_string());
+                match &ns.name {
+                    ModuleExportName::Ident(name) => {
+                        self.exports.insert(name.sym.to_string());
+                    }
+                    ModuleExportName::Str(..) => {
+                        unimplemented!("module string names unimplemented")
+                    }
+                };
             }
             ExportSpecifier::Default(_) => {
                 self.exports.insert("default".into());
             }
             ExportSpecifier::Named(named) => {
+                let exported_ident = match &named.exported {
+                    Some(ModuleExportName::Ident(ident)) => Some(ident),
+                    Some(ModuleExportName::Str(..)) => {
+                        unimplemented!("module string names unimplemented")
+                    }
+                    _ => None,
+                };
                 self.exports.insert(
-                    named
-                        .exported
-                        .as_ref()
-                        .unwrap_or(&named.orig)
+                    exported_ident
+                        .unwrap_or(match &named.orig {
+                            ModuleExportName::Ident(ident) => ident,
+                            ModuleExportName::Str(..) => {
+                                unimplemented!("module string names unimplemented")
+                            }
+                        })
                         .sym
                         .to_string(),
                 );
@@ -1171,22 +1189,22 @@ impl Visit for ExportCollector {
         }
     }
 
-    fn visit_export_default_decl(&mut self, _: &ExportDefaultDecl, _: &dyn Node) {
+    fn visit_export_default_decl(&mut self, _: &ExportDefaultDecl) {
         self.exports.insert("default".into());
     }
 
-    fn visit_export_default_expr(&mut self, _: &ExportDefaultExpr, _: &dyn Node) {
+    fn visit_export_default_expr(&mut self, _: &ExportDefaultExpr) {
         self.exports.insert("default".into());
     }
 
-    fn visit_export_decl(&mut self, export: &ExportDecl, _: &dyn Node) {
+    fn visit_export_decl(&mut self, export: &ExportDecl) {
         match &export.decl {
             swc_ecma_ast::Decl::Class(ClassDecl { ident, .. })
             | swc_ecma_ast::Decl::Fn(FnDecl { ident, .. }) => {
                 self.exports.insert(ident.sym.to_string());
             }
             swc_ecma_ast::Decl::Var(var) => {
-                let ids: Vec<Id> = find_ids(var);
+                let ids: Vec<Id> = find_pat_ids(var);
                 self.exports
                     .extend(ids.into_iter().map(|v| v.0.to_string()));
             }
@@ -1202,7 +1220,7 @@ fn exec(input: PathBuf) {
     println!("{}", path.display());
 
     let src = bundle(&input.to_string_lossy(), false);
-    write(&path, &src).unwrap();
+    write(&path, src).unwrap();
 
     // println!("{}", src);
 
@@ -1211,14 +1229,18 @@ fn exec(input: PathBuf) {
         .arg("--no-check")
         .arg("--allow-net")
         .arg(&path)
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status()
+        .output()
         .unwrap();
 
-    std::mem::forget(dir);
+    if !output.status.success() {
+        std::mem::forget(dir);
 
-    assert!(output.success());
+        panic!(
+            "failed to execute:\n{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )
+    }
 }
 
 #[testing::fixture("tests/deno-exec/**/entry.ts")]
@@ -1234,7 +1256,7 @@ fn exec_minified(input: PathBuf) {
         println!("Unminified: {}", path.display());
 
         let src = bundle(&input.to_string_lossy(), false);
-        write(&path, &src).unwrap();
+        write(&path, src).unwrap();
 
         std::mem::forget(dir);
     }
@@ -1244,7 +1266,7 @@ fn exec_minified(input: PathBuf) {
     println!("{}", path.display());
 
     let src = bundle(&input.to_string_lossy(), true);
-    write(&path, &src).unwrap();
+    write(&path, src).unwrap();
     // println!("{}", src);
 
     let output = Command::new("deno")
@@ -1252,12 +1274,16 @@ fn exec_minified(input: PathBuf) {
         .arg("--no-check")
         .arg("--allow-net")
         .arg(&path)
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status()
+        .output()
         .unwrap();
 
-    std::mem::forget(dir);
+    if !output.status.success() {
+        std::mem::forget(dir);
 
-    assert!(output.success());
+        panic!(
+            "failed to execute:\n{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )
+    }
 }

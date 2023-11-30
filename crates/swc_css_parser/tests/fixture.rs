@@ -1,136 +1,42 @@
-use std::path::PathBuf;
-use swc_common::{errors::Handler, input::SourceFileInput, Span, Spanned, DUMMY_SP};
+#![deny(warnings)]
+#![allow(clippy::needless_update)]
+
+use std::{path::PathBuf, rc::Rc};
+
+use swc_common::{
+    comments::SingleThreadedComments, errors::Handler, input::SourceFileInput, Span, Spanned,
+};
 use swc_css_ast::*;
 use swc_css_parser::{
-    error::ErrorKind,
     lexer::Lexer,
-    parse_tokens,
-    parser::{input::ParserInput, Parser, ParserConfig},
+    parse_input,
+    parser::{
+        input::{InputType, ParserInput, Tokens},
+        PResult, Parser, ParserConfig,
+    },
 };
-use swc_css_visit::{Node, Visit, VisitWith};
+use swc_css_visit::{Visit, VisitWith};
 use testing::NormalizedOutput;
 
-struct AssertValid;
+fn stylesheet_test(input: PathBuf, config: ParserConfig) {
+    let ref_json_path = input.parent().unwrap().join("output.json");
 
-impl Visit for AssertValid {
-    fn visit_pseudo_element_selector(&mut self, s: &PseudoElementSelector, _: &dyn Node) {
-        if let Some(tokens) = &s.children {
-            if tokens.tokens.is_empty() {
-                return;
-            }
-
-            match &tokens.tokens[0].token {
-                Token::Colon | Token::Num { .. } => return,
-                _ => {}
-            }
-
-            let mut errors = vec![];
-
-            let _selectors: SelectorList = parse_tokens(
-                &tokens,
-                ParserConfig {
-                    parse_values: true,
-
-                    ..Default::default()
-                },
-                &mut errors,
-            )
-            .unwrap_or_else(|err| panic!("failed to parse tokens: {:?}\n{:?}", err, s.children));
-
-            for err in errors {
-                panic!("{:?}", err);
-            }
-        }
-    }
-
-    fn visit_pseudo_class_selector(&mut self, s: &PseudoClassSelector, _: &dyn Node) {
-        s.visit_children_with(self);
-
-        if let Some(PseudoSelectorChildren::Tokens(args)) = &s.children {
-            if args.tokens.is_empty() {
-                return;
-            }
-
-            match &args.tokens[0].token {
-                Token::Colon | Token::Num { .. } => return,
-                _ => {}
-            }
-
-            let mut errors = vec![];
-
-            let _selectors: SelectorList = parse_tokens(
-                &args,
-                ParserConfig {
-                    parse_values: true,
-
-                    ..Default::default()
-                },
-                &mut errors,
-            )
-            .unwrap_or_else(|err| panic!("failed to parse tokens: {:?}\n{:?}", err, s.children));
-
-            for err in errors {
-                panic!("{:?}", err);
-            }
-        }
-    }
-}
-
-#[testing::fixture("tests/fixture/**/input.css")]
-fn tokens_input(input: PathBuf) {
     testing::run_test2(false, |cm, handler| {
+        let comments = SingleThreadedComments::default();
+
         let fm = cm.load_file(&input).unwrap();
+        let lexer = Lexer::new(SourceFileInput::from(&*fm), Some(&comments), config);
+        let mut parser = Parser::new(lexer, config);
+        let stylesheet = parser.parse_all();
+        let errors = parser.take_errors();
 
-        let tokens = {
-            let mut lexer = Lexer::new(SourceFileInput::from(&*fm), Default::default());
-
-            let mut tokens = vec![];
-
-            while let Ok(t) = lexer.next() {
-                tokens.push(t);
-            }
-            Tokens {
-                span: Span::new(fm.start_pos, fm.end_pos, Default::default()),
-                tokens,
-            }
-        };
-
-        let mut errors = vec![];
-        let ss: Stylesheet = parse_tokens(
-            &tokens,
-            ParserConfig {
-                parse_values: true,
-
-                ..Default::default()
-            },
-            &mut errors,
-        )
-        .expect("failed to parse tokens");
-
-        for err in errors {
+        for err in &errors {
             err.to_diagnostics(&handler).emit();
         }
 
-        ss.visit_with(&Invalid { span: DUMMY_SP }, &mut AssertValid);
-
-        if handler.has_errors() {
+        if !errors.is_empty() {
             return Err(());
         }
-
-        Ok(())
-    })
-    .unwrap();
-}
-
-fn test_pass(input: PathBuf, config: ParserConfig) {
-    testing::run_test2(false, |cm, handler| {
-        let ref_json_path = input.parent().unwrap().join("output.json");
-
-        let fm = cm.load_file(&input).unwrap();
-        let lexer = Lexer::new(SourceFileInput::from(&*fm), config);
-        let mut parser = Parser::new(lexer, config);
-
-        let stylesheet = parser.parse_all();
 
         match stylesheet {
             Ok(stylesheet) => {
@@ -138,59 +44,84 @@ fn test_pass(input: PathBuf, config: ParserConfig) {
                     .map(NormalizedOutput::from)
                     .expect("failed to serialize stylesheet");
 
-                actual_json.clone().compare_to_file(&ref_json_path).unwrap();
+                actual_json.compare_to_file(&ref_json_path).unwrap();
 
-                if !config.allow_wrong_line_comments {
-                    let mut lexer = Lexer::new(SourceFileInput::from(&*fm), Default::default());
-                    let mut tokens = Tokens {
-                        span: Span::new(fm.start_pos, fm.end_pos, Default::default()),
-                        tokens: vec![],
-                    };
+                let (leading, trailing) = comments.take_all();
+                let leading = Rc::try_unwrap(leading).unwrap().into_inner();
+                let trailing = Rc::try_unwrap(trailing).unwrap().into_inner();
 
-                    loop {
-                        let res = lexer.next();
-                        match res {
-                            Ok(t) => {
-                                tokens.tokens.push(t);
-                            }
+                serde_json::to_string_pretty(&leading)
+                    .map(NormalizedOutput::from)
+                    .expect("failed to serialize comments")
+                    .compare_to_file(input.parent().unwrap().join("leading-comments.json"))
+                    .unwrap();
 
-                            Err(e) => {
-                                if matches!(e.kind(), ErrorKind::Eof) {
-                                    break;
-                                }
-                                panic!("failed to lex tokens: {:?}", e)
-                            }
-                        }
-                    }
-
-                    let mut errors = vec![];
-                    let ss_tok: Stylesheet = parse_tokens(
-                        &tokens,
-                        ParserConfig {
-                            parse_values: true,
-
-                            ..Default::default()
-                        },
-                        &mut errors,
-                    )
-                    .expect("failed to parse token");
-
-                    for err in errors {
-                        err.to_diagnostics(&handler).emit();
-                    }
-
-                    let json_from_tokens = serde_json::to_string_pretty(&ss_tok)
-                        .map(NormalizedOutput::from)
-                        .expect("failed to serialize stylesheet from tokens");
-
-                    assert_eq!(actual_json, json_from_tokens);
-                }
+                serde_json::to_string_pretty(&trailing)
+                    .map(NormalizedOutput::from)
+                    .expect("failed to serialize comments")
+                    .compare_to_file(input.parent().unwrap().join("trailing-comments.json"))
+                    .unwrap();
 
                 Ok(())
             }
             Err(err) => {
                 let mut d = err.to_diagnostics(&handler);
+
                 d.note(&format!("current token = {}", parser.dump_cur()));
+                d.emit();
+
+                Err(())
+            }
+        }
+    })
+    .unwrap();
+}
+
+fn stylesheet_test_tokens(input: PathBuf, config: ParserConfig) {
+    let ref_json_path = input.parent().unwrap().join("output.json");
+
+    testing::run_test2(false, |cm, handler| {
+        let fm = cm.load_file(&input).unwrap();
+        let mut errors = vec![];
+        let tokens = {
+            let mut lexer = Lexer::new(SourceFileInput::from(&*fm), None, Default::default());
+            let mut tokens = vec![];
+
+            for token_and_span in lexer.by_ref() {
+                tokens.push(token_and_span);
+            }
+
+            errors.extend(lexer.take_errors());
+
+            Tokens {
+                span: Span::new(fm.start_pos, fm.end_pos, Default::default()),
+                tokens,
+            }
+        };
+
+        let stylesheet: PResult<Stylesheet> =
+            parse_input(InputType::Tokens(&tokens), config, &mut errors);
+
+        for err in &errors {
+            err.to_diagnostics(&handler).emit();
+        }
+
+        if !errors.is_empty() {
+            return Err(());
+        }
+
+        match stylesheet {
+            Ok(stylesheet) => {
+                let actual_json = serde_json::to_string_pretty(&stylesheet)
+                    .map(NormalizedOutput::from)
+                    .expect("failed to serialize stylesheet");
+
+                actual_json.compare_to_file(&ref_json_path).unwrap();
+
+                Ok(())
+            }
+            Err(err) => {
+                let mut d = err.to_diagnostics(&handler);
 
                 d.emit();
 
@@ -201,34 +132,11 @@ fn test_pass(input: PathBuf, config: ParserConfig) {
     .unwrap();
 }
 
-#[testing::fixture("tests/fixture/**/input.css")]
-fn pass(input: PathBuf) {
-    test_pass(
-        input,
-        ParserConfig {
-            parse_values: true,
-            ..Default::default()
-        },
-    )
-}
-
-#[testing::fixture("tests/line-comment/**/input.css")]
-fn line_commetns(input: PathBuf) {
-    test_pass(
-        input,
-        ParserConfig {
-            parse_values: true,
-            allow_wrong_line_comments: true,
-            ..Default::default()
-        },
-    )
-}
-
-#[testing::fixture("tests/recovery/**/input.css")]
-fn recovery(input: PathBuf) {
+fn stylesheet_recovery_test(input: PathBuf, config: ParserConfig) {
     let stderr_path = input.parent().unwrap().join("output.swc-stderr");
+    let ref_json_path = input.parent().unwrap().join("output.json");
 
-    let mut errored = false;
+    let mut recovered = false;
 
     let stderr = testing::run_test2(false, |cm, handler| {
         if false {
@@ -236,17 +144,23 @@ fn recovery(input: PathBuf) {
             return Ok(());
         }
 
-        let ref_json_path = input.parent().unwrap().join("output.json");
+        let comments = SingleThreadedComments::default();
 
-        let config = ParserConfig {
-            parse_values: true,
-            allow_wrong_line_comments: false,
-        };
         let fm = cm.load_file(&input).unwrap();
-        let lexer = Lexer::new(SourceFileInput::from(&*fm), config);
+        let lexer = Lexer::new(SourceFileInput::from(&*fm), Some(&comments), config);
         let mut parser = Parser::new(lexer, config);
-
         let stylesheet = parser.parse_all();
+        let mut errors = parser.take_errors();
+
+        errors.sort_by(|a, b| a.message().cmp(&b.message()));
+
+        for err in &errors {
+            err.to_diagnostics(&handler).emit();
+        }
+
+        if !errors.is_empty() {
+            recovered = true;
+        }
 
         match stylesheet {
             Ok(stylesheet) => {
@@ -254,62 +168,15 @@ fn recovery(input: PathBuf) {
                     .map(NormalizedOutput::from)
                     .expect("failed to serialize stylesheet");
 
-                actual_json.clone().compare_to_file(&ref_json_path).unwrap();
-
-                {
-                    let mut lexer = Lexer::new(SourceFileInput::from(&*fm), Default::default());
-                    let mut tokens = Tokens {
-                        span: Span::new(fm.start_pos, fm.end_pos, Default::default()),
-                        tokens: vec![],
-                    };
-
-                    loop {
-                        let res = lexer.next();
-                        match res {
-                            Ok(t) => {
-                                tokens.tokens.push(t);
-                            }
-
-                            Err(e) => {
-                                if matches!(e.kind(), ErrorKind::Eof) {
-                                    break;
-                                }
-                                panic!("failed to lex tokens: {:?}", e)
-                            }
-                        }
-                    }
-
-                    let mut errors = vec![];
-                    let ss_tok: Stylesheet = parse_tokens(
-                        &tokens,
-                        ParserConfig {
-                            parse_values: true,
-                            ..Default::default()
-                        },
-                        &mut errors,
-                    )
-                    .expect("failed to parse token");
-
-                    for err in errors {
-                        err.to_diagnostics(&handler).emit();
-                    }
-
-                    let json_from_tokens = serde_json::to_string_pretty(&ss_tok)
-                        .map(NormalizedOutput::from)
-                        .expect("failed to serialize stylesheet from tokens");
-
-                    assert_eq!(actual_json, json_from_tokens);
-                }
+                actual_json.compare_to_file(&ref_json_path).unwrap();
 
                 Err(())
             }
             Err(err) => {
                 let mut d = err.to_diagnostics(&handler);
+
                 d.note(&format!("current token = {}", parser.dump_cur()));
-
                 d.emit();
-
-                errored = true;
 
                 Err(())
             }
@@ -317,11 +184,93 @@ fn recovery(input: PathBuf) {
     })
     .unwrap_err();
 
-    if errored {
-        panic!("Parser should recover, but failed with {}", stderr);
+    if !recovered {
+        panic!(
+            "Parser should emit errors (recover mode), but parser parsed everything successfully \
+             {}",
+            stderr
+        );
     }
 
-    stderr.compare_to_file(&stderr_path).unwrap();
+    stderr.compare_to_file(stderr_path).unwrap();
+}
+
+fn stylesheet_recovery_test_tokens(input: PathBuf, config: ParserConfig) {
+    let stderr_path = input.parent().unwrap().join("output.swc-stderr");
+    let ref_json_path = input.parent().unwrap().join("output.json");
+
+    let mut recovered = false;
+
+    let stderr = testing::run_test2(false, |cm, handler| {
+        if false {
+            // For type inference
+            return Ok(());
+        }
+
+        let fm = cm.load_file(&input).unwrap();
+        let mut lexer_errors = vec![];
+        let tokens = {
+            let mut lexer = Lexer::new(SourceFileInput::from(&*fm), None, Default::default());
+            let mut tokens = vec![];
+
+            for token_and_span in lexer.by_ref() {
+                tokens.push(token_and_span);
+            }
+
+            lexer_errors.extend(lexer.take_errors());
+
+            Tokens {
+                span: Span::new(fm.start_pos, fm.end_pos, Default::default()),
+                tokens,
+            }
+        };
+
+        let mut parser_errors = vec![];
+
+        let stylesheet: PResult<Stylesheet> =
+            parse_input(InputType::Tokens(&tokens), config, &mut parser_errors);
+
+        parser_errors.extend(lexer_errors);
+        parser_errors.sort_by(|a, b| a.message().cmp(&b.message()));
+
+        for err in &parser_errors {
+            err.to_diagnostics(&handler).emit();
+        }
+
+        if !parser_errors.is_empty() {
+            recovered = true;
+        }
+
+        match stylesheet {
+            Ok(stylesheet) => {
+                let actual_json = serde_json::to_string_pretty(&stylesheet)
+                    .map(NormalizedOutput::from)
+                    .expect("failed to serialize stylesheet");
+
+                actual_json.compare_to_file(&ref_json_path).unwrap();
+
+                Err(())
+            }
+            Err(err) => {
+                let mut d = err.to_diagnostics(&handler);
+
+                d.emit();
+
+                Err(())
+            }
+        }
+    })
+    .unwrap_err();
+
+    if !recovered {
+        panic!(
+            "Parser should emit errors (recover mode), but parser parsed everything successfully \
+             {}",
+            stderr
+        );
+    }
+
+    stderr.compare_to_file(stderr_path).unwrap();
 }
 
 struct SpanVisualizer<'a> {
@@ -330,7 +279,7 @@ struct SpanVisualizer<'a> {
 
 macro_rules! mtd {
     ($T:ty,$name:ident) => {
-        fn $name(&mut self, n: &$T, _: &dyn swc_css_visit::Node) {
+        fn $name(&mut self, n: &$T) {
             self.handler
                 .struct_span_err(n.span(), stringify!($T))
                 .emit();
@@ -341,87 +290,245 @@ macro_rules! mtd {
 }
 
 impl Visit for SpanVisualizer<'_> {
-    mtd!(AtRule, visit_at_rule);
-    mtd!(AtSelector, visit_at_selector);
-    mtd!(AtTextValue, visit_at_text_value);
-    mtd!(AttrSelector, visit_attr_selector);
-    mtd!(BinValue, visit_bin_value);
-    mtd!(BraceValue, visit_brace_value);
-    mtd!(ClassSelector, visit_class_selector);
-    mtd!(SpaceValues, visit_space_values);
-    mtd!(ComplexSelector, visit_complex_selector);
-    mtd!(Combinator, visit_combinator);
-    mtd!(CompoundSelector, visit_compound_selector);
-    mtd!(Block, visit_block);
-    mtd!(RoundBracketBlock, visit_round_bracket_block);
-    mtd!(SquareBracketBlock, visit_square_bracket_block);
-    mtd!(FnValue, visit_fn_value);
-    mtd!(HashValue, visit_hash_value);
-    mtd!(NestingSelector, visit_nesting_selector);
-    mtd!(IdSelector, visit_id_selector);
-    mtd!(TypeSelector, visit_type_selector);
-    mtd!(Num, visit_num);
-    mtd!(PercentValue, visit_percent_value);
-    mtd!(Declaration, visit_declaration);
-    mtd!(Nth, visit_nth);
-    mtd!(AnPlusB, visit_an_plus_b);
-    mtd!(PseudoClassSelector, visit_pseudo_class_selector);
-    mtd!(PseudoElementSelector, visit_pseudo_element_selector);
-    mtd!(Rule, visit_rule);
-    mtd!(Str, visit_str);
-    mtd!(QualifiedRule, visit_qualified_rule);
     mtd!(Stylesheet, visit_stylesheet);
+
+    mtd!(AtRule, visit_at_rule);
+
+    mtd!(AtRuleName, visit_at_rule_name);
+
+    mtd!(QualifiedRule, visit_qualified_rule);
+
+    mtd!(StyleBlock, visit_style_block);
+
     mtd!(SelectorList, visit_selector_list);
+
+    mtd!(ForgivingSelectorList, visit_forgiving_selector_list);
+
+    mtd!(CompoundSelectorList, visit_compound_selector_list);
+
+    mtd!(RelativeSelectorList, visit_relative_selector_list);
+
+    mtd!(
+        ForgivingRelativeSelectorList,
+        visit_forgiving_relative_selector_list
+    );
+
+    mtd!(ComplexSelector, visit_complex_selector);
+
+    mtd!(Combinator, visit_combinator);
+
+    mtd!(RelativeSelector, visit_relative_selector);
+
+    mtd!(CompoundSelector, visit_compound_selector);
+
+    mtd!(TypeSelector, visit_type_selector);
+
+    mtd!(TagNameSelector, visit_tag_name_selector);
+
+    mtd!(NamespacePrefix, visit_namespace_prefix);
+
+    mtd!(Namespace, visit_namespace);
+
+    mtd!(NamedNamespace, visit_named_namespace);
+
+    mtd!(AnyNamespace, visit_any_namespace);
+
+    mtd!(WqName, visit_wq_name);
+
+    mtd!(UniversalSelector, visit_universal_selector);
+
+    mtd!(IdSelector, visit_id_selector);
+
+    mtd!(ClassSelector, visit_class_selector);
+
+    mtd!(AttributeSelector, visit_attribute_selector);
+
+    mtd!(AttributeSelectorMatcher, visit_attribute_selector_matcher);
+
+    mtd!(AttributeSelectorValue, visit_attribute_selector_value);
+
+    mtd!(AttributeSelectorModifier, visit_attribute_selector_modifier);
+
     mtd!(SubclassSelector, visit_subclass_selector);
-    mtd!(TagSelector, visit_tag_selector);
+
+    mtd!(NestingSelector, visit_nesting_selector);
+
+    mtd!(PseudoClassSelector, visit_pseudo_class_selector);
+
+    mtd!(
+        PseudoClassSelectorChildren,
+        visit_pseudo_class_selector_children
+    );
+
+    mtd!(AnPlusB, visit_an_plus_b);
+
+    mtd!(AnPlusBNotation, visit_an_plus_b_notation);
+
+    mtd!(PseudoElementSelector, visit_pseudo_element_selector);
+
+    mtd!(
+        PseudoElementSelectorChildren,
+        visit_pseudo_element_selector_children
+    );
+
+    mtd!(Delimiter, visit_delimiter);
+
+    mtd!(SimpleBlock, visit_simple_block);
+
+    mtd!(ComponentValue, visit_component_value);
+
+    mtd!(Function, visit_function);
+
+    mtd!(Color, visit_color);
+
+    mtd!(HexColor, visit_hex_color);
+
+    mtd!(AlphaValue, visit_alpha_value);
+
+    mtd!(Hue, visit_hue);
+
+    mtd!(CmykComponent, visit_cmyk_component);
+
+    mtd!(Integer, visit_integer);
+
+    mtd!(Number, visit_number);
+
+    mtd!(Ratio, visit_ratio);
+
+    mtd!(Percentage, visit_percentage);
+
+    mtd!(Declaration, visit_declaration);
+
+    mtd!(DeclarationName, visit_declaration_name);
+
+    mtd!(ImportantFlag, visit_important_flag);
+
+    mtd!(Rule, visit_rule);
+
+    mtd!(Str, visit_str);
+
     mtd!(Ident, visit_ident);
-    mtd!(Tokens, visit_tokens);
-    mtd!(Unit, visit_unit);
-    mtd!(UnitValue, visit_unit_value);
+
+    mtd!(CustomIdent, visit_custom_ident);
+
+    mtd!(DashedIdent, visit_dashed_ident);
+
+    mtd!(Dimension, visit_dimension);
+
+    mtd!(Length, visit_length);
+
+    mtd!(Angle, visit_angle);
+
+    mtd!(Time, visit_time);
+
+    mtd!(Frequency, visit_frequency);
+
+    mtd!(Resolution, visit_resolution);
+
+    mtd!(Flex, visit_flex);
+
+    mtd!(UnknownDimension, visit_unknown_dimension);
+
+    mtd!(Url, visit_url);
+
     mtd!(UrlValue, visit_url_value);
-    mtd!(Value, visit_value);
 
-    mtd!(AndMediaQuery, visit_and_media_query);
-    mtd!(AndSupportQuery, visit_and_support_query);
-    mtd!(CharsetRule, visit_charset_rule);
-    mtd!(CommaMediaQuery, visit_comma_media_query);
-    mtd!(DocumentRule, visit_document_rule);
-    mtd!(FontFaceRule, visit_font_face_rule);
-    mtd!(ImportSource, visit_import_source);
-    mtd!(ImportRule, visit_import_rule);
-    mtd!(KeyframeBlock, visit_keyframe_block);
-    mtd!(KeyframeBlockRule, visit_keyframe_block_rule);
-    mtd!(KeyframeSelector, visit_keyframe_selector);
-    mtd!(KeyframesRule, visit_keyframes_rule);
+    mtd!(UrlValueRaw, visit_url_value_raw);
+
+    mtd!(UrlModifier, visit_url_modifier);
+
+    mtd!(UnicodeRange, visit_unicode_range);
+
+    mtd!(CalcSum, visit_calc_sum);
+
+    mtd!(CalcProductOrOperator, visit_calc_product_or_operator);
+
+    mtd!(CalcProduct, visit_calc_product);
+
+    mtd!(CalcOperator, visit_calc_operator);
+
+    mtd!(CalcValueOrOperator, visit_calc_value_or_operator);
+
+    mtd!(CalcValue, visit_calc_value);
+
+    mtd!(LayerName, visit_layer_name);
+
+    mtd!(LayerNameList, visit_layer_name_list);
+
+    mtd!(LayerPrelude, visit_layer_prelude);
+
+    mtd!(MediaQueryList, visit_media_query_list);
+
     mtd!(MediaQuery, visit_media_query);
-    mtd!(MediaRule, visit_media_rule);
-    mtd!(NamespaceValue, visit_namespace_value);
-    mtd!(NamespaceRule, visit_namespace_rule);
-    mtd!(NestedPageRule, visit_nested_page_rule);
-    mtd!(NotMediaQuery, visit_not_media_query);
-    mtd!(NotSupportQuery, visit_not_support_query);
-    mtd!(OnlyMediaQuery, visit_only_media_query);
-    mtd!(OrMediaQuery, visit_or_media_query);
-    mtd!(OrSupportQuery, visit_or_support_query);
-    mtd!(PageRule, visit_page_rule);
-    mtd!(PageRuleBlock, visit_page_rule_block);
-    mtd!(PageRuleBlockItem, visit_page_rule_block_item);
-    mtd!(PageSelector, visit_page_selector);
-    mtd!(ParenSupportQuery, visit_paren_support_query);
-    mtd!(SupportQuery, visit_support_query);
-    mtd!(SupportsRule, visit_supports_rule);
-    mtd!(UnknownAtRule, visit_unknown_at_rule);
-    mtd!(ViewportRule, visit_viewport_rule);
 
-    fn visit_token_and_span(&mut self, n: &TokenAndSpan, _parent: &dyn swc_css_visit::Node) {
+    mtd!(MediaType, visit_media_type);
+
+    mtd!(MediaCondition, visit_media_condition);
+
+    mtd!(MediaConditionWithoutOr, visit_media_condition_without_or);
+
+    mtd!(MediaConditionAllType, visit_media_condition_all_type);
+
+    mtd!(
+        MediaConditionWithoutOrType,
+        visit_media_condition_without_or_type
+    );
+
+    mtd!(MediaNot, visit_media_not);
+
+    mtd!(MediaAnd, visit_media_and);
+
+    mtd!(MediaOr, visit_media_or);
+
+    mtd!(MediaInParens, visit_media_in_parens);
+
+    mtd!(MediaFeatureName, visit_media_feature_name);
+
+    mtd!(MediaFeatureValue, visit_media_feature_value);
+
+    mtd!(MediaFeature, visit_media_feature);
+
+    mtd!(MediaFeaturePlain, visit_media_feature_plain);
+
+    mtd!(MediaFeatureBoolean, visit_media_feature_boolean);
+
+    mtd!(MediaFeatureRange, visit_media_feature_range);
+
+    mtd!(
+        MediaFeatureRangeInterval,
+        visit_media_feature_range_interval
+    );
+
+    mtd!(SupportsCondition, visit_supports_condition);
+
+    mtd!(SupportsConditionType, visit_supports_condition_type);
+
+    mtd!(SupportsNot, visit_supports_not);
+
+    mtd!(SupportsAnd, visit_supports_and);
+
+    mtd!(SupportsOr, visit_supports_or);
+
+    mtd!(SupportsInParens, visit_supports_in_parens);
+
+    mtd!(SupportsFeature, visit_supports_feature);
+
+    mtd!(PageSelectorList, visit_page_selector_list);
+
+    mtd!(PageSelector, visit_page_selector);
+
+    mtd!(PageSelectorType, visit_page_selector_type);
+
+    mtd!(PageSelectorPseudo, visit_page_selector_pseudo);
+
+    fn visit_token_and_span(&mut self, n: &TokenAndSpan) {
         self.handler
             .struct_span_err(n.span, &format!("{:?}", n.token))
             .emit();
     }
 }
 
-#[testing::fixture("tests/fixture/**/input.css")]
-fn span(input: PathBuf) {
+fn stylesheet_span_visualizer(input: PathBuf, config: Option<ParserConfig>) {
     let dir = input.parent().unwrap().to_path_buf();
 
     let output = testing::run_test2(false, |cm, handler| {
@@ -430,23 +537,23 @@ fn span(input: PathBuf) {
             return Ok(());
         }
 
-        let config = ParserConfig {
-            parse_values: true,
-            ..Default::default()
+        let config = match config {
+            Some(config) => config,
+            _ => ParserConfig {
+                legacy_ie: true,
+                ..Default::default()
+            },
         };
 
         let fm = cm.load_file(&input).unwrap();
-        let lexer = Lexer::new(SourceFileInput::from(&*fm), config);
+        let lexer = Lexer::new(SourceFileInput::from(&*fm), None, config);
         let mut parser = Parser::new(lexer, config);
 
         let stylesheet = parser.parse_all();
 
         match stylesheet {
             Ok(stylesheet) => {
-                stylesheet.visit_with(
-                    &Invalid { span: DUMMY_SP },
-                    &mut SpanVisualizer { handler: &handler },
-                );
+                stylesheet.visit_with(&mut SpanVisualizer { handler: &handler });
 
                 Err(())
             }
@@ -462,46 +569,67 @@ fn span(input: PathBuf) {
     })
     .unwrap_err();
 
-    output
-        .compare_to_file(&dir.join("span.rust-debug"))
-        .unwrap();
+    output.compare_to_file(dir.join("span.swc-stderr")).unwrap();
 }
 
-#[testing::fixture("tests/errors/**/input.css")]
-fn fail(input: PathBuf) {
-    let stderr_path = input.parent().unwrap().join("output.stderr");
-
-    let stderr = testing::run_test2(false, |cm, handler| -> Result<(), _> {
-        let config = ParserConfig {
-            parse_values: true,
-
+#[testing::fixture("tests/fixture/**/input.css")]
+fn pass(input: PathBuf) {
+    stylesheet_test(
+        input.clone(),
+        ParserConfig {
+            legacy_ie: true,
             ..Default::default()
-        };
+        },
+    );
+    stylesheet_test_tokens(
+        input,
+        ParserConfig {
+            legacy_ie: true,
+            ..Default::default()
+        },
+    );
+}
 
-        let fm = cm.load_file(&input).unwrap();
-        let lexer = Lexer::new(SourceFileInput::from(&*fm), config);
-        let mut parser = Parser::new(lexer, config);
+#[testing::fixture("tests/line-comment/**/input.css")]
+fn line_comments_pass(input: PathBuf) {
+    stylesheet_test(
+        input,
+        ParserConfig {
+            allow_wrong_line_comments: true,
+            ..Default::default()
+        },
+    )
+}
 
-        let stylesheet = parser.parse_all();
+#[testing::fixture("tests/line-comment/**/input.css")]
+fn span_visualizer_line_comment(input: PathBuf) {
+    stylesheet_span_visualizer(
+        input,
+        Some(ParserConfig {
+            allow_wrong_line_comments: true,
+            ..Default::default()
+        }),
+    )
+}
 
-        match stylesheet {
-            Ok(..) => {}
-            Err(err) => {
-                err.to_diagnostics(&handler).emit();
-            }
-        }
+// TODO fix exclude
+#[testing::fixture(
+    "tests/recovery/**/input.css",
+    exclude(
+        "at-rule/page/invalid-nesting/input.css",
+        "at-rule/page/without-page/input.css",
+        "function/calc/division/input.css",
+        "function/var/input.css",
+        "whitespaces/input.css",
+    )
+)]
+fn recovery(input: PathBuf) {
+    stylesheet_recovery_test(input.clone(), Default::default());
+    stylesheet_recovery_test_tokens(input, Default::default());
+}
 
-        for err in parser.take_errors() {
-            err.to_diagnostics(&handler).emit();
-        }
-
-        if !handler.has_errors() {
-            panic!("should error")
-        }
-
-        Err(())
-    })
-    .unwrap_err();
-
-    stderr.compare_to_file(&stderr_path).unwrap();
+#[testing::fixture("tests/fixture/**/input.css")]
+#[testing::fixture("tests/recovery/**/input.css")]
+fn span_visualizer(input: PathBuf) {
+    stylesheet_span_visualizer(input, None)
 }

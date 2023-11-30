@@ -1,20 +1,18 @@
-class x87 {
-    constructor(parm__2: () => Base[] = function named__3() {
+class x87__2 {
+    constructor(parm__3: () => Base[] = function named__4() {
         return [
             d1,
             d2
         ];
-    }){
-    }
+    }){}
 }
-class x90 {
-    constructor(parm__4: {
+class x90__2 {
+    constructor(parm__6: {
         () : Base[];
-    } = function named__5() {
+    } = function named__7() {
         return [
             d1,
             d2
         ];
-    }){
-    }
+    }){}
 }

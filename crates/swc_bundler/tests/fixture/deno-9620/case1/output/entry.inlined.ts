@@ -70,9 +70,9 @@ function concat(...buf) {
     }
     const output = new Uint8Array(length);
     let index = 0;
-    for (const b1 of buf){
-        output.set(b1, index);
-        index += b1.length;
+    for (const b of buf){
+        output.set(b, index);
+        index += b.length;
     }
     return output;
 }
@@ -122,13 +122,14 @@ async function copyN(r, dest, size) {
 }
 BigInt(Number.MAX_SAFE_INTEGER);
 class StringReader extends Deno.Buffer {
-    constructor(s1){
-        super(new TextEncoder().encode(s1).buffer);
+    constructor(s){
+        super(new TextEncoder().encode(s).buffer);
     }
 }
 class MultiReader {
+    readers;
+    currentIndex = 0;
     constructor(...readers){
-        this.currentIndex = 0;
         this.readers = readers;
     }
     async read(p) {
@@ -162,7 +163,7 @@ function assertPath(path) {
 function isPosixPathSeparator(code) {
     return code === 47;
 }
-function isPathSeparator1(code) {
+function isPathSeparator(code) {
     return isPosixPathSeparator(code) || code === 92;
 }
 function isWindowsDeviceRoot(code) {
@@ -179,8 +180,7 @@ function normalizeString(path, allowAboveRoot, separator, isPathSeparator) {
         else if (isPathSeparator(code)) break;
         else code = CHAR_FORWARD_SLASH;
         if (isPathSeparator(code)) {
-            if (lastSlash === i - 1 || dots === 1) {
-            } else if (lastSlash !== i - 1 && dots === 2) {
+            if (lastSlash === i - 1 || dots === 1) {} else if (lastSlash !== i - 1 && dots === 2) {
                 if (res.length < 2 || lastSegmentLength !== 2 || res.charCodeAt(res.length - 1) !== 46 || res.charCodeAt(res.length - 2) !== 46) {
                     if (res.length > 2) {
                         const lastSlashIndex = res.lastIndexOf(separator);
@@ -229,7 +229,7 @@ function _format(sep, pathObject) {
     if (dir === pathObject.root) return dir + base;
     return dir + sep + base;
 }
-const sep3 = "\\";
+const sep = "\\";
 const delimiter = ";";
 function resolve(...pathSegments) {
     let resolvedDevice = "";
@@ -261,24 +261,24 @@ function resolve(...pathSegments) {
         let isAbsolute = false;
         const code = path.charCodeAt(0);
         if (len > 1) {
-            if (isPathSeparator1(code)) {
+            if (isPathSeparator(code)) {
                 isAbsolute = true;
-                if (isPathSeparator1(path.charCodeAt(1))) {
+                if (isPathSeparator(path.charCodeAt(1))) {
                     let j = 2;
                     let last = j;
                     for(; j < len; ++j){
-                        if (isPathSeparator1(path.charCodeAt(j))) break;
+                        if (isPathSeparator(path.charCodeAt(j))) break;
                     }
                     if (j < len && j !== last) {
                         const firstPart = path.slice(last, j);
                         last = j;
                         for(; j < len; ++j){
-                            if (!isPathSeparator1(path.charCodeAt(j))) break;
+                            if (!isPathSeparator(path.charCodeAt(j))) break;
                         }
                         if (j < len && j !== last) {
                             last = j;
                             for(; j < len; ++j){
-                                if (isPathSeparator1(path.charCodeAt(j))) break;
+                                if (isPathSeparator(path.charCodeAt(j))) break;
                             }
                             if (j === len) {
                                 device = `\\\\${firstPart}\\${path.slice(last)}`;
@@ -297,14 +297,14 @@ function resolve(...pathSegments) {
                     device = path.slice(0, 2);
                     rootEnd = 2;
                     if (len > 2) {
-                        if (isPathSeparator1(path.charCodeAt(2))) {
+                        if (isPathSeparator(path.charCodeAt(2))) {
                             isAbsolute = true;
                             rootEnd = 3;
                         }
                     }
                 }
             }
-        } else if (isPathSeparator1(code)) {
+        } else if (isPathSeparator(code)) {
             rootEnd = 1;
             isAbsolute = true;
         }
@@ -320,7 +320,7 @@ function resolve(...pathSegments) {
         }
         if (resolvedAbsolute && resolvedDevice.length > 0) break;
     }
-    resolvedTail = normalizeString(resolvedTail, !resolvedAbsolute, "\\", isPathSeparator1);
+    resolvedTail = normalizeString(resolvedTail, !resolvedAbsolute, "\\", isPathSeparator);
     return resolvedDevice + (resolvedAbsolute ? "\\" : "") + resolvedTail || ".";
 }
 function normalize(path) {
@@ -332,24 +332,24 @@ function normalize(path) {
     let isAbsolute = false;
     const code = path.charCodeAt(0);
     if (len > 1) {
-        if (isPathSeparator1(code)) {
+        if (isPathSeparator(code)) {
             isAbsolute = true;
-            if (isPathSeparator1(path.charCodeAt(1))) {
+            if (isPathSeparator(path.charCodeAt(1))) {
                 let j = 2;
                 let last = j;
                 for(; j < len; ++j){
-                    if (isPathSeparator1(path.charCodeAt(j))) break;
+                    if (isPathSeparator(path.charCodeAt(j))) break;
                 }
                 if (j < len && j !== last) {
                     const firstPart = path.slice(last, j);
                     last = j;
                     for(; j < len; ++j){
-                        if (!isPathSeparator1(path.charCodeAt(j))) break;
+                        if (!isPathSeparator(path.charCodeAt(j))) break;
                     }
                     if (j < len && j !== last) {
                         last = j;
                         for(; j < len; ++j){
-                            if (isPathSeparator1(path.charCodeAt(j))) break;
+                            if (isPathSeparator(path.charCodeAt(j))) break;
                         }
                         if (j === len) {
                             return `\\\\${firstPart}\\${path.slice(last)}\\`;
@@ -367,24 +367,24 @@ function normalize(path) {
                 device = path.slice(0, 2);
                 rootEnd = 2;
                 if (len > 2) {
-                    if (isPathSeparator1(path.charCodeAt(2))) {
+                    if (isPathSeparator(path.charCodeAt(2))) {
                         isAbsolute = true;
                         rootEnd = 3;
                     }
                 }
             }
         }
-    } else if (isPathSeparator1(code)) {
+    } else if (isPathSeparator(code)) {
         return "\\";
     }
     let tail;
     if (rootEnd < len) {
-        tail = normalizeString(path.slice(rootEnd), !isAbsolute, "\\", isPathSeparator1);
+        tail = normalizeString(path.slice(rootEnd), !isAbsolute, "\\", isPathSeparator);
     } else {
         tail = "";
     }
     if (tail.length === 0 && !isAbsolute) tail = ".";
-    if (tail.length > 0 && isPathSeparator1(path.charCodeAt(len - 1))) {
+    if (tail.length > 0 && isPathSeparator(path.charCodeAt(len - 1))) {
         tail += "\\";
     }
     if (device === undefined) {
@@ -405,16 +405,16 @@ function normalize(path) {
         return device;
     }
 }
-function isAbsolute3(path) {
+function isAbsolute(path) {
     assertPath(path);
     const len = path.length;
     if (len === 0) return false;
     const code = path.charCodeAt(0);
-    if (isPathSeparator1(code)) {
+    if (isPathSeparator(code)) {
         return true;
     } else if (isWindowsDeviceRoot(code)) {
         if (len > 2 && path.charCodeAt(1) === 58) {
-            if (isPathSeparator1(path.charCodeAt(2))) return true;
+            if (isPathSeparator(path.charCodeAt(2))) return true;
         }
     }
     return false;
@@ -436,14 +436,14 @@ function join(...paths) {
     let needsReplace = true;
     let slashCount = 0;
     assert(firstPart != null);
-    if (isPathSeparator1(firstPart.charCodeAt(0))) {
+    if (isPathSeparator(firstPart.charCodeAt(0))) {
         ++slashCount;
         const firstLen = firstPart.length;
         if (firstLen > 1) {
-            if (isPathSeparator1(firstPart.charCodeAt(1))) {
+            if (isPathSeparator(firstPart.charCodeAt(1))) {
                 ++slashCount;
                 if (firstLen > 2) {
-                    if (isPathSeparator1(firstPart.charCodeAt(2))) ++slashCount;
+                    if (isPathSeparator(firstPart.charCodeAt(2))) ++slashCount;
                     else {
                         needsReplace = false;
                     }
@@ -453,7 +453,7 @@ function join(...paths) {
     }
     if (needsReplace) {
         for(; slashCount < joined.length; ++slashCount){
-            if (!isPathSeparator1(joined.charCodeAt(slashCount))) break;
+            if (!isPathSeparator(joined.charCodeAt(slashCount))) break;
         }
         if (slashCount >= 2) joined = `\\${joined.slice(slashCount)}`;
     }
@@ -562,23 +562,23 @@ function dirname(path) {
     let offset = 0;
     const code = path.charCodeAt(0);
     if (len > 1) {
-        if (isPathSeparator1(code)) {
+        if (isPathSeparator(code)) {
             rootEnd = offset = 1;
-            if (isPathSeparator1(path.charCodeAt(1))) {
+            if (isPathSeparator(path.charCodeAt(1))) {
                 let j = 2;
                 let last = j;
                 for(; j < len; ++j){
-                    if (isPathSeparator1(path.charCodeAt(j))) break;
+                    if (isPathSeparator(path.charCodeAt(j))) break;
                 }
                 if (j < len && j !== last) {
                     last = j;
                     for(; j < len; ++j){
-                        if (!isPathSeparator1(path.charCodeAt(j))) break;
+                        if (!isPathSeparator(path.charCodeAt(j))) break;
                     }
                     if (j < len && j !== last) {
                         last = j;
                         for(; j < len; ++j){
-                            if (isPathSeparator1(path.charCodeAt(j))) break;
+                            if (isPathSeparator(path.charCodeAt(j))) break;
                         }
                         if (j === len) {
                             return path;
@@ -593,15 +593,15 @@ function dirname(path) {
             if (path.charCodeAt(1) === 58) {
                 rootEnd = offset = 2;
                 if (len > 2) {
-                    if (isPathSeparator1(path.charCodeAt(2))) rootEnd = offset = 3;
+                    if (isPathSeparator(path.charCodeAt(2))) rootEnd = offset = 3;
                 }
             }
         }
-    } else if (isPathSeparator1(code)) {
+    } else if (isPathSeparator(code)) {
         return path;
     }
     for(let i = len - 1; i >= offset; --i){
-        if (isPathSeparator1(path.charCodeAt(i))) {
+        if (isPathSeparator(path.charCodeAt(i))) {
             if (!matchedSlash) {
                 end = i;
                 break;
@@ -637,7 +637,7 @@ function basename(path, ext = "") {
         let firstNonSlashEnd = -1;
         for(i = path.length - 1; i >= start; --i){
             const code = path.charCodeAt(i);
-            if (isPathSeparator1(code)) {
+            if (isPathSeparator(code)) {
                 if (!matchedSlash) {
                     start = i + 1;
                     break;
@@ -664,7 +664,7 @@ function basename(path, ext = "") {
         return path.slice(start, end);
     } else {
         for(i = path.length - 1; i >= start; --i){
-            if (isPathSeparator1(path.charCodeAt(i))) {
+            if (isPathSeparator(path.charCodeAt(i))) {
                 if (!matchedSlash) {
                     start = i + 1;
                     break;
@@ -691,7 +691,7 @@ function extname(path) {
     }
     for(let i = path.length - 1; i >= start; --i){
         const code = path.charCodeAt(i);
-        if (isPathSeparator1(code)) {
+        if (isPathSeparator(code)) {
             if (!matchedSlash) {
                 startPart = i + 1;
                 break;
@@ -734,23 +734,23 @@ function parse(path) {
     let rootEnd = 0;
     let code = path.charCodeAt(0);
     if (len > 1) {
-        if (isPathSeparator1(code)) {
+        if (isPathSeparator(code)) {
             rootEnd = 1;
-            if (isPathSeparator1(path.charCodeAt(1))) {
+            if (isPathSeparator(path.charCodeAt(1))) {
                 let j = 2;
                 let last = j;
                 for(; j < len; ++j){
-                    if (isPathSeparator1(path.charCodeAt(j))) break;
+                    if (isPathSeparator(path.charCodeAt(j))) break;
                 }
                 if (j < len && j !== last) {
                     last = j;
                     for(; j < len; ++j){
-                        if (!isPathSeparator1(path.charCodeAt(j))) break;
+                        if (!isPathSeparator(path.charCodeAt(j))) break;
                     }
                     if (j < len && j !== last) {
                         last = j;
                         for(; j < len; ++j){
-                            if (isPathSeparator1(path.charCodeAt(j))) break;
+                            if (isPathSeparator(path.charCodeAt(j))) break;
                         }
                         if (j === len) {
                             rootEnd = j;
@@ -764,7 +764,7 @@ function parse(path) {
             if (path.charCodeAt(1) === 58) {
                 rootEnd = 2;
                 if (len > 2) {
-                    if (isPathSeparator1(path.charCodeAt(2))) {
+                    if (isPathSeparator(path.charCodeAt(2))) {
                         if (len === 3) {
                             ret.root = ret.dir = path;
                             return ret;
@@ -777,7 +777,7 @@ function parse(path) {
                 }
             }
         }
-    } else if (isPathSeparator1(code)) {
+    } else if (isPathSeparator(code)) {
         ret.root = ret.dir = path;
         return ret;
     }
@@ -790,7 +790,7 @@ function parse(path) {
     let preDotState = 0;
     for(; i >= rootEnd; --i){
         code = path.charCodeAt(i);
-        if (isPathSeparator1(code)) {
+        if (isPathSeparator(code)) {
             if (!matchedSlash) {
                 startPart = i + 1;
                 break;
@@ -834,7 +834,7 @@ function fromFileUrl(url) {
     return path;
 }
 function toFileUrl(path) {
-    if (!isAbsolute3(path)) {
+    if (!isAbsolute(path)) {
         throw new TypeError("Must be an absolute path.");
     }
     const [, hostname, pathname] = path.match(/^(?:[/\\]{2}([^/\\]+)(?=[/\\][^/\\]))?(.*)/);
@@ -849,11 +849,11 @@ function toFileUrl(path) {
     return url;
 }
 const mod = {
-    sep: sep3,
+    sep: sep,
     delimiter: delimiter,
     resolve: resolve,
     normalize: normalize,
-    isAbsolute: isAbsolute3,
+    isAbsolute: isAbsolute,
     join: join,
     relative: relative,
     toNamespacedPath: toNamespacedPath,
@@ -1195,13 +1195,14 @@ const mod1 = {
     fromFileUrl: fromFileUrl1,
     toFileUrl: toFileUrl1
 };
-const path1 = isWindows ? mod : mod1;
-const { basename: basename2 , delimiter: delimiter2 , dirname: dirname2 , extname: extname2 , format: format2 , fromFileUrl: fromFileUrl2 , isAbsolute: isAbsolute2 , join: join2 , normalize: normalize2 , parse: parse2 , relative: relative2 , resolve: resolve2 , sep: sep2 , toFileUrl: toFileUrl2 , toNamespacedPath: toNamespacedPath2 ,  } = path1;
-const DEFAULT_BUF_SIZE = 4096;
+const path = isWindows ? mod : mod1;
+const { basename: basename2, delimiter: delimiter2, dirname: dirname2, extname: extname2, format: format2, fromFileUrl: fromFileUrl2, isAbsolute: isAbsolute2, join: join2, normalize: normalize2, parse: parse2, relative: relative2, resolve: resolve2, sep: sep2, toFileUrl: toFileUrl2, toNamespacedPath: toNamespacedPath2 } = path;
 const MIN_BUF_SIZE = 16;
 const CR = "\r".charCodeAt(0);
 const LF = "\n".charCodeAt(0);
 class BufferFullError extends Error {
+    partial;
+    name;
     constructor(partial){
         super("Buffer full");
         this.partial = partial;
@@ -1209,23 +1210,26 @@ class BufferFullError extends Error {
     }
 }
 class PartialReadError extends Deno.errors.UnexpectedEof {
+    name = "PartialReadError";
+    partial;
     constructor(){
         super("Encountered UnexpectedEof, data only partially read");
-        this.name = "PartialReadError";
     }
 }
 class BufReader {
+    buf;
+    rd;
+    r = 0;
+    w = 0;
+    eof = false;
     static create(r, size = 4096) {
         return r instanceof BufReader ? r : new BufReader(r, size);
     }
-    constructor(rd, size1 = 4096){
-        this.r = 0;
-        this.w = 0;
-        this.eof = false;
-        if (size1 < 16) {
-            size1 = MIN_BUF_SIZE;
+    constructor(rd, size = 4096){
+        if (size < 16) {
+            size = MIN_BUF_SIZE;
         }
-        this._reset(new Uint8Array(size1), rd);
+        this._reset(new Uint8Array(size), rd);
     }
     size() {
         return this.buf.byteLength;
@@ -1256,20 +1260,20 @@ class BufReader {
         }
         throw new Error(`No progress after ${100} read() calls`);
     }
-    reset(r1) {
-        this._reset(this.buf, r1);
+    reset(r) {
+        this._reset(this.buf, r);
     }
-    _reset(buf1, rd1) {
-        this.buf = buf1;
-        this.rd = rd1;
+    _reset(buf, rd) {
+        this.buf = buf;
+        this.rd = rd;
         this.eof = false;
     }
-    async read(p1) {
-        let rr = p1.byteLength;
-        if (p1.byteLength === 0) return rr;
+    async read(p) {
+        let rr = p.byteLength;
+        if (p.byteLength === 0) return rr;
         if (this.r === this.w) {
-            if (p1.byteLength >= this.buf.byteLength) {
-                const rr = await this.rd.read(p1);
+            if (p.byteLength >= this.buf.byteLength) {
+                const rr = await this.rd.read(p);
                 const nread = rr ?? 0;
                 assert(nread >= 0, "negative read");
                 return rr;
@@ -1281,15 +1285,15 @@ class BufReader {
             assert(rr >= 0, "negative read");
             this.w += rr;
         }
-        const copied = copy(this.buf.subarray(this.r, this.w), p1, 0);
+        const copied = copy(this.buf.subarray(this.r, this.w), p, 0);
         this.r += copied;
         return copied;
     }
-    async readFull(p2) {
+    async readFull(p) {
         let bytesRead = 0;
-        while(bytesRead < p2.length){
+        while(bytesRead < p.length){
             try {
-                const rr = await this.read(p2.subarray(bytesRead));
+                const rr = await this.read(p.subarray(bytesRead));
                 if (rr === null) {
                     if (bytesRead === 0) {
                         return null;
@@ -1299,11 +1303,11 @@ class BufReader {
                 }
                 bytesRead += rr;
             } catch (err) {
-                err.partial = p2.subarray(0, bytesRead);
+                err.partial = p.subarray(0, bytesRead);
                 throw err;
             }
         }
-        return p2;
+        return p;
     }
     async readByte() {
         while(this.r === this.w){
@@ -1327,7 +1331,7 @@ class BufReader {
         try {
             line = await this.readSlice(LF);
         } catch (err) {
-            let { partial  } = err;
+            let { partial } = err;
             assert(partial instanceof Uint8Array, "bufio: caught error from `readSlice()` without `partial` property");
             if (!(err instanceof BufferFullError)) {
                 throw err;
@@ -1363,11 +1367,11 @@ class BufReader {
             more: false
         };
     }
-    async readSlice(delim1) {
+    async readSlice(delim) {
         let s = 0;
         let slice;
         while(true){
-            let i = this.buf.subarray(this.r + s, this.w).indexOf(delim1);
+            let i = this.buf.subarray(this.r + s, this.w).indexOf(delim);
             if (i >= 0) {
                 i += s;
                 slice = this.buf.subarray(this.r, this.r + i + 1);
@@ -1423,133 +1427,6 @@ class BufReader {
         return this.buf.subarray(this.r, this.r + n);
     }
 }
-class AbstractBufBase {
-    size() {
-        return this.buf.byteLength;
-    }
-    available() {
-        return this.buf.byteLength - this.usedBufferBytes;
-    }
-    buffered() {
-        return this.usedBufferBytes;
-    }
-    constructor(){
-        this.usedBufferBytes = 0;
-        this.err = null;
-    }
-}
-class BufWriter extends AbstractBufBase {
-    static create(writer, size2 = 4096) {
-        return writer instanceof BufWriter ? writer : new BufWriter(writer, size2);
-    }
-    constructor(writer1, size3 = 4096){
-        super();
-        this.writer = writer1;
-        if (size3 <= 0) {
-            size3 = DEFAULT_BUF_SIZE;
-        }
-        this.buf = new Uint8Array(size3);
-    }
-    reset(w) {
-        this.err = null;
-        this.usedBufferBytes = 0;
-        this.writer = w;
-    }
-    async flush() {
-        if (this.err !== null) throw this.err;
-        if (this.usedBufferBytes === 0) return;
-        try {
-            await Deno.writeAll(this.writer, this.buf.subarray(0, this.usedBufferBytes));
-        } catch (e) {
-            this.err = e;
-            throw e;
-        }
-        this.buf = new Uint8Array(this.buf.length);
-        this.usedBufferBytes = 0;
-    }
-    async write(data) {
-        if (this.err !== null) throw this.err;
-        if (data.length === 0) return 0;
-        let totalBytesWritten = 0;
-        let numBytesWritten = 0;
-        while(data.byteLength > this.available()){
-            if (this.buffered() === 0) {
-                try {
-                    numBytesWritten = await this.writer.write(data);
-                } catch (e) {
-                    this.err = e;
-                    throw e;
-                }
-            } else {
-                numBytesWritten = copy(data, this.buf, this.usedBufferBytes);
-                this.usedBufferBytes += numBytesWritten;
-                await this.flush();
-            }
-            totalBytesWritten += numBytesWritten;
-            data = data.subarray(numBytesWritten);
-        }
-        numBytesWritten = copy(data, this.buf, this.usedBufferBytes);
-        this.usedBufferBytes += numBytesWritten;
-        totalBytesWritten += numBytesWritten;
-        return totalBytesWritten;
-    }
-}
-class BufWriterSync extends AbstractBufBase {
-    static create(writer2, size4 = 4096) {
-        return writer2 instanceof BufWriterSync ? writer2 : new BufWriterSync(writer2, size4);
-    }
-    constructor(writer3, size5 = 4096){
-        super();
-        this.writer = writer3;
-        if (size5 <= 0) {
-            size5 = DEFAULT_BUF_SIZE;
-        }
-        this.buf = new Uint8Array(size5);
-    }
-    reset(w1) {
-        this.err = null;
-        this.usedBufferBytes = 0;
-        this.writer = w1;
-    }
-    flush() {
-        if (this.err !== null) throw this.err;
-        if (this.usedBufferBytes === 0) return;
-        try {
-            Deno.writeAllSync(this.writer, this.buf.subarray(0, this.usedBufferBytes));
-        } catch (e) {
-            this.err = e;
-            throw e;
-        }
-        this.buf = new Uint8Array(this.buf.length);
-        this.usedBufferBytes = 0;
-    }
-    writeSync(data1) {
-        if (this.err !== null) throw this.err;
-        if (data1.length === 0) return 0;
-        let totalBytesWritten = 0;
-        let numBytesWritten = 0;
-        while(data1.byteLength > this.available()){
-            if (this.buffered() === 0) {
-                try {
-                    numBytesWritten = this.writer.writeSync(data1);
-                } catch (e) {
-                    this.err = e;
-                    throw e;
-                }
-            } else {
-                numBytesWritten = copy(data1, this.buf, this.usedBufferBytes);
-                this.usedBufferBytes += numBytesWritten;
-                this.flush();
-            }
-            totalBytesWritten += numBytesWritten;
-            data1 = data1.subarray(numBytesWritten);
-        }
-        numBytesWritten = copy(data1, this.buf, this.usedBufferBytes);
-        this.usedBufferBytes += numBytesWritten;
-        totalBytesWritten += numBytesWritten;
-        return totalBytesWritten;
-    }
-}
 const invalidHeaderCharRegex = /[^\t\x20-\x7e\x80-\xff]/g;
 function str(buf) {
     if (buf == null) {
@@ -1562,8 +1439,9 @@ function charCode(s) {
     return s.charCodeAt(0);
 }
 class TextProtoReader {
-    constructor(r2){
-        this.r = r2;
+    r;
+    constructor(r){
+        this.r = r;
     }
     async readLine() {
         const s = await this.readLineSlice();
@@ -1604,8 +1482,7 @@ class TextProtoReader {
             const value = str(kv.subarray(i)).replace(invalidHeaderCharRegex, encodeURI);
             try {
                 m.append(key, value);
-            } catch  {
-            }
+            } catch  {}
         }
     }
     async readLineSlice() {
@@ -1613,7 +1490,7 @@ class TextProtoReader {
         while(true){
             const r = await this.r.readLine();
             if (r === null) return null;
-            const { line: l , more  } = r;
+            const { line: l, more } = r;
             if (!line && !more) {
                 if (this.skipSpace(l) === 0) {
                     return new Uint8Array(0);
@@ -1686,13 +1563,17 @@ function scanUntilBoundary(buf, dashBoundary, newLineDashBoundary, total, eof) {
     return buf.length;
 }
 class PartReader {
+    mr;
+    headers;
+    n;
+    total;
     constructor(mr, headers){
         this.mr = mr;
         this.headers = headers;
         this.n = 0;
         this.total = 0;
     }
-    async read(p3) {
+    async read(p) {
         const br = this.mr.bufReader;
         let peekLength = 1;
         while(this.n === 0){
@@ -1711,26 +1592,25 @@ class PartReader {
         if (this.n === null) {
             return null;
         }
-        const nread = Math.min(p3.length, this.n);
-        const buf = p3.subarray(0, nread);
+        const nread = Math.min(p.length, this.n);
+        const buf = p.subarray(0, nread);
         const r = await br.readFull(buf);
         assert(r === buf);
         this.n -= nread;
         this.total += nread;
         return nread;
     }
-    close() {
-    }
+    close() {}
+    contentDisposition;
+    contentDispositionParams;
     getContentDispositionParams() {
         if (this.contentDispositionParams) return this.contentDispositionParams;
         const cd = this.headers.get("content-disposition");
-        const params = {
-        };
+        const params = {};
         assert(cd != null, "content-disposition must be set");
         const comps = decodeURI(cd).split(";");
         this.contentDisposition = comps[0];
-        comps.slice(1).map((v)=>v.trim()
-        ).map((kv)=>{
+        comps.slice(1).map((v)=>v.trim()).map((kv)=>{
             const [k, v] = kv.split("=");
             if (v) {
                 const s = v.charAt(0);
@@ -1767,8 +1647,14 @@ function skipLWSPChar(u) {
     return ret.slice(0, j);
 }
 class MultipartReader {
-    constructor(reader, boundary1){
-        this.boundary = boundary1;
+    boundary;
+    newLine;
+    newLineDashBoundary;
+    dashBoundaryDash;
+    dashBoundary;
+    bufReader;
+    constructor(reader, boundary){
+        this.boundary = boundary;
         this.newLine = encoder.encode("\r\n");
         this.newLineDashBoundary = encoder.encode(`\r\n--${this.boundary}`);
         this.dashBoundaryDash = encoder.encode(`--${this.boundary}--`);
@@ -1855,6 +1741,8 @@ class MultipartReader {
         }
         return multipartFormData(fileMap, valueMap);
     }
+    currentPart;
+    partsRead;
     async nextPart() {
         if (this.currentPart) {
             this.currentPart.close();
@@ -1902,11 +1790,11 @@ class MultipartReader {
         const rest = line.slice(this.dashBoundaryDash.length, line.length);
         return rest.length === 0 || equals(skipLWSPChar(rest), this.newLine);
     }
-    isBoundaryDelimiterLine(line1) {
-        if (!startsWith(line1, this.dashBoundary)) {
+    isBoundaryDelimiterLine(line) {
+        if (!startsWith(line, this.dashBoundary)) {
             return false;
         }
-        const rest = line1.slice(this.dashBoundary.length);
+        const rest = line.slice(this.dashBoundary.length);
         return equals(skipLWSPChar(rest), this.newLine);
     }
 }

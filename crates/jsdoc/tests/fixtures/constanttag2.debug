@@ -2,24 +2,24 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                0,
+                1,
             ),
             hi: BytePos(
-                0,
+                1,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    0,
+                    1,
                 ),
                 hi: BytePos(
-                    33,
+                    34,
                 ),
                 ctxt: #0,
             },
-            value: Atom('ES 2015 class assigned to a const' type=dynamic),
+            value: "ES 2015 class assigned to a const",
         },
         tags: [],
     },

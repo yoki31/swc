@@ -1,7 +1,8 @@
-use crate::{module_decl::ModuleDecl, stmt::Stmt};
 use is_macro::Is;
-use swc_atoms::JsWord;
+use swc_atoms::Atom;
 use swc_common::{ast_node, util::take::Take, EqIgnoreSpan, Span, DUMMY_SP};
+
+use crate::{module_decl::ModuleDecl, stmt::Stmt};
 
 #[ast_node]
 #[derive(Eq, Hash, Is, EqIgnoreSpan)]
@@ -11,6 +12,28 @@ pub enum Program {
     Module(Module),
     #[tag("Script")]
     Script(Script),
+    // Reserved type for the testing purpose only. Prod codes does not utilize
+    // this at all and user should not try to attempt to use this as well.
+    // TODO: reenable once experimental_metadata breaking change is merged
+    // #[tag("ReservedUnused")]
+    // ReservedUnused(ReservedUnused),
+}
+
+#[ast_node("ReservedUnused")]
+#[derive(Eq, Hash, EqIgnoreSpan)]
+pub struct ReservedUnused {
+    pub span: Span,
+    pub body: Option<Vec<ModuleItem>>,
+}
+
+#[cfg(feature = "arbitrary")]
+#[cfg_attr(docsrs, doc(cfg(feature = "arbitrary")))]
+impl<'a> arbitrary::Arbitrary<'a> for ReservedUnused {
+    fn arbitrary(u: &mut arbitrary::Unstructured<'_>) -> arbitrary::Result<Self> {
+        let span = u.arbitrary()?;
+        let body = u.arbitrary()?;
+        Ok(Self { span, body })
+    }
 }
 
 #[ast_node("Module")]
@@ -20,11 +43,12 @@ pub struct Module {
 
     pub body: Vec<ModuleItem>,
 
-    #[serde(default, rename = "interpreter")]
-    pub shebang: Option<JsWord>,
+    #[cfg_attr(feature = "serde-impl", serde(default, rename = "interpreter"))]
+    pub shebang: Option<Atom>,
 }
 
 #[cfg(feature = "arbitrary")]
+#[cfg_attr(docsrs, doc(cfg(feature = "arbitrary")))]
 impl<'a> arbitrary::Arbitrary<'a> for Module {
     fn arbitrary(u: &mut arbitrary::Unstructured<'_>) -> arbitrary::Result<Self> {
         let span = u.arbitrary()?;
@@ -54,11 +78,12 @@ pub struct Script {
 
     pub body: Vec<Stmt>,
 
-    #[serde(default, rename = "interpreter")]
-    pub shebang: Option<JsWord>,
+    #[cfg_attr(feature = "serde-impl", serde(default, rename = "interpreter"))]
+    pub shebang: Option<Atom>,
 }
 
 #[cfg(feature = "arbitrary")]
+#[cfg_attr(docsrs, doc(cfg(feature = "arbitrary")))]
 impl<'a> arbitrary::Arbitrary<'a> for Script {
     fn arbitrary(u: &mut arbitrary::Unstructured<'_>) -> arbitrary::Result<Self> {
         let span = u.arbitrary()?;

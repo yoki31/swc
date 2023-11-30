@@ -13,7 +13,7 @@ mod tests {
         assert_min("false", "false");
         assert_min("42", "42");
         assert_min("3.14", "3.14");
-        assert_min(r#" 'foobar' "#, r#"'foobar'"#);
+        assert_min(r#" 'foobar' "#, r#""foobar""#);
     }
 
     #[test]
@@ -76,6 +76,8 @@ mod tests {
         assert_min("++foo", "++foo");
         assert_min("--foo", "--foo");
         assert_min("new foo", "new foo");
+        assert_min("new foo()", "new foo");
+        assert_min("new foo().bar()", "new foo().bar()");
         assert_min("void foo", "void foo");
         assert_min("typeof foo", "typeof foo");
     }
@@ -126,7 +128,7 @@ mod tests {
         assert_min("[]", "[]");
         assert_min("[foo]", "[foo]");
         assert_min("[foo,bar]", "[foo,bar]");
-        assert_min("[foo,bar,baz]", "[foo,bar,baz]");
+        assert_min("[foo,bar,baz,]", "[foo,bar,baz]");
     }
 
     #[test]
@@ -138,7 +140,6 @@ mod tests {
     fn sparse_array_expression() {
         assert_min("[]", "[]");
         assert_min("[,]", "[,]");
-        assert_min("[1,]", "[1,]");
         assert_min("[,1]", "[,1]");
         assert_min("[,,];", "[,,]");
         assert_min("[1,,];", "[1,,]");
@@ -186,7 +187,8 @@ mod tests {
 
     #[test]
     fn regression_increments() {
-        assert_min("x++ + ++y", "x++ + ++y");
+        assert_min("x++ + ++y", "x+++ ++y");
+        assert_min("x++ - ++y", "x++-++y");
     }
 
     #[test]
@@ -194,5 +196,10 @@ mod tests {
         assert_min("({ 1n: 2 });", "({1n:2})");
         assert_min("(class C { 1n = 1 });", "(class C{1n=1})");
         assert_min("(class C { 1n () { } });", "(class C{1n(){}})");
+    }
+
+    #[test]
+    fn html_comment() {
+        assert_min("a < !--b && c-- > d;", "a< !--b&&c-- >d");
     }
 }

@@ -1,120 +1,105 @@
-use self::util::BoolOrObject;
-use crate::{builder::PassBuilder, SwcComments, SwcImportResolver};
+use std::{
+    collections::{HashMap, HashSet},
+    env,
+    path::{Path, PathBuf},
+    sync::Arc,
+    usize,
+};
+
 use anyhow::{bail, Context, Error};
 use dashmap::DashMap;
 use either::Either;
 use indexmap::IndexMap;
 use once_cell::sync::Lazy;
-use regex::Regex;
-use serde::{
-    de::{Unexpected, Visitor},
-    Deserialize, Deserializer, Serialize, Serializer,
-};
-use std::{
-    cell::RefCell,
-    collections::{HashMap, HashSet},
-    env, fmt,
-    hash::BuildHasher,
-    path::{Path, PathBuf},
-    rc::Rc as RustRc,
-    sync::Arc,
-    usize,
-};
+use rustc_hash::FxHashMap;
+use serde::{Deserialize, Serialize};
 use swc_atoms::JsWord;
-pub use swc_common::chain;
+use swc_cached::regex::CachedRegex;
+#[allow(unused)]
+use swc_common::plugin::metadata::TransformPluginMetadataContext;
 use swc_common::{
-    collections::{AHashMap, AHashSet},
+    chain,
+    collections::{AHashMap, AHashSet, ARandomState},
+    comments::{Comments, SingleThreadedComments},
     errors::Handler,
-    FileName, Mark, SourceMap,
+    FileName, Mark, SourceMap, SyntaxContext,
+};
+pub use swc_compiler_base::{IsModule, SourceMapsConfig};
+use swc_config::{
+    config_types::{BoolConfig, BoolOr, BoolOrDataConfig, MergingOption},
+    merge::Merge,
 };
 use swc_ecma_ast::{EsVersion, Expr, Program};
 use swc_ecma_ext_transforms::jest;
+use swc_ecma_lints::{
+    config::LintConfig,
+    rules::{lint_to_fold, LintParams},
+};
 use swc_ecma_loader::resolvers::{
     lru::CachingResolver, node::NodeModulesResolver, tsc::TsConfigResolver,
 };
-use swc_ecma_minifier::option::{
-    terser::{TerserCompressorOptions, TerserEcmaVersion},
-    MangleOptions, ManglePropertiesOptions,
-};
+pub use swc_ecma_minifier::js::*;
+use swc_ecma_minifier::option::terser::TerserTopLevelOptions;
 #[allow(deprecated)]
 pub use swc_ecma_parser::JscTarget;
-use swc_ecma_parser::{lexer::Lexer, Parser, StringInput, Syntax, TsConfig};
+use swc_ecma_parser::{parse_file_as_expr, Syntax, TsConfig};
 use swc_ecma_transforms::{
+    feature::FeatureFlag,
     hygiene, modules,
-    modules::{
-        hoist::import_hoister, path::NodeImportResolver, rewriter::import_rewriter, util::Scope,
-    },
+    modules::{path::NodeImportResolver, rewriter::import_rewriter, EsModuleConfig},
     optimization::{const_modules, json_parse, simplifier},
     pass::{noop, Optional},
-    proposals::{decorators, export_default_from, import_assertions},
-    react, resolver_with_mark, typescript,
+    proposals::{
+        decorators, explicit_resource_management::explicit_resource_management,
+        export_default_from, import_assertions,
+    },
+    react::{self, default_pragma, default_pragma_frag},
+    resolver,
+    typescript::{self, TsImportExportAssignConfig},
+    Assumptions,
 };
 use swc_ecma_transforms_compat::es2015::regenerator;
-use swc_ecma_transforms_optimization::{inline_globals2, GlobalExprMap};
-use swc_ecma_visit::Fold;
+use swc_ecma_transforms_optimization::{
+    inline_globals2,
+    simplify::{dce::Config as DceConfig, Config as SimplifyConfig},
+    GlobalExprMap,
+};
+use swc_ecma_utils::NodeIgnoringSpan;
+use swc_ecma_visit::{Fold, VisitMutWith};
+
+pub use crate::plugin::PluginConfig;
+use crate::{
+    builder::PassBuilder, dropped_comments_preserver::dropped_comments_preserver, SwcImportResolver,
+};
 
 #[cfg(test)]
 mod tests;
-pub mod util;
 
-#[derive(Clone, Debug, Copy)]
-pub enum IsModule {
-    Bool(bool),
-    Unknown,
-}
+#[cfg(feature = "plugin")]
+/// A shared instance to plugin's module bytecode cache.
+pub static PLUGIN_MODULE_CACHE: Lazy<swc_plugin_runner::cache::PluginModuleCache> =
+    Lazy::new(Default::default);
 
-impl Default for IsModule {
-    fn default() -> Self {
-        IsModule::Bool(true)
-    }
-}
-
-impl Serialize for IsModule {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        match *self {
-            IsModule::Bool(ref b) => b.serialize(serializer),
-            IsModule::Unknown => "unknown".serialize(serializer),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for IsModule {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        struct IsModuleVisitor;
-
-        impl<'de> Visitor<'de> for IsModuleVisitor {
-            type Value = IsModule;
-
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                formatter.write_str("a boolean or the string 'unknown'")
-            }
-
-            fn visit_bool<E>(self, b: bool) -> Result<Self::Value, E>
-            where
-                E: serde::de::Error,
-            {
-                return Ok(IsModule::Bool(b));
-            }
-
-            fn visit_str<E>(self, s: &str) -> Result<Self::Value, E>
-            where
-                E: serde::de::Error,
-            {
-                match s {
-                    "unknown" => Ok(IsModule::Unknown),
-                    _ => Err(serde::de::Error::invalid_value(Unexpected::Str(s), &self)),
-                }
-            }
-        }
-
-        deserializer.deserialize_any(IsModuleVisitor)
-    }
+/// Create a new cache instance if not initialized. This can be called multiple
+/// time, but any subsequent call will be ignored.
+///
+/// This fn have a side effect to create path to cache if given path is not
+/// resolvable if fs_cache_store is enabled. If root is not specified, it'll
+/// generate default root for cache location.
+///
+/// If cache failed to initialize filesystem cache for given location
+/// it'll be serve in-memory cache only.
+#[cfg(feature = "plugin")]
+pub fn init_plugin_module_cache_once(
+    enable_fs_cache_store: bool,
+    fs_cache_store_root: &Option<String>,
+) {
+    PLUGIN_MODULE_CACHE.inner.get_or_init(|| {
+        parking_lot::Mutex::new(swc_plugin_runner::cache::PluginModuleCache::create_inner(
+            enable_fs_cache_store,
+            fs_cache_store_root,
+        ))
+    });
 }
 
 #[derive(Default, Clone, Serialize, Deserialize)]
@@ -148,7 +133,10 @@ pub struct Options {
     pub disable_fixer: bool,
 
     #[serde(skip_deserializing, default)]
-    pub global_mark: Option<Mark>,
+    pub top_level_mark: Option<Mark>,
+
+    #[serde(skip_deserializing, default)]
+    pub unresolved_mark: Option<Mark>,
 
     #[cfg(not(target_arch = "wasm32"))]
     #[serde(default = "default_cwd")]
@@ -189,41 +177,22 @@ pub struct Options {
     pub source_root: Option<String>,
 
     #[serde(default)]
-    pub is_module: IsModule,
+    pub output_path: Option<PathBuf>,
 
     #[serde(default)]
-    pub output_path: Option<PathBuf>,
+    pub experimental: ExperimentalOptions,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Merge)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct ExperimentalOptions {
+    #[serde(default)]
+    pub error_format: Option<ErrorFormat>,
 }
 
 impl Options {
     pub fn codegen_target(&self) -> Option<EsVersion> {
         self.config.jsc.target
-    }
-}
-
-/// Configuration related to source map generated by swc.
-#[derive(Clone, Serialize, Deserialize, Debug)]
-#[serde(untagged)]
-pub enum SourceMapsConfig {
-    Bool(bool),
-    Str(String),
-}
-
-impl SourceMapsConfig {
-    pub fn enabled(&self) -> bool {
-        match *self {
-            SourceMapsConfig::Bool(b) => b,
-            SourceMapsConfig::Str(ref s) => {
-                assert_eq!(s, "inline", "Source map must be true, false or inline");
-                true
-            }
-        }
-    }
-}
-
-impl Default for SourceMapsConfig {
-    fn default() -> Self {
-        SourceMapsConfig::Bool(true)
     }
 }
 
@@ -241,7 +210,10 @@ impl Default for InputSourceMap {
 }
 
 impl Options {
-    /// `parss`: `(syntax, target, is_module)`
+    /// `parse`: `(syntax, target, is_module)`
+    ///
+    /// `parse` should use `comments`.
+    #[allow(clippy::too_many_arguments)]
     pub fn build_as_input<'a, P>(
         &self,
         cm: &Arc<SourceMap>,
@@ -250,21 +222,28 @@ impl Options {
         output_path: Option<&Path>,
         source_file_name: Option<String>,
         handler: &Handler,
-        is_module: IsModule,
         config: Option<Config>,
-        comments: Option<&'a SwcComments>,
+        comments: Option<&'a SingleThreadedComments>,
         custom_before_pass: impl FnOnce(&Program) -> P,
-    ) -> Result<BuiltInput<impl 'a + swc_ecma_visit::Fold>, Error>
+    ) -> Result<BuiltInput<Box<dyn 'a + Fold>>, Error>
     where
         P: 'a + swc_ecma_visit::Fold,
     {
-        let mut config = config.unwrap_or_else(Default::default);
-        config.merge(&self.config);
+        let mut cfg = self.config.clone();
+
+        cfg.merge(config.unwrap_or_default());
+
+        if let FileName::Real(base) = base {
+            cfg.adjust(base);
+        }
+
+        let is_module = cfg.is_module.unwrap_or_default();
 
         let mut source_maps = self.source_maps.clone();
-        source_maps.merge(&config.source_maps);
+        source_maps.merge(cfg.source_maps.clone());
 
         let JscConfig {
+            assumptions,
             transform,
             syntax,
             external_helpers,
@@ -273,23 +252,195 @@ impl Options {
             keep_class_names,
             base_url,
             paths,
-            minify: js_minify,
+            minify: mut js_minify,
+            experimental,
+            lints,
+            preserve_all_comments,
             ..
-        } = config.jsc;
+        } = cfg.jsc;
+        let loose = loose.into_bool();
+        let preserve_all_comments = preserve_all_comments.into_bool();
+        let keep_class_names = keep_class_names.into_bool();
+        let external_helpers = external_helpers.into_bool();
 
-        let target = target.unwrap_or_default();
+        let mut assumptions = assumptions.unwrap_or_else(|| {
+            if loose {
+                Assumptions::all()
+            } else {
+                Assumptions::default()
+            }
+        });
+
+        let unresolved_mark = self.unresolved_mark.unwrap_or_default();
+        let top_level_mark = self.top_level_mark.unwrap_or_default();
+
+        if target.is_some() && cfg.env.is_some() {
+            bail!("`env` and `jsc.target` cannot be used together");
+        }
+
+        let es_version = target.unwrap_or_default();
 
         let syntax = syntax.unwrap_or_default();
 
-        let program = parse(syntax, target, is_module)?;
-        let mut transform = transform.unwrap_or_default();
+        let mut program = parse(syntax, es_version, is_module)?;
+
+        let mut transform = transform.into_inner().unwrap_or_default();
+
+        // Do a resolver pass before everything.
+        //
+        // We do this before creating custom passes, so custom passses can use the
+        // variable management system based on the syntax contexts.
+        if syntax.typescript() {
+            assumptions.set_class_methods |= !transform.use_define_for_class_fields.into_bool();
+        }
+
+        assumptions.set_public_class_fields |= !transform.use_define_for_class_fields.into_bool();
+
+        program.visit_mut_with(&mut resolver(
+            unresolved_mark,
+            top_level_mark,
+            syntax.typescript(),
+        ));
+
+        if program.is_module() {
+            js_minify = js_minify.map(|c| {
+                let compress = c
+                    .compress
+                    .unwrap_as_option(|default| match default {
+                        Some(true) => Some(Default::default()),
+                        _ => None,
+                    })
+                    .map(|mut c| {
+                        if c.toplevel.is_none() {
+                            c.toplevel = Some(TerserTopLevelOptions::Bool(true));
+                        }
+
+                        if matches!(
+                            cfg.module,
+                            None | Some(ModuleConfig::Es6(..) | ModuleConfig::NodeNext(..))
+                        ) {
+                            c.module = true;
+                        }
+
+                        c
+                    })
+                    .map(BoolOrDataConfig::from_obj)
+                    .unwrap_or_else(|| BoolOrDataConfig::from_bool(false));
+
+                let mangle = c
+                    .mangle
+                    .unwrap_as_option(|default| match default {
+                        Some(true) => Some(Default::default()),
+                        _ => None,
+                    })
+                    .map(|mut c| {
+                        if c.top_level.is_none() {
+                            c.top_level = Some(true);
+                        }
+
+                        c
+                    })
+                    .map(BoolOrDataConfig::from_obj)
+                    .unwrap_or_else(|| BoolOrDataConfig::from_bool(false));
+
+                JsMinifyOptions {
+                    compress,
+                    mangle,
+                    ..c
+                }
+            });
+        }
+
+        if js_minify.is_some() && js_minify.as_ref().unwrap().keep_fnames {
+            js_minify = js_minify.map(|c| {
+                let compress = c
+                    .compress
+                    .unwrap_as_option(|default| match default {
+                        Some(true) => Some(Default::default()),
+                        _ => None,
+                    })
+                    .map(|mut c| {
+                        c.keep_fnames = true;
+                        c
+                    })
+                    .map(BoolOrDataConfig::from_obj)
+                    .unwrap_or_else(|| BoolOrDataConfig::from_bool(false));
+                let mangle = c
+                    .mangle
+                    .unwrap_as_option(|default| match default {
+                        Some(true) => Some(Default::default()),
+                        _ => None,
+                    })
+                    .map(|mut c| {
+                        c.keep_fn_names = true;
+                        c
+                    })
+                    .map(BoolOrDataConfig::from_obj)
+                    .unwrap_or_else(|| BoolOrDataConfig::from_bool(false));
+                JsMinifyOptions {
+                    compress,
+                    mangle,
+                    ..c
+                }
+            });
+        }
+
+        if js_minify.is_some() && js_minify.as_ref().unwrap().keep_classnames {
+            js_minify = js_minify.map(|c| {
+                let compress = c
+                    .compress
+                    .unwrap_as_option(|default| match default {
+                        Some(true) => Some(Default::default()),
+                        _ => None,
+                    })
+                    .map(|mut c| {
+                        c.keep_classnames = true;
+                        c
+                    })
+                    .map(BoolOrDataConfig::from_obj)
+                    .unwrap_or_else(|| BoolOrDataConfig::from_bool(false));
+                let mangle = c
+                    .mangle
+                    .unwrap_as_option(|default| match default {
+                        Some(true) => Some(Default::default()),
+                        _ => None,
+                    })
+                    .map(|mut c| {
+                        c.keep_class_names = true;
+                        c
+                    })
+                    .map(BoolOrDataConfig::from_obj)
+                    .unwrap_or_else(|| BoolOrDataConfig::from_bool(false));
+                JsMinifyOptions {
+                    compress,
+                    mangle,
+                    ..c
+                }
+            });
+        }
 
         let regenerator = transform.regenerator.clone();
 
-        let preserve_comments = js_minify.as_ref().map(|v| v.format.comments.clone());
+        let preserve_comments = if preserve_all_comments {
+            BoolOr::Bool(true)
+        } else {
+            js_minify
+                .as_ref()
+                .map(|v| match v.format.comments.clone().into_inner() {
+                    Some(v) => v,
+                    None => BoolOr::Bool(true),
+                })
+                .unwrap_or_else(|| {
+                    BoolOr::Data(if cfg.minify.into_bool() {
+                        JsMinifyCommentOption::PreserveSomeComments
+                    } else {
+                        JsMinifyCommentOption::PreserveAllComments
+                    })
+                })
+        };
 
         if syntax.typescript() {
-            transform.legacy_decorator = true;
+            transform.legacy_decorator = true.into();
         }
         let optimizer = transform.optimizer;
 
@@ -309,109 +460,328 @@ impl Options {
             }
         };
 
-        let enable_simplifier = optimizer.as_ref().map(|v| v.simplify).unwrap_or_default();
+        let simplifier_pass = {
+            if let Some(ref opts) = optimizer.as_ref().and_then(|o| o.simplify) {
+                match opts {
+                    SimplifyOption::Bool(allow_simplify) => {
+                        if *allow_simplify {
+                            Either::Left(simplifier(top_level_mark, Default::default()))
+                        } else {
+                            Either::Right(noop())
+                        }
+                    }
+                    SimplifyOption::Json(cfg) => Either::Left(simplifier(
+                        top_level_mark,
+                        SimplifyConfig {
+                            dce: DceConfig {
+                                preserve_imports_with_side_effects: cfg
+                                    .preserve_imports_with_side_effects,
+                                ..Default::default()
+                            },
+                            ..Default::default()
+                        },
+                    )),
+                }
+            } else {
+                Either::Right(noop())
+            }
+        };
 
         let optimization = {
-            let pass = if let Some(opts) = optimizer.and_then(|o| o.globals) {
+            if let Some(opts) = optimizer.and_then(|o| o.globals) {
                 Either::Left(opts.build(cm, handler))
             } else {
                 Either::Right(noop())
-            };
-
-            pass
+            }
         };
 
-        let top_level_mark = self
-            .global_mark
-            .unwrap_or_else(|| Mark::fresh(Mark::root()));
+        let unresolved_ctxt = SyntaxContext::empty().apply_mark(unresolved_mark);
+        let top_level_ctxt = SyntaxContext::empty().apply_mark(top_level_mark);
 
         let pass = chain!(
             const_modules,
             optimization,
             Optional::new(export_default_from(), syntax.export_default_from()),
-            Optional::new(simplifier(Default::default()), enable_simplifier),
+            simplifier_pass,
             json_parse_pass
         );
 
-        let pass = PassBuilder::new(&cm, &handler, loose, top_level_mark, pass)
-            .target(target)
-            .skip_helper_injection(self.skip_helper_injection)
-            .minify(js_minify)
-            .hygiene(if self.disable_hygiene {
-                None
-            } else {
-                Some(hygiene::Config { keep_class_names })
-            })
-            .fixer(!self.disable_fixer)
-            .preset_env(config.env)
-            .regenerator(regenerator)
-            .finalize(
-                base_url,
-                paths.into_iter().collect(),
-                base,
-                syntax,
-                config.module,
-                comments,
-            );
+        let import_export_assign_config = match cfg.module {
+            Some(ModuleConfig::Es6(..)) => TsImportExportAssignConfig::EsNext,
+            Some(ModuleConfig::CommonJs(..))
+            | Some(ModuleConfig::Amd(..))
+            | Some(ModuleConfig::Umd(..)) => TsImportExportAssignConfig::Preserve,
+            Some(ModuleConfig::NodeNext(..)) => TsImportExportAssignConfig::NodeNext,
+            // TODO: should Preserve for SystemJS
+            _ => TsImportExportAssignConfig::Classic,
+        };
 
-        let pass = chain!(
-            // Decorators may use type information
-            Optional::new(
-                decorators(decorators::Config {
-                    legacy: transform.legacy_decorator,
-                    emit_metadata: transform.decorator_metadata,
-                }),
-                syntax.decorators()
-            ),
-            import_assertions(),
-            Optional::new(
-                typescript::strip_with_jsx(
-                    cm.clone(),
-                    typescript::Config {
-                        pragma: Some(transform.react.pragma.clone()),
-                        pragma_frag: Some(transform.react.pragma_frag.clone()),
-                        ..Default::default()
-                    },
-                    comments.clone(),
-                    top_level_mark
-                ),
-                syntax.typescript()
-            ),
-            resolver_with_mark(top_level_mark),
-            custom_before_pass(&program),
-            // handle jsx
-            Optional::new(
-                react::react(
-                    cm.clone(),
-                    comments.clone(),
-                    transform.react,
-                    top_level_mark
-                ),
-                syntax.jsx()
-            ),
+        let verbatim_module_syntax = transform.verbatim_module_syntax.into_bool();
+
+        let charset = cfg.jsc.output.charset.or_else(|| {
+            if js_minify.as_ref()?.format.ascii_only {
+                Some(OutputCharset::Ascii)
+            } else {
+                None
+            }
+        });
+
+        let preamble = if !cfg.jsc.output.preamble.is_empty() {
+            cfg.jsc.output.preamble
+        } else {
+            js_minify
+                .as_ref()
+                .map(|v| v.format.preamble.clone())
+                .unwrap_or_default()
+        };
+
+        let pass = PassBuilder::new(
+            cm,
+            handler,
+            loose,
+            assumptions,
+            top_level_mark,
+            unresolved_mark,
             pass,
-            Optional::new(jest::jest(), transform.hidden.jest)
+        )
+        .target(es_version)
+        .skip_helper_injection(self.skip_helper_injection)
+        .minify(js_minify)
+        .hygiene(if self.disable_hygiene {
+            None
+        } else {
+            Some(hygiene::Config {
+                keep_class_names,
+                ..Default::default()
+            })
+        })
+        .fixer(!self.disable_fixer)
+        .preset_env(cfg.env)
+        .regenerator(regenerator)
+        .finalize(
+            base_url,
+            paths.into_iter().collect(),
+            base,
+            syntax,
+            cfg.module,
+            comments.map(|v| v as _),
         );
+
+        let keep_import_attributes = experimental.keep_import_attributes.into_bool();
+
+        #[cfg(feature = "plugin")]
+        let plugin_transforms = {
+            let transform_filename = match base {
+                FileName::Real(path) => path.as_os_str().to_str().map(String::from),
+                FileName::Custom(filename) => Some(filename.to_owned()),
+                _ => None,
+            };
+            let transform_metadata_context = Arc::new(TransformPluginMetadataContext::new(
+                transform_filename,
+                self.env_name.to_owned(),
+                None,
+            ));
+
+            // Embedded runtime plugin target, based on assumption we have
+            // 1. filesystem access for the cache
+            // 2. embedded runtime can compiles & execute wasm
+            #[cfg(all(feature = "plugin", not(target_arch = "wasm32")))]
+            {
+                use swc_ecma_loader::resolve::Resolve;
+
+                let plugin_resolver = CachingResolver::new(
+                    40,
+                    NodeModulesResolver::new(
+                        swc_ecma_loader::TargetEnv::Node,
+                        Default::default(),
+                        true,
+                    ),
+                );
+
+                if let Some(plugins) = &experimental.plugins {
+                    // Currently swc enables filesystemcache by default on Embedded runtime plugin
+                    // target.
+                    init_plugin_module_cache_once(true, &experimental.cache_root);
+
+                    let mut inner_cache = PLUGIN_MODULE_CACHE
+                        .inner
+                        .get()
+                        .expect("Cache should be available")
+                        .lock();
+
+                    // Populate cache to the plugin modules if not loaded
+                    for plugin_config in plugins.iter() {
+                        let plugin_name = &plugin_config.0;
+
+                        if !inner_cache.contains(&plugin_name) {
+                            let resolved_path = plugin_resolver.resolve(
+                                &FileName::Real(PathBuf::from(&plugin_name)),
+                                &plugin_name,
+                            )?;
+
+                            let path = if let FileName::Real(value) = resolved_path {
+                                value
+                            } else {
+                                anyhow::bail!("Failed to resolve plugin path: {:?}", resolved_path);
+                            };
+
+                            inner_cache.store_bytes_from_path(&path, &plugin_name)?;
+                            tracing::debug!("Initialized WASM plugin {plugin_name}");
+                        }
+                    }
+                }
+
+                crate::plugin::plugins(
+                    experimental.plugins,
+                    transform_metadata_context,
+                    comments.cloned(),
+                    cm.clone(),
+                    unresolved_mark,
+                )
+            }
+
+            // Native runtime plugin target, based on assumption we have
+            // 1. no filesystem access, loading binary / cache management should be
+            // performed externally
+            // 2. native runtime compiles & execute wasm (i.e v8 on node, chrome)
+            #[cfg(all(feature = "plugin", target_arch = "wasm32"))]
+            {
+                handler.warn(
+                    "Currently @swc/wasm does not support plugins, plugin transform will be \
+                     skipped. Refer https://github.com/swc-project/swc/issues/3934 for the details.",
+                );
+
+                noop()
+            }
+        };
+
+        #[cfg(not(feature = "plugin"))]
+        let plugin_transforms = {
+            if experimental.plugins.is_some() {
+                handler.warn(
+                    "Plugin is not supported with current @swc/core. Plugin transform will be \
+                     skipped.",
+                );
+            }
+            noop()
+        };
+
+        let pass: Box<dyn Fold> = if experimental
+            .disable_builtin_transforms_for_internal_testing
+            .into_bool()
+        {
+            Box::new(plugin_transforms)
+        } else {
+            Box::new(chain!(
+                lint_to_fold(swc_ecma_lints::rules::all(LintParams {
+                    program: &program,
+                    lint_config: &lints,
+                    top_level_ctxt,
+                    unresolved_ctxt,
+                    es_version,
+                    source_map: cm.clone(),
+                })),
+                // Decorators may use type information
+                Optional::new(
+                    match transform.decorator_version.unwrap_or_default() {
+                        DecoratorVersion::V202112 => {
+                            Either::Left(decorators(decorators::Config {
+                                legacy: transform.legacy_decorator.into_bool(),
+                                emit_metadata: transform.decorator_metadata.into_bool(),
+                                use_define_for_class_fields: !assumptions.set_public_class_fields,
+                            }))
+                        }
+                        DecoratorVersion::V202203 => {
+                            Either::Right(
+                            swc_ecma_transforms::proposals::decorator_2022_03::decorator_2022_03(),
+                        )
+                        }
+                    },
+                    syntax.decorators()
+                ),
+                Optional::new(
+                    explicit_resource_management(),
+                    syntax.explicit_resource_management()
+                ),
+                // The transform strips import assertions, so it's only enabled if
+                // keep_import_assertions is false.
+                Optional::new(import_assertions(), !keep_import_attributes),
+                Optional::new(
+                    typescript::tsx::<Option<&dyn Comments>>(
+                        cm.clone(),
+                        typescript::Config {
+                            import_export_assign_config,
+                            verbatim_module_syntax,
+                            ..Default::default()
+                        },
+                        typescript::TsxConfig {
+                            pragma: Some(
+                                transform
+                                    .react
+                                    .pragma
+                                    .clone()
+                                    .unwrap_or_else(default_pragma)
+                            ),
+                            pragma_frag: Some(
+                                transform
+                                    .react
+                                    .pragma_frag
+                                    .clone()
+                                    .unwrap_or_else(default_pragma_frag)
+                            ),
+                        },
+                        comments.map(|v| v as _),
+                        top_level_mark
+                    ),
+                    syntax.typescript()
+                ),
+                plugin_transforms,
+                custom_before_pass(&program),
+                // handle jsx
+                Optional::new(
+                    react::react::<&dyn Comments>(
+                        cm.clone(),
+                        comments.map(|v| v as _),
+                        transform.react,
+                        top_level_mark,
+                        unresolved_mark
+                    ),
+                    syntax.jsx()
+                ),
+                pass,
+                Optional::new(jest::jest(), transform.hidden.jest.into_bool()),
+                Optional::new(
+                    dropped_comments_preserver(comments.cloned()),
+                    preserve_all_comments
+                ),
+            ))
+        };
 
         Ok(BuiltInput {
             program,
-            minify: config.minify,
+            minify: cfg.minify.into_bool(),
             pass,
             external_helpers,
             syntax,
-            target,
+            target: es_version,
             is_module,
             source_maps: source_maps.unwrap_or(SourceMapsConfig::Bool(false)),
-            inline_sources_content: config.inline_sources_content,
-            input_source_map: config.input_source_map.clone(),
+            inline_sources_content: cfg.inline_sources_content.into_bool(),
+            input_source_map: cfg.input_source_map.clone().unwrap_or_default(),
             output_path: output_path.map(|v| v.to_path_buf()),
             source_file_name,
+            comments: comments.cloned(),
             preserve_comments,
+            emit_source_map_columns: cfg.emit_source_map_columns.into_bool(),
+            output: JscOutputConfig { charset, preamble },
+            emit_assert_for_import_attributes: experimental
+                .emit_assert_for_import_attributes
+                .into_bool(),
         })
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum RootMode {
     #[serde(rename = "root")]
     Root,
@@ -457,6 +827,7 @@ fn default_cwd() -> PathBuf {
 /// `.swcrc` file
 #[derive(Debug, Clone, Deserialize)]
 #[serde(untagged, rename = "swcrc")]
+#[allow(clippy::large_enum_variant)]
 pub enum Rc {
     Single(Config),
     Multi(Vec<Config>),
@@ -471,17 +842,8 @@ impl Default for Rc {
                 exclude: Some(FileMatcher::Regex("\\.tsx?$".into())),
                 jsc: JscConfig {
                     syntax: Some(Default::default()),
-                    transform: None,
-                    external_helpers: false,
-                    target: Default::default(),
-                    loose: false,
-                    keep_class_names: false,
                     ..Default::default()
                 },
-                module: None,
-                minify: false,
-                source_maps: None,
-                input_source_map: InputSourceMap::default(),
                 ..Default::default()
             },
             Config {
@@ -493,17 +855,22 @@ impl Default for Rc {
                         tsx: true,
                         ..Default::default()
                     })),
-                    transform: None,
-                    external_helpers: false,
-                    target: Default::default(),
-                    loose: false,
-                    keep_class_names: false,
                     ..Default::default()
                 },
-                module: None,
-                minify: false,
-                source_maps: None,
-                input_source_map: InputSourceMap::default(),
+                ..Default::default()
+            },
+            Config {
+                env: None,
+                test: Some(FileMatcher::Regex("\\.(cts|mts)$".into())),
+                exclude: None,
+                jsc: JscConfig {
+                    syntax: Some(Syntax::Typescript(TsConfig {
+                        tsx: false,
+                        disallow_ambiguous_jsx_like: true,
+                        ..Default::default()
+                    })),
+                    ..Default::default()
+                },
                 ..Default::default()
             },
             Config {
@@ -515,17 +882,8 @@ impl Default for Rc {
                         tsx: false,
                         ..Default::default()
                     })),
-                    transform: None,
-                    external_helpers: false,
-                    target: Default::default(),
-                    loose: false,
-                    keep_class_names: false,
                     ..Default::default()
                 },
-                module: None,
-                minify: false,
-                source_maps: None,
-                input_source_map: InputSourceMap::default(),
                 ..Default::default()
             },
         ])
@@ -570,7 +928,7 @@ impl Rc {
 }
 
 /// A single object in the `.swcrc` file
-#[derive(Debug, Default, Clone, Deserialize)]
+#[derive(Debug, Default, Clone, Deserialize, Merge)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct Config {
     #[serde(default)]
@@ -589,184 +947,29 @@ pub struct Config {
     pub module: Option<ModuleConfig>,
 
     #[serde(default)]
-    pub minify: bool,
+    pub minify: BoolConfig<false>,
 
     #[serde(default)]
-    pub input_source_map: InputSourceMap,
+    pub input_source_map: Option<InputSourceMap>,
 
     /// Possible values are: `'inline'`, `true`, `false`.
     #[serde(default)]
     pub source_maps: Option<SourceMapsConfig>,
 
-    #[serde(default = "true_by_default")]
-    pub inline_sources_content: bool,
+    #[serde(default)]
+    pub inline_sources_content: BoolConfig<true>,
+
+    #[serde(default)]
+    pub emit_source_map_columns: BoolConfig<true>,
 
     #[serde(default)]
     pub error: ErrorConfig,
-}
-
-/// Second argument of `minify`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct JsMinifyOptions {
-    #[serde(default)]
-    pub compress: BoolOrObject<TerserCompressorOptions>,
 
     #[serde(default)]
-    pub mangle: BoolOrObject<MangleOptions>,
+    pub is_module: Option<IsModule>,
 
-    #[serde(default)]
-    pub format: JsMinifyFormatOptions,
-
-    #[serde(default)]
-    pub ecma: TerserEcmaVersion,
-
-    #[serde(default)]
-    pub keep_classnames: bool,
-
-    #[serde(default)]
-    pub keep_fnames: bool,
-
-    #[serde(default)]
-    pub module: bool,
-
-    #[serde(default)]
-    pub safari10: bool,
-
-    #[serde(default)]
-    pub toplevel: bool,
-
-    #[serde(default)]
-    pub source_map: BoolOrObject<TerserSourceMapOption>,
-
-    #[serde(default)]
-    pub output_path: Option<String>,
-
-    #[serde(default = "true_by_default")]
-    pub inline_sources_content: bool,
-}
-
-fn true_by_default() -> bool {
-    true
-}
-
-/// `jsc.minify.sourceMap`
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct TerserSourceMapOption {
-    #[serde(default)]
-    pub filename: Option<String>,
-
-    #[serde(default)]
-    pub url: Option<String>,
-
-    #[serde(default)]
-    pub root: Option<String>,
-
-    #[serde(default)]
-    pub content: Option<String>,
-}
-
-/// `jsc.minify.format`.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct JsMinifyFormatOptions {
-    /// Not implemented yet.
-    #[serde(default, alias = "ascii_only")]
-    pub ascii_only: bool,
-
-    /// Not implemented yet.
-    #[serde(default)]
-    pub beautify: bool,
-
-    /// Not implemented yet.
-    #[serde(default)]
-    pub braces: bool,
-
-    #[serde(default)]
-    pub comments: BoolOrObject<JsMinifyCommentOption>,
-
-    /// Not implemented yet.
-    #[serde(default)]
-    pub ecma: usize,
-
-    /// Not implemented yet.
-    #[serde(default, alias = "indent_level")]
-    pub indent_level: usize,
-
-    /// Not implemented yet.
-    #[serde(default, alias = "indent_start")]
-    pub indent_start: bool,
-
-    /// Not implemented yet.
-    #[serde(default, alias = "inline_script")]
-    pub inline_script: bool,
-
-    /// Not implemented yet.
-    #[serde(default, alias = "keep_numbers")]
-    pub keep_numbers: bool,
-
-    /// Not implemented yet.
-    #[serde(default, alias = "keep_quoted_props")]
-    pub keep_quoted_props: bool,
-
-    /// Not implemented yet.
-    #[serde(default, alias = "max_line_len")]
-    pub max_line_len: BoolOrObject<usize>,
-
-    /// Not implemented yet.
-    #[serde(default)]
-    pub preamble: String,
-
-    /// Not implemented yet.
-    #[serde(default, alias = "quote_keys")]
-    pub quote_keys: bool,
-
-    /// Not implemented yet.
-    #[serde(default, alias = "quote_style")]
-    pub quote_style: usize,
-
-    /// Not implemented yet.
-    #[serde(default, alias = "preserve_annotations")]
-    pub preserve_annotations: bool,
-
-    /// Not implemented yet.
-    #[serde(default)]
-    pub safari10: bool,
-
-    /// Not implemented yet.
-    #[serde(default)]
-    pub semicolons: bool,
-
-    /// Not implemented yet.
-    #[serde(default)]
-    pub shebang: bool,
-
-    /// Not implemented yet.
-    #[serde(default)]
-    pub webkit: bool,
-
-    /// Not implemented yet.
-    #[serde(default, alias = "warp_iife")]
-    pub wrap_iife: bool,
-
-    /// Not implemented yet.
-    #[serde(default, alias = "wrap_func_args")]
-    pub wrap_func_args: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum JsMinifyCommentOption {
-    #[serde(rename = "some")]
-    PreserveSomeComments,
-    #[serde(rename = "all")]
-    PreserveAllComments,
-}
-
-impl Default for JsMinifyCommentOption {
-    fn default() -> Self {
-        JsMinifyCommentOption::PreserveSomeComments
-    }
+    #[serde(rename = "$schema")]
+    pub schema: Option<String>,
 }
 
 impl Config {
@@ -776,14 +979,22 @@ impl Config {
     ///
     /// - typescript: `tsx` will be modified if file extension is `ts`.
     pub fn adjust(&mut self, file: &Path) {
-        match &mut self.jsc.syntax {
-            Some(Syntax::Typescript(TsConfig { tsx, .. })) => {
-                let is_ts = file.extension().map(|v| v == "ts").unwrap_or(false);
-                if is_ts {
-                    *tsx = false;
-                }
+        if let Some(Syntax::Typescript(TsConfig { tsx, dts, .. })) = &mut self.jsc.syntax {
+            let is_dts = file
+                .file_name()
+                .and_then(|f| f.to_str())
+                .map(|s| s.ends_with(".d.ts"))
+                .unwrap_or(false);
+
+            if is_dts {
+                *dts = true;
             }
-            _ => {}
+
+            if file.extension() == Some("tsx".as_ref()) {
+                *tsx = true;
+            } else if file.extension() == Some("ts".as_ref()) {
+                *tsx = false;
+            }
         }
     }
 }
@@ -791,36 +1002,25 @@ impl Config {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum FileMatcher {
-    Regex(String),
+    None,
+    Regex(CachedRegex),
     Multi(Vec<FileMatcher>),
 }
 
 impl Default for FileMatcher {
     fn default() -> Self {
-        Self::Regex(String::from(""))
+        Self::None
     }
 }
 
 impl FileMatcher {
     pub fn matches(&self, filename: &Path) -> Result<bool, Error> {
-        static CACHE: Lazy<DashMap<String, Regex, ahash::RandomState>> =
-            Lazy::new(Default::default);
-
         match self {
-            FileMatcher::Regex(ref s) => {
-                if s.is_empty() {
-                    return Ok(false);
-                }
+            FileMatcher::None => Ok(false),
 
-                if !CACHE.contains_key(&*s) {
-                    let re = Regex::new(&s).with_context(|| format!("invalid regex: {}", s))?;
-                    CACHE.insert(s.clone(), re);
-                }
-
-                let re = CACHE.get(&*s).unwrap();
-
+            FileMatcher::Regex(re) => {
                 let filename = if cfg!(target_os = "windows") {
-                    filename.to_string_lossy().replace("\\", "/")
+                    filename.to_string_lossy().replace('\\', "/")
                 } else {
                     filename.to_string_lossy().to_string()
                 };
@@ -861,6 +1061,7 @@ impl Config {
 }
 
 /// One `BuiltConfig` per a directory with swcrc
+#[non_exhaustive]
 pub struct BuiltInput<P: swc_ecma_visit::Fold> {
     pub program: Program,
     pub pass: P,
@@ -877,32 +1078,70 @@ pub struct BuiltInput<P: swc_ecma_visit::Fold> {
 
     pub source_file_name: Option<String>,
 
-    pub preserve_comments: Option<BoolOrObject<JsMinifyCommentOption>>,
+    pub comments: Option<SingleThreadedComments>,
+    pub preserve_comments: BoolOr<JsMinifyCommentOption>,
 
     pub inline_sources_content: bool,
+    pub emit_source_map_columns: bool,
+
+    pub output: JscOutputConfig,
+    pub emit_assert_for_import_attributes: bool,
+}
+
+impl<P> BuiltInput<P>
+where
+    P: swc_ecma_visit::Fold,
+{
+    pub fn with_pass<N>(self, map: impl FnOnce(P) -> N) -> BuiltInput<N>
+    where
+        N: swc_ecma_visit::Fold,
+    {
+        BuiltInput {
+            program: self.program,
+            pass: map(self.pass),
+            syntax: self.syntax,
+            target: self.target,
+            minify: self.minify,
+            external_helpers: self.external_helpers,
+            source_maps: self.source_maps,
+            input_source_map: self.input_source_map,
+            is_module: self.is_module,
+            output_path: self.output_path,
+            source_file_name: self.source_file_name,
+            preserve_comments: self.preserve_comments,
+            inline_sources_content: self.inline_sources_content,
+            comments: self.comments,
+            emit_source_map_columns: self.emit_source_map_columns,
+            output: self.output,
+            emit_assert_for_import_attributes: self.emit_assert_for_import_attributes,
+        }
+    }
 }
 
 /// `jsc` in  `.swcrc`.
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize, Merge)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct JscConfig {
+    #[serde(default)]
+    pub assumptions: Option<Assumptions>,
+
     #[serde(rename = "parser", default)]
     pub syntax: Option<Syntax>,
 
     #[serde(default)]
-    pub transform: Option<TransformConfig>,
+    pub transform: MergingOption<TransformConfig>,
 
     #[serde(default)]
-    pub external_helpers: bool,
+    pub external_helpers: BoolConfig<false>,
 
     #[serde(default)]
     pub target: Option<EsVersion>,
 
     #[serde(default)]
-    pub loose: bool,
+    pub loose: BoolConfig<false>,
 
     #[serde(default)]
-    pub keep_class_names: bool,
+    pub keep_class_names: BoolConfig<false>,
 
     #[serde(default)]
     pub base_url: PathBuf,
@@ -915,19 +1154,109 @@ pub struct JscConfig {
 
     #[serde(default)]
     pub experimental: JscExperimental,
+
+    #[serde(default)]
+    pub lints: LintConfig,
+
+    #[serde(default)]
+    pub preserve_all_comments: BoolConfig<false>,
+
+    #[serde(default)]
+    pub output: JscOutputConfig,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, Merge)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct JscOutputConfig {
+    #[serde(default)]
+    pub charset: Option<OutputCharset>,
+
+    #[serde(default)]
+    pub preamble: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub enum OutputCharset {
+    #[serde(rename = "utf8")]
+    Utf8,
+    #[serde(rename = "ascii")]
+    Ascii,
+}
+
+impl Default for OutputCharset {
+    fn default() -> Self {
+        OutputCharset::Utf8
+    }
 }
 
 /// `jsc.experimental` in `.swcrc`
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize, Merge)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct JscExperimental {}
+pub struct JscExperimental {
+    /// This requires cargo feature `plugin`.
+    #[serde(default)]
+    pub plugins: Option<Vec<PluginConfig>>,
+    /// If true, keeps import assertions in the output.
+    #[serde(default, alias = "keepImportAssertions")]
+    pub keep_import_attributes: BoolConfig<false>,
 
-impl Merge for JscExperimental {
-    fn merge(&mut self, _from: &Self) {}
+    #[serde(default)]
+    pub emit_assert_for_import_attributes: BoolConfig<false>,
+    /// Location where swc may stores its intermediate cache.
+    /// Currently this is only being used for wasm plugin's bytecache.
+    /// Path should be absolute directory, which will be created if not exist.
+    /// This configuration behavior can change anytime under experimental flag
+    /// and will not be considered as breaking changes.
+    #[serde(default)]
+    pub cache_root: Option<String>,
+
+    #[serde(default)]
+    pub disable_builtin_transforms_for_internal_testing: BoolConfig<false>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub enum ErrorFormat {
+    #[serde(rename = "json")]
+    Json,
+    #[serde(rename = "normal")]
+    Normal,
+}
+
+impl ErrorFormat {
+    pub fn format(&self, err: &Error) -> String {
+        match self {
+            ErrorFormat::Normal => format!("{:?}", err),
+            ErrorFormat::Json => {
+                let mut map = serde_json::Map::new();
+
+                map.insert("message".into(), serde_json::Value::String(err.to_string()));
+
+                map.insert(
+                    "stack".into(),
+                    serde_json::Value::Array(
+                        err.chain()
+                            .skip(1)
+                            .map(|err| err.to_string())
+                            .map(serde_json::Value::String)
+                            .collect(),
+                    ),
+                );
+
+                serde_json::to_string(&map).unwrap()
+            }
+        }
+    }
+}
+
+impl Default for ErrorFormat {
+    fn default() -> Self {
+        Self::Normal
+    }
 }
 
 /// `paths` section of `tsconfig.json`.
-pub type Paths = AHashMap<String, Vec<String>>;
+pub type Paths = IndexMap<String, Vec<String>, ARandomState>;
 pub(crate) type CompiledPaths = Vec<(String, Vec<String>)>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -940,82 +1269,136 @@ pub enum ModuleConfig {
     Umd(modules::umd::Config),
     #[serde(rename = "amd")]
     Amd(modules::amd::Config),
+    #[serde(rename = "systemjs")]
+    SystemJs(modules::system_js::Config),
     #[serde(rename = "es6")]
-    Es6,
+    Es6(EsModuleConfig),
+    #[serde(rename = "nodenext")]
+    NodeNext(EsModuleConfig),
 }
 
 impl ModuleConfig {
-    pub fn build(
+    pub fn build<'cmt>(
         cm: Arc<SourceMap>,
+        comments: Option<&'cmt dyn Comments>,
         base_url: PathBuf,
         paths: CompiledPaths,
         base: &FileName,
-        root_mark: Mark,
+        unresolved_mark: Mark,
         config: Option<ModuleConfig>,
-        scope: RustRc<RefCell<Scope>>,
-    ) -> Box<dyn swc_ecma_visit::Fold> {
+        available_features: FeatureFlag,
+    ) -> Box<dyn swc_ecma_visit::Fold + 'cmt> {
+        let skip_resolver = base_url.as_os_str().is_empty() && paths.is_empty();
+
         let base = match base {
-            FileName::Real(v) if !paths.is_empty() => {
+            FileName::Real(v) if !skip_resolver => {
                 FileName::Real(v.canonicalize().unwrap_or_else(|_| v.to_path_buf()))
             }
             _ => base.clone(),
         };
 
         match config {
-            None | Some(ModuleConfig::Es6) => {
-                let base_pass = import_hoister();
-                if paths.is_empty() {
-                    Box::new(base_pass)
+            None => {
+                if skip_resolver {
+                    Box::new(noop())
                 } else {
-                    let resolver = build_resolver(base_url, paths);
+                    let resolver = build_resolver(base_url, paths, false);
 
-                    Box::new(chain!(import_rewriter(base, resolver), base_pass))
+                    Box::new(import_rewriter(base, resolver))
+                }
+            }
+            Some(ModuleConfig::Es6(config)) | Some(ModuleConfig::NodeNext(config)) => {
+                if skip_resolver {
+                    Box::new(noop())
+                } else {
+                    let resolver = build_resolver(base_url, paths, config.resolve_fully);
+
+                    Box::new(import_rewriter(base, resolver))
                 }
             }
             Some(ModuleConfig::CommonJs(config)) => {
-                if paths.is_empty() {
+                if skip_resolver {
                     Box::new(modules::common_js::common_js(
-                        root_mark,
+                        unresolved_mark,
                         config,
-                        Some(scope),
+                        available_features,
+                        comments,
                     ))
                 } else {
-                    let resolver = build_resolver(base_url, paths);
-
+                    let resolver = build_resolver(base_url, paths, config.resolve_fully);
                     Box::new(modules::common_js::common_js_with_resolver(
                         resolver,
                         base,
-                        root_mark,
+                        unresolved_mark,
                         config,
-                        Some(scope),
+                        available_features,
+                        comments,
                     ))
                 }
             }
             Some(ModuleConfig::Umd(config)) => {
-                if paths.is_empty() {
-                    Box::new(modules::umd::umd(cm, root_mark, config))
+                if skip_resolver {
+                    Box::new(modules::umd::umd(
+                        cm,
+                        unresolved_mark,
+                        config,
+                        available_features,
+                        comments,
+                    ))
                 } else {
-                    let resolver = build_resolver(base_url, paths);
+                    let resolver = build_resolver(base_url, paths, config.config.resolve_fully);
 
                     Box::new(modules::umd::umd_with_resolver(
-                        resolver, base, cm, root_mark, config,
+                        cm,
+                        resolver,
+                        base,
+                        unresolved_mark,
+                        config,
+                        available_features,
+                        comments,
                     ))
                 }
             }
             Some(ModuleConfig::Amd(config)) => {
-                if paths.is_empty() {
-                    Box::new(modules::amd::amd(config))
+                if skip_resolver {
+                    Box::new(modules::amd::amd(
+                        unresolved_mark,
+                        config,
+                        available_features,
+                        comments,
+                    ))
                 } else {
-                    let resolver = build_resolver(base_url, paths);
+                    let resolver = build_resolver(base_url, paths, config.config.resolve_fully);
 
-                    Box::new(modules::amd::amd_with_resolver(resolver, base, config))
+                    Box::new(modules::amd::amd_with_resolver(
+                        resolver,
+                        base,
+                        unresolved_mark,
+                        config,
+                        available_features,
+                        comments,
+                    ))
+                }
+            }
+            Some(ModuleConfig::SystemJs(config)) => {
+                if skip_resolver {
+                    Box::new(modules::system_js::system_js(unresolved_mark, config))
+                } else {
+                    let resolver = build_resolver(base_url, paths, config.resolve_fully);
+
+                    Box::new(modules::system_js::system_js_with_resolver(
+                        resolver,
+                        base,
+                        unresolved_mark,
+                        config,
+                    ))
                 }
             }
         }
     }
 }
 
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize, Merge)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct TransformConfig {
     #[serde(default)]
@@ -1028,43 +1411,93 @@ pub struct TransformConfig {
     pub optimizer: Option<OptimizerConfig>,
 
     #[serde(default)]
-    pub legacy_decorator: bool,
+    pub legacy_decorator: BoolConfig<false>,
 
     #[serde(default)]
-    pub decorator_metadata: bool,
+    pub decorator_metadata: BoolConfig<false>,
 
     #[serde(default)]
     pub hidden: HiddenTransformConfig,
 
     #[serde(default)]
     pub regenerator: regenerator::Config,
+
+    #[serde(default)]
+    #[deprecated]
+    pub treat_const_enum_as_enum: BoolConfig<false>,
+
+    /// https://www.typescriptlang.org/tsconfig#useDefineForClassFields
+    #[serde(default)]
+    pub use_define_for_class_fields: BoolConfig<true>,
+
+    /// https://www.typescriptlang.org/tsconfig#verbatimModuleSyntax
+    #[serde(default)]
+    pub verbatim_module_syntax: BoolConfig<false>,
+
+    #[serde(default)]
+    pub decorator_version: Option<DecoratorVersion>,
 }
 
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub enum DecoratorVersion {
+    #[default]
+    #[serde(rename = "2021-12")]
+    V202112,
+
+    #[serde(rename = "2022-03")]
+    V202203,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, Merge)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct HiddenTransformConfig {
     #[serde(default)]
-    pub jest: bool,
+    pub jest: BoolConfig<false>,
 }
 
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize, Merge)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ConstModulesConfig {
     #[serde(default)]
-    pub globals: HashMap<JsWord, HashMap<JsWord, String>>,
+    pub globals: FxHashMap<JsWord, FxHashMap<JsWord, String>>,
 }
 
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize, Merge)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct OptimizerConfig {
     #[serde(default)]
     pub globals: Option<GlobalPassOption>,
 
-    #[serde(default = "true_by_default")]
-    pub simplify: bool,
+    #[serde(default)]
+    pub simplify: Option<SimplifyOption>,
 
     #[serde(default)]
     pub jsonify: Option<JsonifyOption>,
+}
+
+#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum SimplifyOption {
+    Bool(bool),
+    Json(SimplifyJsonOption),
+}
+
+impl Default for SimplifyOption {
+    fn default() -> Self {
+        SimplifyOption::Bool(true)
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct SimplifyJsonOption {
+    #[serde(default = "default_preserve_imports_with_side_effects")]
+    pub preserve_imports_with_side_effects: bool,
+}
+
+fn default_preserve_imports_with_side_effects() -> bool {
+    true
 }
 
 #[derive(Debug, Default, Clone, Copy, Serialize, Deserialize)]
@@ -1078,18 +1511,17 @@ fn default_jsonify_min_cost() -> usize {
     1024
 }
 
-#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, Merge)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ErrorConfig {
-    #[serde(default = "true_by_default")]
-    pub filename: bool,
+    pub filename: BoolConfig<true>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct GlobalPassOption {
     #[serde(default)]
-    pub vars: IndexMap<JsWord, JsWord, ahash::RandomState>,
+    pub vars: IndexMap<JsWord, JsWord, ARandomState>,
     #[serde(default)]
     pub envs: GlobalInliningPassEnvs,
 
@@ -1120,17 +1552,17 @@ impl GlobalPassOption {
 
         fn expr(cm: &SourceMap, handler: &Handler, src: String) -> Box<Expr> {
             let fm = cm.new_source_file(FileName::Anon, src);
-            let lexer = Lexer::new(
+
+            let mut errors = vec![];
+            let expr = parse_file_as_expr(
+                &fm,
                 Syntax::Es(Default::default()),
                 Default::default(),
-                StringInput::from(&*fm),
                 None,
+                &mut errors,
             );
 
-            let mut p = Parser::new_from(lexer);
-            let expr = p.parse_expr();
-
-            for e in p.take_errors() {
+            for e in errors {
                 e.into_diagnostic(handler).emit()
             }
 
@@ -1169,8 +1601,8 @@ impl GlobalPassOption {
         } else {
             match &self.envs {
                 GlobalInliningPassEnvs::List(env_list) => {
-                    static CACHE: Lazy<DashMap<Vec<String>, ValuesMap, ahash::RandomState>> =
-                        Lazy::new(|| Default::default());
+                    static CACHE: Lazy<DashMap<Vec<String>, ValuesMap, ARandomState>> =
+                        Lazy::new(Default::default);
 
                     let cache_key = env_list.iter().cloned().collect::<Vec<_>>();
                     if let Some(v) = CACHE.get(&cache_key).as_deref().cloned() {
@@ -1180,7 +1612,7 @@ impl GlobalPassOption {
                             cm,
                             handler,
                             env::vars()
-                                .filter(|(k, _)| env_list.contains(&*k))
+                                .filter(|(k, _)| env_list.contains(k))
                                 .map(|(k, v)| (k.into(), v.into())),
                             true,
                         );
@@ -1190,9 +1622,8 @@ impl GlobalPassOption {
                 }
 
                 GlobalInliningPassEnvs::Map(map) => {
-                    static CACHE: Lazy<
-                        DashMap<Vec<(JsWord, JsWord)>, ValuesMap, ahash::RandomState>,
-                    > = Lazy::new(|| Default::default());
+                    static CACHE: Lazy<DashMap<Vec<(JsWord, JsWord)>, ValuesMap, ARandomState>> =
+                        Lazy::new(Default::default);
 
                     let cache_key = self
                         .vars
@@ -1205,7 +1636,7 @@ impl GlobalPassOption {
                         let map = mk_map(
                             cm,
                             handler,
-                            map.into_iter().map(|(k, v)| (k.clone(), v.clone())),
+                            map.iter().map(|(k, v)| (k.clone(), v.clone())),
                             false,
                         );
                         CACHE.insert(cache_key, map.clone());
@@ -1216,8 +1647,8 @@ impl GlobalPassOption {
         };
 
         let global_exprs = {
-            static CACHE: Lazy<DashMap<Vec<(JsWord, JsWord)>, GlobalExprMap, ahash::RandomState>> =
-                Lazy::new(|| Default::default());
+            static CACHE: Lazy<DashMap<Vec<(JsWord, JsWord)>, GlobalExprMap, ARandomState>> =
+                Lazy::new(Default::default);
 
             let cache_key = self
                 .vars
@@ -1235,11 +1666,11 @@ impl GlobalPassOption {
                     .filter(|(k, _)| k.contains('.'))
                     .map(|(k, v)| {
                         (
-                            *expr(cm, handler, k.to_string()),
+                            NodeIgnoringSpan::owned(*expr(cm, handler, k.to_string())),
                             *expr(cm, handler, v.to_string()),
                         )
                     })
-                    .collect::<Vec<_>>();
+                    .collect::<AHashMap<_, _>>();
                 let map = Arc::new(map);
                 CACHE.insert(cache_key, map.clone());
                 map
@@ -1247,8 +1678,8 @@ impl GlobalPassOption {
         };
 
         let global_map = {
-            static CACHE: Lazy<DashMap<Vec<(JsWord, JsWord)>, ValuesMap, ahash::RandomState>> =
-                Lazy::new(|| Default::default());
+            static CACHE: Lazy<DashMap<Vec<(JsWord, JsWord)>, ValuesMap, ARandomState>> =
+                Lazy::new(Default::default);
 
             let cache_key = self
                 .vars
@@ -1275,9 +1706,8 @@ impl GlobalPassOption {
 }
 
 fn default_env_name() -> String {
-    match env::var("SWC_ENV") {
-        Ok(v) => return v,
-        Err(_) => {}
+    if let Ok(v) = env::var("SWC_ENV") {
+        return v;
     }
 
     match env::var("NODE_ENV") {
@@ -1286,268 +1716,51 @@ fn default_env_name() -> String {
     }
 }
 
-pub trait Merge {
-    /// Apply overrides from `from`
-    fn merge(&mut self, from: &Self);
-}
+fn build_resolver(
+    mut base_url: PathBuf,
+    paths: CompiledPaths,
+    resolve_fully: bool,
+) -> Box<SwcImportResolver> {
+    static CACHE: Lazy<DashMap<(PathBuf, CompiledPaths, bool), SwcImportResolver, ARandomState>> =
+        Lazy::new(Default::default);
 
-impl<T: Clone> Merge for Option<T>
-where
-    T: Merge,
-{
-    fn merge(&mut self, from: &Option<T>) {
-        match *from {
-            Some(ref from) => match *self {
-                Some(ref mut v) => v.merge(from),
-                None => *self = Some(from.clone()),
-            },
-            // no-op
-            None => {}
-        }
+    // On Windows, we need to normalize path as UNC path.
+    if cfg!(target_os = "windows") {
+        base_url = base_url
+            .canonicalize()
+            .with_context(|| {
+                format!(
+                    "failed to canonicalize jsc.baseUrl(`{}`)\nThis is required on Windows \
+                     because of UNC path.",
+                    base_url.display()
+                )
+            })
+            .unwrap();
     }
-}
 
-impl Merge for Config {
-    fn merge(&mut self, from: &Self) {
-        self.jsc.merge(&from.jsc);
-        self.module.merge(&from.module);
-        self.minify.merge(&from.minify);
-        self.env.merge(&from.env);
-        self.source_maps.merge(&from.source_maps);
-        self.input_source_map.merge(&from.input_source_map);
-        self.inline_sources_content
-            .merge(&from.inline_sources_content);
-    }
-}
-
-impl Merge for JsMinifyOptions {
-    fn merge(&mut self, from: &Self) {
-        self.compress.merge(&from.compress);
-        self.mangle.merge(&from.mangle);
-        self.format.merge(&from.format);
-        self.ecma.merge(&from.ecma);
-        self.keep_classnames |= from.keep_classnames;
-        self.keep_fnames |= from.keep_fnames;
-        self.safari10 |= from.safari10;
-        self.toplevel |= from.toplevel;
-        self.inline_sources_content |= from.inline_sources_content;
-    }
-}
-
-impl Merge for TerserCompressorOptions {
-    fn merge(&mut self, from: &Self) {
-        self.defaults |= from.defaults;
-        // TODO
-    }
-}
-
-impl Merge for MangleOptions {
-    fn merge(&mut self, from: &Self) {
-        self.props.merge(&from.props);
-
-        self.top_level |= from.top_level;
-        self.keep_class_names |= from.keep_class_names;
-        self.keep_fn_names |= from.keep_fn_names;
-        self.keep_private_props |= from.keep_private_props;
-        self.safari10 |= from.safari10;
-    }
-}
-
-impl Merge for JsMinifyFormatOptions {
-    fn merge(&mut self, from: &Self) {
-        self.comments.merge(&from.comments);
-    }
-}
-
-impl Merge for JsMinifyCommentOption {
-    fn merge(&mut self, _: &Self) {}
-}
-
-impl Merge for ManglePropertiesOptions {
-    fn merge(&mut self, from: &Self) {
-        self.undeclared |= from.undeclared;
-    }
-}
-
-impl Merge for TerserEcmaVersion {
-    fn merge(&mut self, from: &Self) {
-        *self = from.clone();
-    }
-}
-
-impl Merge for SourceMapsConfig {
-    fn merge(&mut self, _: &Self) {}
-}
-
-impl Merge for InputSourceMap {
-    fn merge(&mut self, r: &Self) {
-        if let InputSourceMap::Bool(false) = *self {
-            *self = r.clone();
-        }
-    }
-}
-
-impl Merge for swc_ecma_preset_env::Config {
-    fn merge(&mut self, from: &Self) {
-        *self = from.clone();
-    }
-}
-
-impl Merge for JscConfig {
-    fn merge(&mut self, from: &Self) {
-        self.syntax.merge(&from.syntax);
-        self.transform.merge(&from.transform);
-        self.target.merge(&from.target);
-        self.external_helpers.merge(&from.external_helpers);
-        self.keep_class_names.merge(&from.keep_class_names);
-        self.paths.merge(&from.paths);
-        self.minify.merge(&from.minify);
-        self.experimental.merge(&from.experimental);
-    }
-}
-
-impl<K, V, S> Merge for HashMap<K, V, S>
-where
-    K: Clone + Eq + std::hash::Hash,
-    V: Clone,
-    S: Clone + BuildHasher,
-{
-    fn merge(&mut self, from: &Self) {
-        if self.is_empty() {
-            *self = (*from).clone();
-        } else {
-            for (k, v) in from {
-                self.entry(k.clone()).or_insert(v.clone());
-            }
-        }
-    }
-}
-
-impl Merge for EsVersion {
-    fn merge(&mut self, from: &Self) {
-        if *self < *from {
-            *self = *from
-        }
-    }
-}
-
-impl Merge for Option<ModuleConfig> {
-    fn merge(&mut self, from: &Self) {
-        match *from {
-            Some(ref c2) => *self = Some(c2.clone()),
-            None => {}
-        }
-    }
-}
-
-impl Merge for bool {
-    fn merge(&mut self, from: &Self) {
-        *self |= *from
-    }
-}
-
-impl Merge for Syntax {
-    fn merge(&mut self, from: &Self) {
-        match (&mut *self, from) {
-            (Syntax::Es(a), Syntax::Es(b)) => {
-                a.merge(b);
-            }
-            (Syntax::Typescript(a), Syntax::Typescript(b)) => {
-                a.merge(b);
-            }
-            _ => {
-                *self = *from;
-            }
-        }
-    }
-}
-
-impl Merge for swc_ecma_parser::EsConfig {
-    fn merge(&mut self, from: &Self) {
-        self.jsx |= from.jsx;
-        self.class_private_props |= from.class_private_props;
-        self.class_private_methods |= from.class_private_methods;
-        self.class_props |= from.class_props;
-        self.fn_bind |= from.fn_bind;
-        self.decorators |= from.decorators;
-        self.decorators_before_export |= from.decorators_before_export;
-        self.export_default_from |= from.export_default_from;
-        self.export_namespace_from |= from.export_namespace_from;
-        self.dynamic_import |= from.dynamic_import;
-        self.nullish_coalescing |= from.nullish_coalescing;
-        self.optional_chaining |= from.optional_chaining;
-        self.import_meta |= from.import_meta;
-        self.top_level_await |= from.top_level_await;
-        self.import_assertions |= from.import_assertions;
-        self.static_blocks |= from.static_blocks;
-        self.private_in_object |= from.private_in_object;
-    }
-}
-
-impl Merge for swc_ecma_parser::TsConfig {
-    fn merge(&mut self, from: &Self) {
-        self.tsx |= from.tsx;
-        self.decorators |= from.decorators;
-        self.dynamic_import |= from.dynamic_import;
-        self.import_assertions |= from.import_assertions;
-    }
-}
-
-impl Merge for TransformConfig {
-    fn merge(&mut self, from: &Self) {
-        self.optimizer.merge(&from.optimizer);
-        self.const_modules.merge(&from.const_modules);
-        self.react.merge(&from.react);
-    }
-}
-
-impl Merge for OptimizerConfig {
-    fn merge(&mut self, from: &Self) {
-        self.globals.merge(&from.globals)
-    }
-}
-
-impl Merge for GlobalPassOption {
-    fn merge(&mut self, from: &Self) {
-        *self = from.clone();
-    }
-}
-
-impl Merge for react::Options {
-    fn merge(&mut self, from: &Self) {
-        if *from != react::Options::default() {
-            *self = from.clone();
-        }
-    }
-}
-
-impl Merge for ConstModulesConfig {
-    fn merge(&mut self, from: &Self) {
-        *self = from.clone()
-    }
-}
-
-fn build_resolver(base_url: PathBuf, paths: CompiledPaths) -> SwcImportResolver {
-    static CACHE: Lazy<DashMap<(PathBuf, CompiledPaths), SwcImportResolver, ahash::RandomState>> =
-        Lazy::new(|| Default::default());
-
-    if let Some(cached) = CACHE.get(&(base_url.clone(), paths.clone())) {
-        return (*cached).clone();
+    if let Some(cached) = CACHE.get(&(base_url.clone(), paths.clone(), resolve_fully)) {
+        return Box::new((*cached).clone());
     }
 
     let r = {
         let r = TsConfigResolver::new(
-            NodeModulesResolver::default(),
-            base_url.clone().into(),
+            NodeModulesResolver::without_node_modules(Default::default(), Default::default(), true),
+            base_url.clone(),
             paths.clone(),
         );
         let r = CachingResolver::new(40, r);
 
-        let r = NodeImportResolver::new(r);
+        let r = NodeImportResolver::with_config(
+            r,
+            swc_ecma_transforms::modules::path::Config {
+                base_dir: Some(base_url.clone()),
+                resolve_fully,
+            },
+        );
         Arc::new(r)
     };
 
-    CACHE.insert((base_url, paths), r.clone());
+    CACHE.insert((base_url, paths, resolve_fully), r.clone());
 
-    r
+    Box::new(r)
 }

@@ -1,6 +1,0 @@
-error: Expected ',', got 'b'
- --> $DIR/tests/typescript-errors/multiple-specifiers/export/input.ts:1:12
-  |
-1 | export { a b c }
-  |            ^
-

@@ -1,51 +1,109 @@
+use std::mem::take;
+
+use serde::{Deserialize, Serialize};
+use swc_css_ast::*;
+
 use self::input::{Buffer, ParserInput};
 use crate::{error::Error, Parse};
-use std::mem::take;
-use swc_common::Span;
-use swc_css_ast::*;
 
 #[macro_use]
 mod macros;
-mod at_rule;
+mod at_rules;
 pub mod input;
-mod selector;
-mod style_rule;
+mod selectors;
+mod syntax;
 #[cfg(test)]
 mod tests;
-mod traits;
 mod util;
-mod value;
+mod values_and_units;
 
 pub type PResult<T> = Result<T, Error>;
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Default, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
+#[serde(rename_all = "camelCase")]
 pub struct ParserConfig {
-    pub parse_values: bool,
-
     /// If this is `true`, **wrong** comments starting with `//` will be treated
     /// as a comment.
     ///
     /// This option exists because there are so many css-in-js tools and people
     /// use `//` as a comment because it's javascript file.
+    ///
+    /// Defaults to `false`.
+    #[serde(default)]
     pub allow_wrong_line_comments: bool,
+
+    /// If enabled, errors for css modules selectors will be ignored.
+    ///
+    ///
+    /// Defaults to `false`.
+    #[serde(default)]
+    pub css_modules: bool,
+
+    /// If this is `true`, the nested selector starts with an identifier will be
+    /// parsed as valid selectors (i.e. `ul { color: red; li { color: blue } }`)
+    ///
+    /// Defaults to `false`.
+    #[serde(default)]
+    pub legacy_nesting: bool,
+
+    /// If this is `true`, the legacy syntax for IE will be parsed.
+    #[serde(default)]
+    pub legacy_ie: bool,
 }
 
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BlockContentsGrammar {
+    StyleBlock,
+    DeclarationList,
+    RuleList,
+    Stylesheet,
+}
+
+impl Default for BlockContentsGrammar {
+    fn default() -> Self {
+        BlockContentsGrammar::Stylesheet
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
 struct Ctx {
-    allow_operation_in_value: bool,
-    allow_separating_value_with_space: bool,
-    allow_separating_value_with_comma: bool,
+    is_top_level: bool,
+    block_contents_grammar: BlockContentsGrammar,
+    mixed_with_declarations: bool,
+    need_canonicalize: bool,
 
-    disallow_comma_in_media_query: bool,
+    in_keyframes_at_rule: bool,
+    in_supports_at_rule: bool,
+    in_import_at_rule: bool,
+    in_page_at_rule: bool,
+    in_container_at_rule: bool,
+    in_font_feature_values_at_rule: bool,
 
-    is_in_delimited_value: bool,
-
-    allow_at_selector: bool,
-
-    recover_from_property_value: bool,
+    in_global_or_local_selector: bool,
 }
 
-#[derive(Debug)]
+impl Default for Ctx {
+    fn default() -> Self {
+        Ctx {
+            is_top_level: false,
+            block_contents_grammar: BlockContentsGrammar::default(),
+            mixed_with_declarations: false,
+            need_canonicalize: true,
+
+            in_keyframes_at_rule: false,
+            in_supports_at_rule: false,
+            in_import_at_rule: false,
+            in_page_at_rule: false,
+            in_container_at_rule: false,
+            in_font_feature_values_at_rule: false,
+            in_global_or_local_selector: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct Parser<I>
 where
     I: ParserInput,
@@ -81,27 +139,5 @@ where
 
     pub fn parse_all(&mut self) -> PResult<Stylesheet> {
         self.parse()
-    }
-}
-
-#[derive(Clone, Copy)]
-pub struct RuleContext {
-    is_top_level: bool,
-}
-
-impl<I> Parse<Stylesheet> for Parser<I>
-where
-    I: ParserInput,
-{
-    fn parse(&mut self) -> Result<Stylesheet, Error> {
-        let start = self.input.cur_span()?;
-        let rules = self.parse_rule_list(RuleContext { is_top_level: true })?;
-
-        let last = self.input.last_pos()?;
-
-        Ok(Stylesheet {
-            span: Span::new(start.lo, last, Default::default()),
-            rules,
-        })
     }
 }

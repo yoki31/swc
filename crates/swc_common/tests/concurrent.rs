@@ -1,7 +1,8 @@
 #![cfg(feature = "concurrent")]
 
-use rayon::prelude::*;
 use std::{env, path::PathBuf, sync::Arc};
+
+use rayon::prelude::*;
 use swc_common::{sync::Lrc, FilePathMapping, SourceFile, SourceMap};
 
 #[test]
@@ -11,15 +12,12 @@ fn no_overlap() {
     let files: Vec<Lrc<SourceFile>> = (0..100000)
         .into_par_iter()
         .map(|_| {
-            let fm = cm
-                .load_file(
-                    &PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap())
-                        .join("tests")
-                        .join("concurrent.js"),
-                )
-                .unwrap();
-
-            fm
+            cm.load_file(
+                &PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap())
+                    .join("tests")
+                    .join("concurrent.js"),
+            )
+            .unwrap()
         })
         .collect::<Vec<_>>();
 
@@ -27,7 +25,7 @@ fn no_overlap() {
 
     let mut start = files.clone();
     start.sort_by_key(|f| f.start_pos);
-    let mut end = files.clone();
+    let mut end = files;
     end.sort_by_key(|f| f.end_pos);
 
     start

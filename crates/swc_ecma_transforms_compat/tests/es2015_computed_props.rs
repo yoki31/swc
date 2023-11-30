@@ -1,3 +1,5 @@
+#![allow(clippy::unit_arg)]
+
 use swc_ecma_parser::Syntax;
 use swc_ecma_transforms_compat::es2015::computed_props::{computed_properties, Config};
 use swc_ecma_transforms_testing::{test, test_exec};
@@ -18,11 +20,7 @@ test!(
     "
 const b = {[a]: 1}
 export const c = {[a]: 1}
-",
-    "const b = _defineProperty({
-}, a, 1);
-export const c = _defineProperty({
-}, a, 1);"
+"
 );
 
 test!(
@@ -31,11 +29,7 @@ test!(
     big_int,
     "
 const b = {1n: 1, [x]: 'x', 2n: 2}
-",
-    "var _obj;
-const b = (_obj = {
-    1n: 1
-}, _defineProperty(_obj, x, 'x'), _defineProperty(_obj, 2n, 2), _obj);"
+"
 );
 
 test!(
@@ -56,23 +50,78 @@ test!(
     console.log(x);
   }
 };
-"#,
-    r#"var _obj, _mutatorMap = {
+"#
+);
+
+test!(
+    ::swc_ecma_parser::Syntax::default(),
+    |_| tr(()),
+    issue_2680,
+    r#"
+const obj = {
+    get [1]() {}
 };
-var obj = ( _obj = {
-}, _mutatorMap[foobar] = _mutatorMap[foobar] || {
-}, _mutatorMap[foobar].get = function() {
-    return 'foobar';
-}, _mutatorMap[foobar] = _mutatorMap[foobar] || {
-}, _mutatorMap[foobar].set = function(x) {
-    console.log(x);
-}, _mutatorMap['test'] = _mutatorMap['test'] || {
-}, _mutatorMap['test'].get = function() {
-    return 'regular getter after computed property';
-}, _mutatorMap['test'] = _mutatorMap['test'] || {
-}, _mutatorMap['test'].set = function(x) {
-    console.log(x);
-}, _defineEnumerableProperties(_obj, _mutatorMap), _obj);"#
+"#
+);
+
+test_exec!(
+    ::swc_ecma_parser::Syntax::default(),
+    |_| tr(()),
+    issue_2680_2,
+    r#"
+let a = "outside";
+const obj = {
+  get [{
+    get [a]() {
+      let a = "inside";
+      return a;
+    },
+  }.outside]() {
+    let a = "middle";
+    return a;
+  },
+};
+
+expect(obj.inside).toBe("middle");
+"#
+);
+
+test_exec!(
+    ::swc_ecma_parser::Syntax::default(),
+    |_| tr(()),
+    issue_2680_3,
+    r#"
+const obj = {
+  foo() {
+      const obj2 = {
+          get [1]() {
+              return 42;
+          },
+      };
+      return obj2;
+  },
+};
+
+expect(obj.foo()[1]).toBe(42);
+"#
+);
+
+test!(
+    ::swc_ecma_parser::Syntax::default(),
+    |_| tr(()),
+    issue_2680_4,
+    r#"
+const obj = {
+  foo() {
+      const obj2 = {
+          get [1]() {
+              return 42;
+          },
+      };
+      return obj2;
+  },
+};
+"#
 );
 
 test!(
@@ -81,9 +130,7 @@ test!(
     argument,
     r#"foo({
   [bar]: "foobar"
-});"#,
-    r#"foo(_defineProperty({}, bar, "foobar"));
-"#
+});"#
 );
 
 test!(
@@ -92,8 +139,7 @@ test!(
     assignment,
     r#"foo = {
   [bar]: "foobar"
-};"#,
-    r#"foo = _defineProperty({}, bar, "foobar");"#
+};"#
 );
 
 test!(
@@ -107,14 +153,7 @@ test!(
   test() {
     return "regular method after computed property";
   }
-};"#,
-    r#"var _obj;
-
-var obj = (_obj = {}, _defineProperty(_obj, foobar, function () {
-  return "foobar";
-}), _defineProperty(_obj, "test", function () {
-  return "regular method after computed property";
-}), _obj);"#
+};"#
 );
 
 test!(
@@ -125,12 +164,8 @@ test!(
   ["x" + foo]: "heh",
   ["y" + bar]: "noo",
   foo: "foo",
-  bar: "bar"
-};"#,
-    r#"var _obj;
-
-var obj = (_obj = {}, _defineProperty(_obj, "x" + foo, "heh"), _defineProperty(_obj,
- "y" + bar, "noo"), _defineProperty(_obj, "foo", "foo"), _defineProperty(_obj, "bar", "bar"), _obj);"#
+  bar: "bar",
+};"#
 );
 
 test!(
@@ -140,11 +175,7 @@ test!(
     r#"var obj = {
   ["x" + foo]: "heh",
   ["y" + bar]: "noo"
-};"#,
-    r#"var _obj;
-
-var obj = (_obj = {}, _defineProperty(_obj, "x" + foo, "heh"),
-_defineProperty(_obj, "y" + bar, "noo"), _obj);"#
+};"#
 );
 
 test!(
@@ -153,8 +184,7 @@ test!(
     single,
     r#"var obj = {
   ["x" + foo]: "heh"
-};"#,
-    r#"var obj = _defineProperty({}, "x" + foo, "heh");"#
+};"#
 );
 
 test!(
@@ -168,15 +198,7 @@ var foo = {
     return k;
   }
 };
-"#,
-    r#"var k = Symbol();
-var _obj, _mutatorMap = {
-};
-var foo = ( _obj = {
-}, _defineProperty(_obj, Symbol.iterator, 'foobar'), _mutatorMap[k] = _mutatorMap[k] || {
-}, _mutatorMap[k].get = function() {
-    return k;
-}, _defineEnumerableProperties(_obj, _mutatorMap), _obj);"#
+"#
 );
 
 test_exec!(
@@ -201,9 +223,8 @@ test!(
     |_| computed_properties(Default::default()),
     this,
     r#"var obj = {
-  ["x" + foo.bar]: "heh"
-};"#,
-    r#"var obj = _defineProperty({}, "x" + foo.bar, "heh");"#
+  ["x" + foo.bar]: "heh",
+};"#
 );
 
 test!(
@@ -223,26 +244,13 @@ test!(
 });
 
 export function corge() {}
-",
-    "
-_defineProperty({
-    foo: _defineProperty({
-        bar: null
-    }, baz, null)
-}, bon, {
-    flab: null
-});
-export function corge() {
-}"
+"
 );
 
 test!(
     ::swc_ecma_parser::Syntax::default(),
     |_| computed_properties(Default::default()),
     issue_315_2,
-    "
-export function corge() {}
-",
     "
 export function corge() {}
 "
@@ -265,17 +273,6 @@ export function corge() {}
     flab: null
   }
 });
-",
-    "
-export function corge() {
-}
-_defineProperty({
-    foo: _defineProperty({
-        bar: null
-    }, baz, null)
-}, bon, {
-    flab: null
-});
 "
 );
 
@@ -296,17 +293,6 @@ export class Foo {}
     flab: null
   }
 });
-",
-    "
-export class Foo {}
-
-_defineProperty({
-    foo: _defineProperty({
-        bar: null
-    }, baz, null)
-}, bon, {
-    flab: null
-});
 "
 );
 
@@ -320,14 +306,8 @@ var obj = {
   ["x" + foo]: "heh",
   ["y" + bar]: "noo",
   foo: "foo",
-  bar: "bar"
+  bar: "bar",
 };
-
-"#,
-    r#"
-var _obj;
-
-var obj = (_obj = {}, _defineProperty(_obj, "x" + foo, "heh"), _defineProperty(_obj, "y" + bar, "noo"), _defineProperty(_obj, "foo", "foo"), _defineProperty(_obj, "bar", "bar"), _obj);
 
 "#
 );
@@ -341,10 +321,6 @@ test!(
 var obj = {
   ["x" + foo]: "heh"
 };
-
-"#,
-    r#"
-var obj = _defineProperty({}, "x" + foo, "heh");
 
 "#
 );
@@ -361,12 +337,6 @@ export default {
   [a]: b,
   [c]: d
 };
-"#,
-    r#"
-var _obj;
-
-export default (_obj = {}, _defineProperty(_obj, a, b), _defineProperty(_obj, c, d), _obj);
-
 "#
 );
 
@@ -378,14 +348,8 @@ test!(
     r#"
 var obj = {
   ["x" + foo]: "heh",
-  ["y" + bar]: "noo"
+  ["y" + bar]: "noo",
 };
-
-"#,
-    r#"
-var _obj;
-
-var obj = (_obj = {}, _defineProperty(_obj, "x" + foo, "heh"), _defineProperty(_obj, "y" + bar, "noo"), _obj);
 
 "#
 );
@@ -399,10 +363,6 @@ test!(
 var obj = {
   ["x" + foo.bar]: "heh"
 };
-
-"#,
-    r#"
-var obj = _defineProperty({}, "x" + foo.bar, "heh");
 
 "#
 );
@@ -422,16 +382,6 @@ var obj = {
   }
 };
 
-"#,
-    r#"
-var _obj;
-
-var obj = (_obj = {}, _defineProperty(_obj, foobar, function () {
-  return "foobar";
-}), _defineProperty(_obj, "test", function () {
-  return "regular method after computed property";
-}), _obj);
-
 "#
 );
 
@@ -444,10 +394,6 @@ test!(
 foo = {
   [bar]: "foobar"
 };
-
-"#,
-    r#"
-foo = _defineProperty({}, bar, "foobar");
 
 "#
 );
@@ -462,10 +408,6 @@ foo({
   [bar]: "foobar"
 });
 
-"#,
-    r#"
-foo(_defineProperty({}, bar, "foobar"));
-
 "#
 );
 
@@ -477,14 +419,8 @@ test!(
     r#"
 var obj = {
   first: "first",
-  ["second"]: "second",
+  ["second"]: "second"
 };
-
-"#,
-    r#"
-var obj = _defineProperty({
-  first: "first"
-}, "second", "second");
 
 "#
 );
@@ -498,10 +434,6 @@ test!(
 var foo = {
   [bar]: "foobar"
 };
-
-"#,
-    r#"
-var foo = _defineProperty({}, bar, "foobar");
 
 "#
 );
@@ -534,11 +466,6 @@ test!(
 foo = {
   [bar]: "foobar"
 };
-"#,
-    r#"
-var _obj;
-
-foo = (_obj = {}, _obj[bar] = "foobar", _obj);
 "#
 );
 
@@ -550,11 +477,6 @@ test!(
 foo({
   [bar]: "foobar"
 });
-"#,
-    r#"
-var _obj;
-
-foo((_obj = {}, _obj[bar] = "foobar", _obj));
 "#
 );
 
@@ -567,13 +489,6 @@ var obj = {
   foo: "bar",
   [bar]: "foo"
 };
-"#,
-    r#"
-var _obj;
-
-var obj = (_obj = {
-  foo: "bar"
-}, _obj[bar] = "foo", _obj);
 "#
 );
 
@@ -590,15 +505,6 @@ var obj = {
     return "regular method after computed property";
   }
 };
-"#,
-    r#"
-var _obj;
-
-var obj = (_obj = {}, _obj[foobar] = function () {
-  return "foobar";
-}, _obj.test = function () {
-  return "regular method after computed property";
-}, _obj);
 "#
 );
 
@@ -611,13 +517,8 @@ var obj = {
   ["x" + foo]: "heh",
   ["y" + bar]: "noo",
   foo: "foo",
-  bar: "bar"
+  bar: "bar",
 };
-"#,
-    r#"
-var _obj;
-
-var obj = (_obj = {}, _obj["x" + foo] = "heh", _obj["y" + bar] = "noo", _obj.foo = "foo", _obj.bar = "bar", _obj);
 "#
 );
 
@@ -628,13 +529,8 @@ test!(
     r#"
 var obj = {
   ["x" + foo]: "heh",
-  ["y" + bar]: "noo"
+  ["y" + bar]: "noo",
 };
-"#,
-    r#"
-var _obj;
-
-var obj = (_obj = {}, _obj["x" + foo] = "heh", _obj["y" + bar] = "noo", _obj);
 "#
 );
 
@@ -646,11 +542,6 @@ test!(
 var obj = {
   ["x" + foo]: "heh"
 };
-"#,
-    r#"
-var _obj;
-
-var obj = (_obj = {}, _obj["x" + foo] = "heh", _obj);
 "#
 );
 
@@ -662,11 +553,6 @@ test!(
 var obj = {
   ["x" + foo.bar]: "heh"
 };
-"#,
-    r#"
-var _obj;
-
-var obj = (_obj = {}, _obj["x" + foo.bar] = "heh", _obj);
 "#
 );
 
@@ -677,15 +563,8 @@ test!(
     r#"
 var obj = {
   first: "first",
-  [second]: "second",
+  [second]: "second"
 }
-"#,
-    r#"
-var _obj;
-
-var obj = (_obj = {
-  first: "first"
-}, _obj[second] = "second", _obj);
 "#
 );
 
@@ -695,13 +574,8 @@ test!(
     loose_variable,
     r#"
 var foo = {
-  [bar]: "foobar"
+  [bar]: "foobar",
 };
-"#,
-    r#"
-var _obj;
-
-var foo = (_obj = {}, _obj[bar] = "foobar", _obj);
 "#
 );
 
@@ -713,11 +587,6 @@ test!(
 var foo = {
 ["213"]: "foobar",
 };
-"#,
-    r#"
-var _obj;
-var foo = (_obj = {
-}, _obj["213"] = "foobar", _obj);
 "#
 );
 

@@ -1,4 +1,4 @@
-!(function () {
+!function() {
     var a = 1;
-    (a = [].length), console.log(a);
-})();
+    console.log(a = 0);
+}();

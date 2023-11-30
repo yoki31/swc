@@ -1,34 +1,32 @@
-function Colors1(member) {
-    return Colors1.ValueFor(member);
+export function Colors(member) {
+    return Colors.ValueFor(member);
 }
-export { Colors1 as Colors };
 (function(Colors) {
     Colors.ValueMap = {
         Red: {
-            value: 0,
+            value: 0.0,
             label: "Red"
         },
         Blue: {
-            value: 1,
+            value: 1.0,
             label: "Blue"
         },
         Green: {
-            value: 2,
+            value: 2.0,
             label: "Green"
         }
     };
     Colors.Values = [
-        0,
-        1,
-        2
+        0.0,
+        1.0,
+        2.0
     ];
     function ValueFor(member) {
-        return ValueMap[member]?.value;
+        return Colors.ValueMap[member]?.value;
     }
     Colors.ValueFor = ValueFor;
     async function LabelFor(member) {
-        return ValueMap[member]?.label;
+        return Colors.ValueMap[member]?.label;
     }
     Colors.LabelFor = LabelFor;
-})(Colors1 || (Colors1 = {
-}));
+})(Colors || (Colors = {}));

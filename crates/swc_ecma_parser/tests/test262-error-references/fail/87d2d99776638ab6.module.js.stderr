@@ -1,6 +1,0 @@
-error: Unexpected token `,`. Expected an identifier
- --> $DIR/tests/test262-parser/fail/87d2d99776638ab6.module.js:1:11
-  |
-1 | import {b,,} from 'a';
-  |           ^
-

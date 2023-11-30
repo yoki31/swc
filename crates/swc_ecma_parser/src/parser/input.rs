@@ -1,3 +1,9 @@
+use std::{cell::RefCell, mem, mem::take, rc::Rc};
+
+use debug_unreachable::debug_unreachable;
+use lexer::TokenContexts;
+use swc_common::{BytePos, Span};
+
 use super::Parser;
 use crate::{
     error::Error,
@@ -5,9 +11,6 @@ use crate::{
     token::*,
     Context, EsVersion, Syntax,
 };
-use lexer::TokenContexts;
-use std::{cell::RefCell, mem, mem::take, rc::Rc};
-use swc_common::{BytePos, Span};
 
 /// Clone should be cheap if you are parsing typescript because typescript
 /// syntax requires backtracking.
@@ -22,6 +25,8 @@ pub trait Tokens: Clone + Iterator<Item = TokenAndSpan> {
     }
 
     fn set_expr_allowed(&mut self, allow: bool);
+    fn set_next_regexp(&mut self, start: Option<BytePos>);
+
     fn token_context(&self) -> &lexer::TokenContexts;
     fn token_context_mut(&mut self) -> &mut lexer::TokenContexts;
     fn set_token_context(&mut self, _c: lexer::TokenContexts);
@@ -97,6 +102,7 @@ impl Tokens for TokensInput {
     fn syntax(&self) -> Syntax {
         self.syntax
     }
+
     fn target(&self) -> EsVersion {
         self.target
     }
@@ -106,6 +112,8 @@ impl Tokens for TokensInput {
     }
 
     fn set_expr_allowed(&mut self, _: bool) {}
+
+    fn set_next_regexp(&mut self, _: Option<BytePos>) {}
 
     fn token_context(&self) -> &TokenContexts {
         &self.token_ctx
@@ -159,6 +167,7 @@ impl<I: Tokens> Capturing<I> {
             captured: Default::default(),
         }
     }
+
     /// Take captured tokens
     pub fn take(&mut self) -> Vec<TokenAndSpan> {
         mem::take(&mut *self.captured.borrow_mut())
@@ -205,6 +214,7 @@ impl<I: Tokens> Tokens for Capturing<I> {
     fn syntax(&self) -> Syntax {
         self.inner.syntax()
     }
+
     fn target(&self) -> EsVersion {
         self.inner.target()
     }
@@ -215,6 +225,10 @@ impl<I: Tokens> Tokens for Capturing<I> {
 
     fn set_expr_allowed(&mut self, allow: bool) {
         self.inner.set_expr_allowed(allow)
+    }
+
+    fn set_next_regexp(&mut self, start: Option<BytePos>) {
+        self.inner.set_next_regexp(start);
     }
 
     fn token_context(&self) -> &TokenContexts {
@@ -257,6 +271,7 @@ impl<I: Tokens> Parser<I> {
     pub fn input(&mut self) -> &mut I {
         &mut self.input.iter
     }
+
     pub(crate) fn input_ref(&self) -> &I {
         &self.input.iter
     }
@@ -285,20 +300,7 @@ impl<I: Tokens> Buffer<I> {
         });
     }
 
-    #[inline]
-    fn bump_inner(&mut self) -> Option<Token> {
-        let prev = self.cur.take();
-        self.prev_span = match prev {
-            Some(TokenAndSpan { span, .. }) => span,
-            _ => self.prev_span,
-        };
-
-        // If we have peeked a token, take it instead of calling lexer.next()
-        self.cur = self.next.take().or_else(|| self.iter.next());
-
-        prev.map(|it| it.token)
-    }
-
+    #[allow(dead_code)]
     pub fn cur_debug(&self) -> Option<&Token> {
         self.cur.as_ref().map(|it| &it.token)
     }
@@ -308,24 +310,20 @@ impl<I: Tokens> Buffer<I> {
     pub fn dump_cur(&mut self) -> String {
         match self.cur() {
             Some(v) => format!("{:?}", v),
-            None => format!("<eof>"),
+            None => "<eof>".to_string(),
         }
     }
 
     /// Returns current token.
     pub fn bump(&mut self) -> Token {
-        #[cold]
-        #[inline(never)]
-        fn invalid_state() -> ! {
-            unreachable!(
-                "Current token is `None`. Parser should not call bump() without knowing current \
-                 token"
-            )
-        }
-
         let prev = match self.cur.take() {
             Some(t) => t,
-            None => invalid_state(),
+            None => unsafe {
+                debug_unreachable!(
+                    "Current token is `None`. Parser should not call bump() without knowing \
+                     current token"
+                )
+            },
         };
         self.prev_span = prev.span;
 
@@ -375,7 +373,8 @@ impl<I: Tokens> Buffer<I> {
     #[inline]
     pub fn cur(&mut self) -> Option<&Token> {
         if self.cur.is_none() {
-            self.bump_inner();
+            // If we have peeked a token, take it instead of calling lexer.next()
+            self.cur = self.next.take().or_else(|| self.iter.next());
         }
 
         match &self.cur {
@@ -393,31 +392,12 @@ impl<I: Tokens> Buffer<I> {
     }
 
     #[inline]
-    pub fn peeked_is(&mut self, expected: &Token) -> bool {
-        match self.peek() {
-            Some(t) => *expected == *t,
-            _ => false,
-        }
-    }
-
-    #[inline]
     pub fn eat(&mut self, expected: &Token) -> bool {
         let v = self.is(expected);
         if v {
             self.bump();
         }
         v
-    }
-
-    #[inline]
-    pub fn eat_keyword(&mut self, kwd: Keyword) -> bool {
-        match self.cur() {
-            Some(Token::Word(Word::Keyword(k))) if *k == kwd => {
-                self.bump();
-                true
-            }
-            _ => false,
-        }
     }
 
     /// Returns start of current token.
@@ -470,6 +450,7 @@ impl<I: Tokens> Buffer<I> {
     pub fn syntax(&self) -> Syntax {
         self.iter.syntax()
     }
+
     #[inline]
     pub fn target(&self) -> EsVersion {
         self.iter.target()
@@ -481,13 +462,20 @@ impl<I: Tokens> Buffer<I> {
     }
 
     #[inline]
+    pub fn set_next_regexp(&mut self, start: Option<BytePos>) {
+        self.iter.set_next_regexp(start);
+    }
+
+    #[inline]
     pub(crate) fn token_context(&self) -> &lexer::TokenContexts {
         self.iter.token_context()
     }
+
     #[inline]
     pub(crate) fn token_context_mut(&mut self) -> &mut lexer::TokenContexts {
         self.iter.token_context_mut()
     }
+
     #[inline]
     pub(crate) fn set_token_context(&mut self, c: lexer::TokenContexts) {
         self.iter.set_token_context(c)

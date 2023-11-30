@@ -1,28 +1,27 @@
 #!/usr/bin/env bash
 #
-# Used to publish MVP.
-#
-# Use this script with test name if the minifier of swc does not break code.
-#
-set -eu
+# This script interactively postpone tests
+set -u
 
-find tests/compress/exec -name output.js | xargs -L 1 rm
-find tests/compress/exec -name expected.stdout | xargs -L 1 rm
-find tests/compress/exec -name output.terser.js | xargs -L 1 rm
-find tests/compress/exec -name mangle.json | xargs -L 1 rm
-find tests/compress/exec -empty -type d -delete
+echo '' > tests/TODO.txt
 
-cargo test --test compress --all-features ${1-''} \
-  | grep 'terser__compress' \
+git restore tests/terser
+
+tests="$(UPDATE=1 DIFF=0 cargo test --test compress $1 \
+  | grep 'fixture_tests__terser__compress__' \
   | grep 'js .\.\. FAILED$' \
-  | sed -e 's!test fixture_terser__compress__!!' \
+  | sed -e 's!test fixture_tests__terser__compress__!!' \
   | sed -e 's! ... FAILED!!' \
   | sed -e 's!__!/!g' \
-  | sed -e 's!_js!.js!' \
-  >> tests/postponed_candidates.txt
+  | sed -e 's!_js!.js!')"
+ 
+ 
+ 
+for file in $tests; do
+  ./scripts/_/postpone/ask-file.sh "$file"
+done
 
 
-comm -23 tests/postponed_candidates.txt tests/golden.txt >> tests/postponed.txt
-rm tests/postponed_candidates.txt
 
-./scripts/sort.sh
+git restore tests/terser
+./scripts/update-list.sh

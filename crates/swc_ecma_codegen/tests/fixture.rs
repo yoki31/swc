@@ -1,11 +1,11 @@
 use std::path::{Path, PathBuf};
-use swc_common::input::SourceFileInput;
+
 use swc_ecma_ast::EsVersion;
 use swc_ecma_codegen::{
     text_writer::{JsWriter, WriteJs},
     Emitter,
 };
-use swc_ecma_parser::{lexer::Lexer, Parser, Syntax};
+use swc_ecma_parser::{parse_file_as_module, Syntax, TsConfig};
 use testing::{run_test2, NormalizedOutput};
 
 fn run(input: &Path, minify: bool) {
@@ -23,18 +23,20 @@ fn run(input: &Path, minify: bool) {
     };
 
     run_test2(false, |cm, _| {
-        let fm = cm.load_file(&input).unwrap();
+        let fm = cm.load_file(input).unwrap();
 
-        let lexer = Lexer::new(
-            Syntax::Typescript(Default::default()),
+        let m = parse_file_as_module(
+            &fm,
+            Syntax::Typescript(TsConfig {
+                decorators: true,
+                tsx: true,
+                ..Default::default()
+            }),
             EsVersion::latest(),
-            SourceFileInput::from(&*fm),
             None,
-        );
-        let mut parser = Parser::new_from(lexer);
-        let m = parser
-            .parse_module()
-            .expect("failed to parse input as a module");
+            &mut vec![],
+        )
+        .expect("failed to parse input as a module");
 
         let mut buf = vec![];
 
@@ -47,8 +49,8 @@ fn run(input: &Path, minify: bool) {
             }
 
             let mut emitter = Emitter {
-                cfg: swc_ecma_codegen::Config { minify },
-                cm: cm.clone(),
+                cfg: swc_ecma_codegen::Config::default().with_minify(minify),
+                cm,
                 comments: None,
                 wr,
             };
@@ -66,6 +68,7 @@ fn run(input: &Path, minify: bool) {
 }
 
 #[testing::fixture("tests/fixture/**/input.ts")]
+#[testing::fixture("tests/fixture/**/input.tsx")]
 fn ts(input: PathBuf) {
     run(&input, false);
 }

@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use std::io::{stderr, Write};
+
 use swc_common::{sync::Lrc, SourceMap, SyntaxContext};
 use swc_ecma_ast::{Ident, Module};
 use swc_ecma_codegen::{text_writer::JsWriter, Emitter};
@@ -18,7 +19,7 @@ pub(crate) fn print_hygiene(event: &str, cm: &Lrc<SourceMap>, t: &Module) {
 
     writeln!(w, "==================== @ {} ====================", event).unwrap();
     Emitter {
-        cfg: swc_ecma_codegen::Config { minify: false },
+        cfg: swc_ecma_codegen::Config::default(),
         cm: cm.clone(),
         comments: None,
         wr: Box::new(JsWriter::new(cm.clone(), "\n", &mut w, None)),

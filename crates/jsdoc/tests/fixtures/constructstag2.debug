@@ -2,70 +2,70 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                21,
+                22,
             ),
             hi: BytePos(
-                21,
+                22,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    21,
+                    22,
                 ),
                 hi: BytePos(
-                    21,
+                    22,
                 ),
                 ctxt: #0,
             },
-            value: Atom('' type=static),
+            value: "",
         },
         tags: [
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        21,
+                        22,
                     ),
                     hi: BytePos(
-                        31,
+                        32,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            21,
+                            22,
                         ),
                         hi: BytePos(
-                            31,
+                            32,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('constructs' type=dynamic),
+                    value: "constructs",
                 },
                 tag: Constructs(
                     ConstructsTag {
                         span: Span {
                             lo: BytePos(
-                                21,
+                                22,
                             ),
                             hi: BytePos(
-                                31,
+                                32,
                             ),
                             ctxt: #0,
                         },
                         name: Text {
                             span: Span {
                                 lo: BytePos(
-                                    21,
+                                    22,
                                 ),
                                 hi: BytePos(
-                                    25,
+                                    26,
                                 ),
                                 ctxt: #0,
                             },
-                            value: Atom('Menu' type=inline),
+                            value: "Menu",
                         },
                     },
                 ),
@@ -73,33 +73,33 @@
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        21,
+                        22,
                     ),
                     hi: BytePos(
-                        26,
+                        27,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            21,
+                            22,
                         ),
                         hi: BytePos(
-                            26,
+                            27,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('param' type=inline),
+                    value: "param",
                 },
                 tag: Parameter(
                     ParameterTag {
                         span: Span {
                             lo: BytePos(
-                                21,
+                                22,
                             ),
                             hi: BytePos(
-                                26,
+                                27,
                             ),
                             ctxt: #0,
                         },
@@ -108,14 +108,14 @@
                             Text {
                                 span: Span {
                                     lo: BytePos(
-                                        21,
+                                        22,
                                     ),
                                     hi: BytePos(
-                                        26,
+                                        27,
                                     ),
                                     ctxt: #0,
                                 },
-                                value: Atom('items' type=inline),
+                                value: "items",
                             },
                         ),
                         desc: Text {
@@ -128,7 +128,7 @@
                                 ),
                                 ctxt: #0,
                             },
-                            value: Atom('' type=static),
+                            value: "",
                         },
                     },
                 ),
@@ -138,66 +138,66 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                124,
+                125,
             ),
             hi: BytePos(
-                124,
+                125,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    124,
+                    125,
                 ),
                 hi: BytePos(
-                    124,
+                    125,
                 ),
                 ctxt: #0,
             },
-            value: Atom('' type=static),
+            value: "",
         },
         tags: [
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        124,
+                        125,
                     ),
                     hi: BytePos(
-                        132,
+                        133,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            124,
+                            125,
                         ),
                         hi: BytePos(
-                            132,
+                            133,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('memberof' type=dynamic),
+                    value: "memberof",
                 },
                 tag: MemberOf(
                     MemberOfTag {
                         span: Span {
                             lo: BytePos(
-                                124,
+                                125,
                             ),
                             hi: BytePos(
-                                132,
+                                133,
                             ),
                             ctxt: #0,
                         },
                         parent_name_path: NamePath {
                             span: Span {
                                 lo: BytePos(
-                                    124,
+                                    125,
                                 ),
                                 hi: BytePos(
-                                    134,
+                                    135,
                                 ),
                                 ctxt: #0,
                             },
@@ -205,14 +205,14 @@
                                 Text {
                                     span: Span {
                                         lo: BytePos(
-                                            124,
+                                            125,
                                         ),
                                         hi: BytePos(
-                                            128,
+                                            129,
                                         ),
                                         ctxt: #0,
                                     },
-                                    value: Atom('Menu' type=inline),
+                                    value: "Menu",
                                 },
                             ],
                         },

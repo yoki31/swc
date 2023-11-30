@@ -1,12 +1,13 @@
+use is_macro::Is;
+use swc_atoms::Atom;
+use swc_common::{ast_node, util::take::Take, EqIgnoreSpan, Span, DUMMY_SP};
+
 use crate::{
     expr::{Expr, SpreadElement},
     ident::Ident,
     lit::Lit,
     typescript::TsTypeParamInstantiation,
 };
-use is_macro::Is;
-use swc_atoms::JsWord;
-use swc_common::{ast_node, util::take::Take, EqIgnoreSpan, Span, DUMMY_SP};
 
 /// Used for `obj` property of `JSXMemberExpr`.
 #[ast_node]
@@ -24,11 +25,11 @@ pub enum JSXObject {
 #[derive(Eq, Hash, EqIgnoreSpan)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct JSXMemberExpr {
-    #[serde(rename = "object")]
+    #[cfg_attr(feature = "serde-impl", serde(rename = "object"))]
     #[span(lo)]
     pub obj: JSXObject,
 
-    #[serde(rename = "property")]
+    #[cfg_attr(feature = "serde-impl", serde(rename = "property"))]
     #[span(hi)]
     pub prop: Ident,
 }
@@ -38,7 +39,7 @@ pub struct JSXMemberExpr {
 #[derive(Eq, Hash, EqIgnoreSpan)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct JSXNamespacedName {
-    #[serde(rename = "namespace")]
+    #[cfg_attr(feature = "serde-impl", serde(rename = "namespace"))]
     #[span(lo)]
     pub ns: Ident,
     #[span(hi)]
@@ -57,7 +58,7 @@ pub struct JSXEmptyExpr {
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct JSXExprContainer {
     pub span: Span,
-    #[serde(rename = "expression")]
+    #[cfg_attr(feature = "serde-impl", serde(rename = "expression"))]
     pub expr: JSXExpr,
 }
 
@@ -77,7 +78,7 @@ pub enum JSXExpr {
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct JSXSpreadChild {
     pub span: Span,
-    #[serde(rename = "expression")]
+    #[cfg_attr(feature = "serde-impl", serde(rename = "expression"))]
     pub expr: Box<Expr>,
 }
 
@@ -107,16 +108,16 @@ pub struct JSXOpeningElement {
 
     pub span: Span,
 
-    #[serde(default, rename = "attributes")]
+    #[cfg_attr(feature = "serde-impl", serde(default, rename = "attributes"))]
     pub attrs: Vec<JSXAttrOrSpread>,
 
-    #[serde(rename = "selfClosing")]
+    #[cfg_attr(feature = "serde-impl", serde(rename = "selfClosing"))]
     pub self_closing: bool,
 
     /// Note: This field's name is different from one from babel because it is
     /// misleading
-    #[serde(default, rename = "typeArguments")]
-    pub type_args: Option<TsTypeParamInstantiation>,
+    #[cfg_attr(feature = "serde-impl", serde(default, rename = "typeArguments"))]
+    pub type_args: Option<Box<TsTypeParamInstantiation>>,
 }
 
 impl Take for JSXOpeningElement {
@@ -196,11 +197,12 @@ pub enum JSXAttrValue {
 #[derive(Eq, Hash, EqIgnoreSpan)]
 pub struct JSXText {
     pub span: Span,
-    pub value: JsWord,
-    pub raw: JsWord,
+    pub value: Atom,
+    pub raw: Atom,
 }
 
 #[cfg(feature = "arbitrary")]
+#[cfg_attr(docsrs, doc(cfg(feature = "arbitrary")))]
 impl<'a> arbitrary::Arbitrary<'a> for JSXText {
     fn arbitrary(u: &mut arbitrary::Unstructured<'_>) -> arbitrary::Result<Self> {
         let span = u.arbitrary()?;
@@ -260,7 +262,7 @@ pub struct JSXFragment {
 
     pub opening: JSXOpeningFragment,
 
-    #[serde(default)]
+    #[cfg_attr(feature = "serde-impl", serde(default))]
     pub children: Vec<JSXElementChild>,
 
     pub closing: JSXClosingFragment,

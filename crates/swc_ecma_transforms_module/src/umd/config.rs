@@ -1,12 +1,14 @@
-use super::super::util;
+use std::collections::HashMap;
+
 use inflector::Inflector;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use swc_atoms::JsWord;
 use swc_common::{errors::HANDLER, sync::Lrc, FileName, SourceMap};
-use swc_ecma_ast::Expr;
-use swc_ecma_parser::{lexer::Lexer, Parser, StringInput, Syntax};
+use swc_ecma_ast::{Expr, Ident};
+use swc_ecma_parser::{parse_file_as_expr, Syntax};
 use swc_ecma_utils::quote_ident;
+
+use super::super::util;
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -27,23 +29,24 @@ impl Config {
                 .into_iter()
                 .map(|(k, v)| {
                     let parse = |s| {
-                        let fm = cm
-                            .new_source_file(FileName::Custom(format!("<umd-config-{}.js>", s)), s);
+                        let fm = cm.new_source_file(
+                            FileName::Internal(format!("<umd-config-{}.js>", s)),
+                            s,
+                        );
 
-                        let lexer = Lexer::new(
+                        parse_file_as_expr(
+                            &fm,
                             Syntax::default(),
                             Default::default(),
-                            StringInput::from(&*fm),
                             None,
-                        );
-                        Parser::new_from(lexer)
-                            .parse_expr()
-                            .map_err(|e| {
-                                if HANDLER.is_set() {
-                                    HANDLER.with(|h| e.into_diagnostic(h).emit())
-                                }
-                            })
-                            .unwrap()
+                            &mut vec![],
+                        )
+                        .map_err(|e| {
+                            if HANDLER.is_set() {
+                                HANDLER.with(|h| e.into_diagnostic(h).emit())
+                            }
+                        })
+                        .unwrap()
                     };
                     (k, parse(v))
                 })
@@ -66,7 +69,8 @@ impl BuiltConfig {
 
         src.split('/').last().unwrap().to_camel_case().into()
     }
-    pub fn determine_export_name(&self, filename: FileName) -> Expr {
+
+    pub fn determine_export_name(&self, filename: FileName) -> Ident {
         match filename {
             FileName::Real(ref path) => {
                 let s = match path.file_stem() {
@@ -74,7 +78,11 @@ impl BuiltConfig {
                     None => self.global_name(&path.display().to_string().into()),
                 };
 
-                Expr::Ident(quote_ident!(s))
+                quote_ident!(s)
+            }
+            FileName::Custom(s) => {
+                let s = self.global_name(&s.into());
+                quote_ident!(s)
             }
             _ => unimplemented!("determine_export_name({:?})", filename),
         }

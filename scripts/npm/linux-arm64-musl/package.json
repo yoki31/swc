@@ -1,6 +1,6 @@
 {
   "name": "@swc/core-linux-arm64-musl",
-  "version": "1.2.60",
+  "version": "1.3.100",
   "os": [
     "linux"
   ],
@@ -9,12 +9,16 @@
   ],
   "main": "swc.linux-arm64-musl.node",
   "files": [
-    "swc.linux-arm64-musl.node"
+    "swc.linux-arm64-musl.node",
+    "swc"
+  ],
+  "libc": [
+    "musl"
   ],
   "description": "Super-fast alternative for babel",
   "keywords": [
     "swc",
-    "spack",
+    "swcpack",
     "babel",
     "typescript",
     "rust",
@@ -23,7 +27,7 @@
   ],
   "author": "강동윤 <kdy1997.dev@gmail.com>",
   "homepage": "https://swc.rs",
-  "license": "MIT",
+  "license": "Apache-2.0 AND MIT",
   "engines": {
     "node": ">=10"
   },

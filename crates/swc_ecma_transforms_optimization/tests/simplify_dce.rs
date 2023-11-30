@@ -1,52 +1,58 @@
-use swc_common::{chain, pass::Repeat};
+use swc_common::{chain, pass::Repeat, Mark};
 use swc_ecma_parser::{EsConfig, Syntax, TsConfig};
-use swc_ecma_transforms_base::resolver::resolver;
-use swc_ecma_transforms_optimization::simplify::dce::dce;
+use swc_ecma_transforms_base::resolver;
+use swc_ecma_transforms_compat::es2022::class_properties;
+use swc_ecma_transforms_optimization::simplify::dce::{dce, Config};
 use swc_ecma_transforms_proposal::decorators;
 use swc_ecma_transforms_testing::test;
 use swc_ecma_transforms_typescript::strip;
 use swc_ecma_visit::Fold;
 
 fn tr() -> impl Fold {
-    Repeat::new(dce(Default::default()))
+    Repeat::new(dce(
+        Config {
+            top_level: true,
+            ..Default::default()
+        },
+        Mark::new(),
+    ))
 }
 
 macro_rules! to {
-    ($name:ident, $src:expr, $expected:expr) => {
+    ($name:ident, $src:expr) => {
         test!(
             Syntax::Es(EsConfig {
                 decorators: true,
                 ..Default::default()
             }),
-            |_| chain!(resolver(), tr()),
+            |_| chain!(resolver(Mark::new(), Mark::new(), false), tr()),
             $name,
-            $src,
-            $expected
+            $src
         );
     };
 }
 
 macro_rules! optimized_out {
     ($name:ident, $src:expr) => {
-        to!($name, $src, "");
+        to!($name, $src);
     };
 }
 
 macro_rules! noop {
     ($name:ident, $src:expr) => {
-        to!($name, $src, $src);
+        to!($name, $src);
     };
 }
 
-optimized_out!(
+to!(
     single_pass,
     "
-const a = 1;
+    const a = 1;
 
-if (a) {
-    const b = 2;
-}
-"
+    if (a) {
+        const b = 2;
+    }
+    "
 );
 
 optimized_out!(issue_607, "let a");
@@ -95,26 +101,23 @@ to!(
     custom_loop_2,
     "let b = 2;
 
-let a = 1;
-a = 2;
+    let a = 1;
+    a = 2;
 
-let c;
-if (2) c = 3
-console.log(c)",
-    "let c;
-if (2) c = 3;
-console.log(c);"
+    let c;
+    if (2) c = 3
+    console.log(c)"
 );
 
 optimized_out!(simple_const, "{const x = 1}");
 
 noop!(assign_op, "x *= 2; use(x)");
 
-optimized_out!(import_default_unused, "import foo from 'foo'");
+to!(import_default_unused, "import foo from 'foo'");
 
-optimized_out!(import_specific_unused, "import {foo} from 'foo'");
+to!(import_specific_unused, "import {foo} from 'foo'");
 
-optimized_out!(import_mixed_unused, "import foo, { bar } from 'foo'");
+to!(import_mixed_unused, "import foo, { bar } from 'foo'");
 
 noop!(export_named, "export { x };");
 
@@ -127,8 +130,7 @@ noop!(
 
 to!(
     import_unused_export_named,
-    "import foo, { bar } from 'src'; export { foo }; ",
-    "import foo from 'src'; export { foo }; "
+    "import foo, { bar } from 'src'; export { foo }; "
 );
 
 noop!(
@@ -182,27 +184,7 @@ to!(
           value: RESOURCE_INSTAGRAM,
           label: 'Instagram',
       },
-  ]",
-    "import {
-    RESOURCE_FACEBOOK,
-    RESOURCE_INSTAGRAM,
-    RESOURCE_WEBSITE,
-} from '../../../../consts'
-
-  export const resources = [
-    {
-        value: RESOURCE_WEBSITE,
-        label: 'Webové stránky',
-    },
-    {
-        value: RESOURCE_FACEBOOK,
-        label: 'Facebook',
-    },
-    {
-        value: RESOURCE_INSTAGRAM,
-        label: 'Instagram',
-    },
-]"
+  ]"
 );
 
 to!(
@@ -228,28 +210,6 @@ to!(
           label: 'Instagram',
       },
   ]
-
-resources.map(console.log.bind(console));",
-    "import {
-    RESOURCE_FACEBOOK,
-    RESOURCE_INSTAGRAM,
-    RESOURCE_WEBSITE,
-} from '../../../../consts'
-
- const resources = [
-    {
-        value: RESOURCE_WEBSITE,
-        label: 'Webové stránky',
-    },
-    {
-        value: RESOURCE_FACEBOOK,
-        label: 'Facebook',
-    },
-    {
-        value: RESOURCE_INSTAGRAM,
-        label: 'Instagram',
-    },
-];
 
 resources.map(console.log.bind(console));"
 );
@@ -331,8 +291,6 @@ noop!(
 to!(
     spack_issue_004,
     "const FOO = 'foo', BAR = 'bar';
-        export default BAR;",
-    "const BAR = 'bar';
         export default BAR;"
 );
 
@@ -413,15 +371,21 @@ test!(
         decorators: true,
         ..Default::default()
     }),
-    |_| chain!(
-        resolver(),
-        strip(),
-        decorators(decorators::Config {
-            legacy: true,
-            emit_metadata: false
-        }),
-        tr()
-    ),
+    |_| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            decorators(decorators::Config {
+                legacy: true,
+                emit_metadata: false,
+                use_define_for_class_fields: false,
+            }),
+            resolver(unresolved_mark, top_level_mark, false),
+            strip(top_level_mark),
+            tr()
+        )
+    },
     issue_898_2,
     "export default class X {
     @whatever
@@ -431,28 +395,7 @@ test!(
         return localVar;
     }
 }
-",
-    "
-var _class, _descriptor;
-let X = ((_class = class X {
-    x() {
-        const localVar = aFunctionSomewhere();
-        return localVar;
-    }
-    constructor(){
-        _initializerDefineProperty(this, \"anything\", _descriptor, this);
-    }
-}) || _class, _descriptor = _applyDecoratedDescriptor(_class.prototype, \"anything\", [
-    whatever
-], {
-    configurable: true,
-    enumerable: true,
-    writable: true,
-    initializer: function() {
-        return 0;
-    }
-}), _class);
-export { X as default };"
+"
 );
 
 test!(
@@ -460,25 +403,25 @@ test!(
         decorators: true,
         ..Default::default()
     }),
-    |_| chain!(
-        resolver(),
-        strip(),
-        decorators(decorators::Config {
-            legacy: true,
-            emit_metadata: false
-        }),
-        tr()
-    ),
+    |_| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            decorators(decorators::Config {
+                legacy: true,
+                emit_metadata: false,
+                use_define_for_class_fields: false,
+            }),
+            resolver(unresolved_mark, top_level_mark, false),
+            strip(top_level_mark),
+            tr()
+        )
+    },
     issue_1111,
     "
     const a = 1;
     export const d = { a };
-    ",
-    "
-    const a = 1;
-    export const d = {
-        a
-    };
     "
 );
 
@@ -487,7 +430,12 @@ test!(
         decorators: true,
         ..Default::default()
     }),
-    |_| chain!(resolver(), tr()),
+    |_| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(resolver(unresolved_mark, top_level_mark, false), tr())
+    },
     issue_1150_1,
     "
 class A {
@@ -509,23 +457,6 @@ class A {
     }
 }
 new A();
-    ",
-    "
-    class A {
-        constructor(o: AOptions = {
-        }){
-            const { a = defaultA , c  } = o;
-            this.#a = a;
-            this.#c = c;
-        }
-        a() {
-            this.#a();
-        }
-        c() {
-            console.log(this.#c);
-        }
-    }
-    new A();
     "
 );
 
@@ -534,7 +465,24 @@ test!(
         decorators: true,
         ..Default::default()
     }),
-    |_| chain!(strip(), resolver(), tr()),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, false),
+            strip(top_level_mark),
+            class_properties(
+                Some(t.comments.clone()),
+                class_properties::Config {
+                    set_public_fields: true,
+                    ..Default::default()
+                },
+                unresolved_mark
+            ),
+            tr()
+        )
+    },
     issue_1156_1,
     "
     export interface D {
@@ -549,18 +497,6 @@ test!(
         });
         return Object.assign(promise, methods);
     }
-    ",
-    "
-    export function d() {
-        let methods;
-        const promise = new Promise((resolve, reject)=>{
-            methods = {
-                resolve,
-                reject
-            };
-        });
-        return Object.assign(promise, methods);
-    }
     "
 );
 
@@ -569,7 +505,24 @@ test!(
         decorators: true,
         ..Default::default()
     }),
-    |_| chain!(strip(), resolver(), tr(),),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, false),
+            strip(top_level_mark),
+            class_properties(
+                Some(t.comments.clone()),
+                class_properties::Config {
+                    set_public_fields: true,
+                    ..Default::default()
+                },
+                unresolved_mark
+            ),
+            tr(),
+        )
+    },
     issue_1156_2,
     "
     interface D {
@@ -598,30 +551,6 @@ test!(
     }
 
     new A();
-    ",
-    "
-    function d() {
-        let methods;
-        const promise = new Promise((resolve, reject)=>{
-            methods = {
-                resolve,
-                reject
-            };
-        });
-        return Object.assign(promise, methods);
-    }
-    class A {
-        a() {
-            this.s.resolve();
-        }
-        b() {
-            this.s = d();
-        }
-        constructor(){
-            this.s = d();
-        }
-    }
-    new A();
     "
 );
 
@@ -630,7 +559,16 @@ test!(
         decorators: true,
         ..Default::default()
     }),
-    |_| chain!(strip(), resolver(), tr(),),
+    |_| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, false),
+            strip(top_level_mark),
+            tr(),
+        )
+    },
     issue_1156_3,
     "
     function d() {
@@ -642,19 +580,6 @@ test!(
     }
 
     d()
-    ",
-    "
-    function d() {
-        let methods;
-        const promise = new Promise((resolve, reject)=>{
-            methods = {
-                resolve,
-                reject
-            };
-        });
-        return Object.assign(promise, methods);
-    }
-    d();
     "
 );
 
@@ -663,7 +588,24 @@ test!(
         decorators: true,
         ..Default::default()
     }),
-    |_| chain!(strip(), resolver(), tr(),),
+    |t| {
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        chain!(
+            resolver(unresolved_mark, top_level_mark, false),
+            strip(top_level_mark),
+            class_properties(
+                Some(t.comments.clone()),
+                class_properties::Config {
+                    set_public_fields: true,
+                    ..Default::default()
+                },
+                unresolved_mark
+            ),
+            tr(),
+        )
+    },
     issue_1156_4,
     "
     interface D {
@@ -687,27 +629,6 @@ test!(
         }
     }
 
-    new A();
-    ",
-    "
-    function d() {
-        let methods;
-        const promise = new Promise((resolve, reject)=>{
-            methods = {
-                resolve,
-                reject
-            };
-        });
-        return Object.assign(promise, methods);
-    }
-    class A {
-        a() {
-            this.s.resolve();
-        }
-        constructor(){
-            this.s = d();
-        }
-    }
     new A();
     "
 );

@@ -1,7 +1,5 @@
 // optimize this
 (function() {
-    a('b');
+    a("b");
 }());
-try {
-} catch (c) {
-}
+try {} catch (c) {}

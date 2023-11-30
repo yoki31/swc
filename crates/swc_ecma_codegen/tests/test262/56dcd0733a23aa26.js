@@ -1,17 +1,13 @@
 if (a) {
-    try {
-    } catch (b) {
-    }
+    try {} catch (b) {}
     // do not optimize it
     (function() {
-        c('d');
+        c("d");
     }());
 } else {
-    try {
-    } catch (b) {
-    }
+    try {} catch (b) {}
     // do not optimize it
     (function() {
-        c('d');
+        c("d");
     }());
 }

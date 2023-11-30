@@ -1,42 +1,38 @@
 {
   "type": "Script",
   "span": {
-    "start": 0,
-    "end": 64,
+    "start": 1,
+    "end": 65,
     "ctxt": 0
   },
   "body": [
     {
       "type": "ExpressionStatement",
       "span": {
-        "start": 0,
-        "end": 8,
+        "start": 1,
+        "end": 9,
         "ctxt": 0
       },
       "expression": {
         "type": "OptionalChainingExpression",
         "span": {
-          "start": 0,
-          "end": 8,
+          "start": 1,
+          "end": 9,
           "ctxt": 0
         },
-        "questionDotToken": {
-          "start": 4,
-          "end": 5,
-          "ctxt": 0
-        },
-        "expr": {
+        "optional": true,
+        "base": {
           "type": "CallExpression",
           "span": {
-            "start": 0,
-            "end": 8,
+            "start": 1,
+            "end": 9,
             "ctxt": 0
           },
           "callee": {
             "type": "Identifier",
             "span": {
-              "start": 0,
-              "end": 4,
+              "start": 1,
+              "end": 5,
               "ctxt": 0
             },
             "value": "func",
@@ -50,34 +46,30 @@
     {
       "type": "ExpressionStatement",
       "span": {
-        "start": 10,
-        "end": 22,
+        "start": 11,
+        "end": 23,
         "ctxt": 0
       },
       "expression": {
         "type": "OptionalChainingExpression",
         "span": {
-          "start": 10,
-          "end": 22,
+          "start": 11,
+          "end": 23,
           "ctxt": 0
         },
-        "questionDotToken": {
-          "start": 14,
-          "end": 15,
-          "ctxt": 0
-        },
-        "expr": {
+        "optional": true,
+        "base": {
           "type": "CallExpression",
           "span": {
-            "start": 10,
-            "end": 22,
+            "start": 11,
+            "end": 23,
             "ctxt": 0
           },
           "callee": {
             "type": "Identifier",
             "span": {
-              "start": 10,
-              "end": 14,
+              "start": 11,
+              "end": 15,
               "ctxt": 0
             },
             "value": "func",
@@ -89,8 +81,8 @@
               "expression": {
                 "type": "Identifier",
                 "span": {
-                  "start": 17,
-                  "end": 18,
+                  "start": 18,
+                  "end": 19,
                   "ctxt": 0
                 },
                 "value": "a",
@@ -102,8 +94,8 @@
               "expression": {
                 "type": "Identifier",
                 "span": {
-                  "start": 20,
-                  "end": 21,
+                  "start": 21,
+                  "end": 22,
                   "ctxt": 0
                 },
                 "value": "b",
@@ -118,53 +110,45 @@
     {
       "type": "ExpressionStatement",
       "span": {
-        "start": 24,
-        "end": 35,
+        "start": 25,
+        "end": 36,
         "ctxt": 0
       },
       "expression": {
         "type": "OptionalChainingExpression",
         "span": {
-          "start": 24,
-          "end": 35,
+          "start": 25,
+          "end": 36,
           "ctxt": 0
         },
-        "questionDotToken": {
-          "start": 31,
-          "end": 32,
-          "ctxt": 0
-        },
-        "expr": {
+        "optional": true,
+        "base": {
           "type": "CallExpression",
           "span": {
-            "start": 24,
-            "end": 35,
+            "start": 25,
+            "end": 36,
             "ctxt": 0
           },
           "callee": {
             "type": "OptionalChainingExpression",
             "span": {
-              "start": 24,
-              "end": 31,
-              "ctxt": 0
-            },
-            "questionDotToken": {
               "start": 25,
-              "end": 26,
+              "end": 32,
               "ctxt": 0
             },
-            "expr": {
+            "optional": true,
+            "base": {
               "type": "MemberExpression",
               "span": {
-                "start": 24,
-                "end": 31,
+                "start": 25,
+                "end": 32,
                 "ctxt": 0
               },
               "object": {
                 "type": "Identifier",
                 "span": {
-                  "start": 24,
-                  "end": 25,
+                  "start": 25,
+                  "end": 26,
                   "ctxt": 0
                 },
                 "value": "a",
@@ -173,14 +157,13 @@
               "property": {
                 "type": "Identifier",
                 "span": {
-                  "start": 27,
-                  "end": 31,
+                  "start": 28,
+                  "end": 32,
                   "ctxt": 0
                 },
                 "value": "func",
                 "optional": false
-              },
-              "computed": false
+              }
             }
           },
           "arguments": [],
@@ -191,53 +174,45 @@
     {
       "type": "ExpressionStatement",
       "span": {
-        "start": 37,
-        "end": 52,
+        "start": 38,
+        "end": 53,
         "ctxt": 0
       },
       "expression": {
         "type": "OptionalChainingExpression",
         "span": {
-          "start": 37,
-          "end": 52,
+          "start": 38,
+          "end": 53,
           "ctxt": 0
         },
-        "questionDotToken": {
-          "start": 44,
-          "end": 45,
-          "ctxt": 0
-        },
-        "expr": {
+        "optional": true,
+        "base": {
           "type": "CallExpression",
           "span": {
-            "start": 37,
-            "end": 52,
+            "start": 38,
+            "end": 53,
             "ctxt": 0
           },
           "callee": {
             "type": "OptionalChainingExpression",
             "span": {
-              "start": 37,
-              "end": 44,
-              "ctxt": 0
-            },
-            "questionDotToken": {
               "start": 38,
-              "end": 39,
+              "end": 45,
               "ctxt": 0
             },
-            "expr": {
+            "optional": true,
+            "base": {
               "type": "MemberExpression",
               "span": {
-                "start": 37,
-                "end": 44,
+                "start": 38,
+                "end": 45,
                 "ctxt": 0
               },
               "object": {
                 "type": "Identifier",
                 "span": {
-                  "start": 37,
-                  "end": 38,
+                  "start": 38,
+                  "end": 39,
                   "ctxt": 0
                 },
                 "value": "a",
@@ -246,14 +221,13 @@
               "property": {
                 "type": "Identifier",
                 "span": {
-                  "start": 40,
-                  "end": 44,
+                  "start": 41,
+                  "end": 45,
                   "ctxt": 0
                 },
                 "value": "func",
                 "optional": false
-              },
-              "computed": false
+              }
             }
           },
           "arguments": [
@@ -262,8 +236,8 @@
               "expression": {
                 "type": "Identifier",
                 "span": {
-                  "start": 47,
-                  "end": 48,
+                  "start": 48,
+                  "end": 49,
                   "ctxt": 0
                 },
                 "value": "a",
@@ -275,8 +249,8 @@
               "expression": {
                 "type": "Identifier",
                 "span": {
-                  "start": 50,
-                  "end": 51,
+                  "start": 51,
+                  "end": 52,
                   "ctxt": 0
                 },
                 "value": "b",
@@ -291,41 +265,37 @@
     {
       "type": "ExpressionStatement",
       "span": {
-        "start": 54,
-        "end": 64,
+        "start": 55,
+        "end": 65,
         "ctxt": 0
       },
       "expression": {
         "type": "OptionalChainingExpression",
         "span": {
-          "start": 54,
-          "end": 64,
+          "start": 55,
+          "end": 65,
           "ctxt": 0
         },
-        "questionDotToken": {
-          "start": 60,
-          "end": 61,
-          "ctxt": 0
-        },
-        "expr": {
+        "optional": true,
+        "base": {
           "type": "CallExpression",
           "span": {
-            "start": 54,
-            "end": 64,
+            "start": 55,
+            "end": 65,
             "ctxt": 0
           },
           "callee": {
             "type": "MemberExpression",
             "span": {
-              "start": 54,
-              "end": 60,
+              "start": 55,
+              "end": 61,
               "ctxt": 0
             },
             "object": {
               "type": "Identifier",
               "span": {
-                "start": 54,
-                "end": 55,
+                "start": 55,
+                "end": 56,
                 "ctxt": 0
               },
               "value": "a",
@@ -334,14 +304,13 @@
             "property": {
               "type": "Identifier",
               "span": {
-                "start": 56,
-                "end": 60,
+                "start": 57,
+                "end": 61,
                 "ctxt": 0
               },
               "value": "func",
               "optional": false
-            },
-            "computed": false
+            }
           },
           "arguments": [],
           "typeArguments": null

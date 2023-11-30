@@ -1,3 +1,7 @@
+use is_macro::Is;
+use string_enum::StringEnum;
+use swc_common::{ast_node, util::take::Take, EqIgnoreSpan, Span, DUMMY_SP};
+
 use crate::{
     class::Class,
     expr::Expr,
@@ -6,9 +10,6 @@ use crate::{
     pat::Pat,
     typescript::{TsEnumDecl, TsInterfaceDecl, TsModuleDecl, TsTypeAliasDecl},
 };
-use is_macro::Is;
-use string_enum::StringEnum;
-use swc_common::{ast_node, util::take::Take, EqIgnoreSpan, Span, DUMMY_SP};
 
 #[ast_node]
 #[derive(Eq, Hash, Is, EqIgnoreSpan)]
@@ -20,16 +21,28 @@ pub enum Decl {
     #[is(name = "fn_decl")]
     Fn(FnDecl),
     #[tag("VariableDeclaration")]
-    Var(VarDecl),
+    Var(Box<VarDecl>),
+    #[tag("UsingDeclaration")]
+    Using(Box<UsingDecl>),
+
     #[tag("TsInterfaceDeclaration")]
-    TsInterface(TsInterfaceDecl),
+    TsInterface(Box<TsInterfaceDecl>),
     #[tag("TsTypeAliasDeclaration")]
-    TsTypeAlias(TsTypeAliasDecl),
+    TsTypeAlias(Box<TsTypeAliasDecl>),
     #[tag("TsEnumDeclaration")]
-    TsEnum(TsEnumDecl),
+    TsEnum(Box<TsEnumDecl>),
     #[tag("TsModuleDeclaration")]
-    TsModule(TsModuleDecl),
+    TsModule(Box<TsModuleDecl>),
 }
+
+bridge_decl_from!(Box<VarDecl>, VarDecl);
+bridge_decl_from!(Box<UsingDecl>, UsingDecl);
+bridge_decl_from!(Box<TsInterfaceDecl>, TsInterfaceDecl);
+bridge_decl_from!(Box<TsTypeAliasDecl>, TsTypeAliasDecl);
+bridge_decl_from!(Box<TsEnumDecl>, TsEnumDecl);
+bridge_decl_from!(Box<TsModuleDecl>, TsModuleDecl);
+bridge_stmt_from!(Decl, ClassDecl);
+bridge_stmt_from!(Decl, FnDecl);
 
 impl Take for Decl {
     fn dummy() -> Self {
@@ -41,30 +54,50 @@ impl Take for Decl {
 #[derive(Eq, Hash, EqIgnoreSpan)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct FnDecl {
-    #[serde(rename = "identifier")]
+    #[cfg_attr(feature = "serde-impl", serde(rename = "identifier"))]
     pub ident: Ident,
 
-    #[serde(default)]
+    #[cfg_attr(feature = "serde-impl", serde(default))]
     pub declare: bool,
 
-    #[serde(flatten)]
+    #[cfg_attr(feature = "serde-impl", serde(flatten))]
     #[span]
-    pub function: Function,
+    pub function: Box<Function>,
+}
+
+impl Take for FnDecl {
+    fn dummy() -> Self {
+        FnDecl {
+            ident: Take::dummy(),
+            declare: Default::default(),
+            function: Take::dummy(),
+        }
+    }
 }
 
 #[ast_node("ClassDeclaration")]
 #[derive(Eq, Hash, EqIgnoreSpan)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct ClassDecl {
-    #[serde(rename = "identifier")]
+    #[cfg_attr(feature = "serde-impl", serde(rename = "identifier"))]
     pub ident: Ident,
 
-    #[serde(default)]
+    #[cfg_attr(feature = "serde-impl", serde(default))]
     pub declare: bool,
 
-    #[serde(flatten)]
+    #[cfg_attr(feature = "serde-impl", serde(flatten))]
     #[span]
-    pub class: Class,
+    pub class: Box<Class>,
+}
+
+impl Take for ClassDecl {
+    fn dummy() -> Self {
+        ClassDecl {
+            ident: Take::dummy(),
+            declare: Default::default(),
+            class: Take::dummy(),
+        }
+    }
 }
 
 #[ast_node("VariableDeclaration")]
@@ -75,10 +108,10 @@ pub struct VarDecl {
 
     pub kind: VarDeclKind,
 
-    #[serde(default)]
+    #[cfg_attr(feature = "serde-impl", serde(default))]
     pub declare: bool,
 
-    #[serde(rename = "declarations")]
+    #[cfg_attr(feature = "serde-impl", serde(rename = "declarations"))]
     pub decls: Vec<VarDeclarator>,
 }
 
@@ -95,6 +128,12 @@ impl Take for VarDecl {
 
 #[derive(StringEnum, Clone, Copy, Eq, PartialEq, PartialOrd, Ord, Hash, EqIgnoreSpan)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
+#[cfg_attr(
+    any(feature = "rkyv-impl"),
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
+#[cfg_attr(feature = "rkyv-impl", archive(check_bytes))]
+#[cfg_attr(feature = "rkyv-impl", archive_attr(repr(u32)))]
 pub enum VarDeclKind {
     /// `var`
     Var,
@@ -109,15 +148,15 @@ pub enum VarDeclKind {
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct VarDeclarator {
     pub span: Span,
-    #[serde(rename = "id")]
+    #[cfg_attr(feature = "serde-impl", serde(rename = "id"))]
     pub name: Pat,
 
     /// Initialization expression.
-    #[serde(default)]
+    #[cfg_attr(feature = "serde-impl", serde(default))]
     pub init: Option<Box<Expr>>,
 
     /// Typescript only
-    #[serde(default)]
+    #[cfg_attr(feature = "serde-impl", serde(default))]
     pub definite: bool,
 }
 
@@ -128,6 +167,30 @@ impl Take for VarDeclarator {
             name: Take::dummy(),
             init: Take::dummy(),
             definite: Default::default(),
+        }
+    }
+}
+
+#[ast_node("UsingDeclaration")]
+#[derive(Eq, Hash, EqIgnoreSpan)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
+pub struct UsingDecl {
+    #[cfg_attr(feature = "serde-impl", serde(default))]
+    pub span: Span,
+
+    #[cfg_attr(feature = "serde-impl", serde(default))]
+    pub is_await: bool,
+
+    #[cfg_attr(feature = "serde-impl", serde(default))]
+    pub decls: Vec<VarDeclarator>,
+}
+
+impl Take for UsingDecl {
+    fn dummy() -> Self {
+        Self {
+            span: DUMMY_SP,
+            is_await: Default::default(),
+            decls: Take::dummy(),
         }
     }
 }

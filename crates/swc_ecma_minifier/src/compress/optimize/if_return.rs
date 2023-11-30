@@ -1,21 +1,17 @@
-use super::Optimizer;
-use crate::{
-    compress::util::{always_terminates, is_pure_undefined},
-    debug::dump,
-    mode::Mode,
-    util::ExprOptExt,
-};
 use swc_common::{util::take::Take, Spanned, DUMMY_SP};
 use swc_ecma_ast::*;
-use swc_ecma_utils::{prepend, undefined, StmtLike};
-use swc_ecma_visit::{noop_visit_type, Node, Visit, VisitWith};
+use swc_ecma_transforms_optimization::debug_assert_valid;
+use swc_ecma_utils::{undefined, StmtExt, StmtLike};
+use swc_ecma_visit::{noop_visit_type, Visit, VisitWith};
+
+use super::Optimizer;
+#[cfg(feature = "debug")]
+use crate::debug::dump;
+use crate::{compress::util::is_pure_undefined, util::ExprOptExt};
 
 /// Methods related to the option `if_return`. All methods are noop if
 /// `if_return` is false.
-impl<M> Optimizer<'_, M>
-where
-    M: Mode,
-{
+impl Optimizer<'_> {
     pub(super) fn merge_nested_if(&mut self, s: &mut IfStmt) {
         if !self.options.conditionals && !self.options.bools {
             return;
@@ -25,88 +21,30 @@ where
             return;
         }
 
-        match &mut *s.cons {
-            Stmt::If(IfStmt {
-                test,
-                cons,
-                alt: None,
-                ..
-            }) => {
-                self.changed = true;
-                tracing::debug!("if_return: Merging nested if statements");
+        if let Stmt::If(IfStmt {
+            test,
+            cons,
+            alt: None,
+            ..
+        }) = &mut *s.cons
+        {
+            self.changed = true;
+            report_change!("if_return: Merging nested if statements");
 
-                s.test = Box::new(Expr::Bin(BinExpr {
-                    span: s.test.span(),
-                    op: op!("&&"),
-                    left: s.test.take(),
-                    right: test.take(),
-                }));
-                s.cons = cons.take();
-            }
-            _ => {}
-        }
-    }
-
-    pub(super) fn merge_else_if(&mut self, s: &mut IfStmt) {
-        match s.alt.as_deref_mut() {
-            Some(Stmt::If(IfStmt {
-                span: span_of_alt,
-                test: test_of_alt,
-                cons: cons_of_alt,
-                alt: Some(alt_of_alt),
-                ..
-            })) => {
-                match &**cons_of_alt {
-                    Stmt::Return(..) | Stmt::Continue(ContinueStmt { label: None, .. }) => {}
-                    _ => return,
-                }
-
-                match &mut **alt_of_alt {
-                    Stmt::Block(..) => {}
-                    Stmt::Expr(..) => {
-                        *alt_of_alt = Box::new(Stmt::Block(BlockStmt {
-                            span: DUMMY_SP,
-                            stmts: vec![*alt_of_alt.take()],
-                        }));
-                    }
-                    _ => {
-                        return;
-                    }
-                }
-
-                self.changed = true;
-                tracing::debug!("if_return: Merging `else if` into `else`");
-
-                match &mut **alt_of_alt {
-                    Stmt::Block(alt_of_alt) => {
-                        prepend(
-                            &mut alt_of_alt.stmts,
-                            Stmt::If(IfStmt {
-                                span: *span_of_alt,
-                                test: test_of_alt.take(),
-                                cons: cons_of_alt.take(),
-                                alt: None,
-                            }),
-                        );
-                    }
-
-                    _ => {
-                        unreachable!()
-                    }
-                }
-
-                s.alt = Some(alt_of_alt.take());
-                return;
-            }
-
-            _ => {}
+            s.test = Box::new(Expr::Bin(BinExpr {
+                span: s.test.span(),
+                op: op!("&&"),
+                left: s.test.take(),
+                right: test.take(),
+            }));
+            s.cons = cons.take();
         }
     }
 
     pub(super) fn merge_if_returns(
         &mut self,
         stmts: &mut Vec<Stmt>,
-        can_work: bool,
+        terminates: bool,
         is_fn_body: bool,
     ) {
         if !self.options.if_return {
@@ -114,26 +52,35 @@ where
         }
 
         for stmt in stmts.iter_mut() {
-            self.merge_nested_if_returns(stmt, can_work);
+            self.merge_nested_if_returns(stmt, terminates);
+
+            debug_assert_valid(&*stmt);
         }
 
-        if can_work || is_fn_body {
-            self.merge_if_returns_inner(stmts);
+        if terminates || is_fn_body {
+            self.merge_if_returns_inner(stmts, !is_fn_body);
         }
     }
 
+    #[allow(clippy::only_used_in_recursion)]
     fn merge_nested_if_returns(&mut self, s: &mut Stmt, can_work: bool) {
         let terminate = can_merge_as_if_return(&*s);
 
         match s {
             Stmt::Block(s) => {
                 self.merge_if_returns(&mut s.stmts, terminate, false);
+
+                debug_assert_valid(&*s);
             }
             Stmt::If(s) => {
                 self.merge_nested_if_returns(&mut s.cons, can_work);
 
+                debug_assert_valid(&s.cons);
+
                 if let Some(alt) = s.alt.as_deref_mut() {
                     self.merge_nested_if_returns(alt, can_work);
+
+                    debug_assert_valid(&*alt);
                 }
             }
             _ => {}
@@ -160,7 +107,7 @@ where
     ///     return a ? foo() : bar();
     /// }
     /// ```
-    fn merge_if_returns_inner(&mut self, stmts: &mut Vec<Stmt>) {
+    fn merge_if_returns_inner(&mut self, stmts: &mut Vec<Stmt>, should_preserve_last_return: bool) {
         if !self.options.if_return {
             return;
         }
@@ -186,7 +133,7 @@ where
                     None => true,
                 });
         let skip = idx_of_not_mergable.map(|v| v + 1).unwrap_or(0);
-        tracing::trace!("if_return: Skip = {}", skip);
+        trace_op!("if_return: Skip = {}", skip);
         let mut last_idx = stmts.len() - 1;
 
         {
@@ -197,14 +144,14 @@ where
                     _ => break,
                 };
 
-                match s {
-                    Stmt::Decl(Decl::Var(v)) => {
-                        if v.decls.iter().all(|v| v.init.is_none()) {
-                            last_idx -= 1;
-                            continue;
+                if let Stmt::Decl(Decl::Var(v)) = s {
+                    if v.decls.iter().all(|v| v.init.is_none()) {
+                        if last_idx == 0 {
+                            break;
                         }
+                        last_idx -= 1;
+                        continue;
                     }
-                    _ => {}
                 }
 
                 break;
@@ -212,17 +159,18 @@ where
         }
 
         if last_idx <= skip {
-            tracing::trace!("if_return: [x] Aborting because of skip");
+            log_abort!("if_return: [x] Aborting because of skip");
             return;
         }
 
         {
             let stmts = &stmts[skip..=last_idx];
-            let return_count: usize = stmts.iter().map(|v| count_leaping_returns(v)).sum();
+            let return_count: usize = stmts.iter().map(count_leaping_returns).sum();
 
-            // There's no return statment so merging requires injecting unnecessary `void 0`
+            // There's no return statement so merging requires injecting unnecessary `void
+            // 0`
             if return_count == 0 {
-                tracing::trace!("if_return: [x] Aborting because we failed to find return");
+                log_abort!("if_return: [x] Aborting because we failed to find return");
                 return;
             }
 
@@ -235,7 +183,7 @@ where
                 .filter(|s| match s {
                     Stmt::If(IfStmt {
                         cons, alt: None, ..
-                    }) => always_terminates_with_return_arg(&cons),
+                    }) => always_terminates_with_return_arg(cons),
                     _ => false,
                 })
                 .count();
@@ -248,7 +196,7 @@ where
                     (_, Some(Stmt::If(IfStmt { alt: None, .. }) | Stmt::Expr(..)))
                         if if_return_count <= 1 =>
                     {
-                        tracing::trace!(
+                        log_abort!(
                             "if_return: [x] Aborting because last stmt is a not return stmt"
                         );
                         return;
@@ -262,7 +210,7 @@ where
                     ) => match &**cons {
                         Stmt::Return(ReturnStmt { arg: Some(..), .. }) => {}
                         _ => {
-                            tracing::trace!(
+                            log_abort!(
                                 "if_return: [x] Aborting because stmt before last is an if stmt \
                                  and cons of it is not a return stmt"
                             );
@@ -318,14 +266,8 @@ where
             }
         }
 
-        tracing::debug!("if_return: Merging returns");
-        if cfg!(feature = "debug") {
-            let block = BlockStmt {
-                span: DUMMY_SP,
-                stmts: stmts.clone(),
-            };
-            tracing::trace!("if_return: {}", dump(&block))
-        }
+        report_change!("if_return: Merging returns");
+
         self.changed = true;
 
         let mut cur: Option<Box<Expr>> = None;
@@ -352,10 +294,7 @@ where
             } else {
                 stmt
             };
-            let is_nonconditional_return = match stmt {
-                Stmt::Return(..) => true,
-                _ => false,
-            };
+            let is_nonconditional_return = matches!(stmt, Stmt::Return(..));
             let new_expr = self.merge_if_returns_to(stmt, vec![]);
             match new_expr {
                 Expr::Seq(v) => match &mut cur {
@@ -433,13 +372,16 @@ where
         }
 
         if let Some(mut cur) = cur {
+            self.normalize_expr(&mut cur);
+
             match &*cur {
                 Expr::Seq(seq)
-                    if seq
-                        .exprs
-                        .last()
-                        .map(|v| is_pure_undefined(&v))
-                        .unwrap_or(true) =>
+                    if !should_preserve_last_return
+                        && seq
+                            .exprs
+                            .last()
+                            .map(|v| is_pure_undefined(&self.expr_ctx, v))
+                            .unwrap_or(true) =>
                 {
                     let expr = self.ignore_return_value(&mut cur);
 
@@ -449,9 +391,7 @@ where
                             expr: Box::new(cur),
                         }))
                     } else {
-                        if cfg!(feature = "debug") {
-                            tracing::debug!("if_return: Ignoring return value");
-                        }
+                        trace_op!("if_return: Ignoring return value");
                     }
                 }
                 _ => {
@@ -526,7 +466,11 @@ where
     }
 
     fn can_merge_stmt_as_if_return(&self, s: &Stmt, _is_last: bool) -> bool {
-        let res = match s {
+        // if !res {
+        //     trace!("Cannot merge: {}", dump(s));
+        // }
+
+        match s {
             Stmt::Expr(..) => true,
             Stmt::Return(..) => true,
             Stmt::Block(s) => {
@@ -540,12 +484,7 @@ where
                     )
             }
             _ => false,
-        };
-        // if !res {
-        //     tracing::trace!("Cannot merge: {}", dump(s));
-        // }
-
-        res
+        }
     }
 }
 
@@ -561,7 +500,7 @@ where
     N: VisitWith<ReturnFinder>,
 {
     let mut v = ReturnFinder::default();
-    n.visit_with(&Invalid { span: DUMMY_SP }, &mut v);
+    n.visit_with(&mut v);
     v.count
 }
 
@@ -573,20 +512,21 @@ pub(super) struct ReturnFinder {
 impl Visit for ReturnFinder {
     noop_visit_type!();
 
-    fn visit_return_stmt(&mut self, n: &ReturnStmt, _: &dyn Node) {
+    fn visit_return_stmt(&mut self, n: &ReturnStmt) {
         n.visit_children_with(self);
         self.count += 1;
     }
 
-    fn visit_function(&mut self, _: &Function, _: &dyn Node) {}
-    fn visit_arrow_expr(&mut self, _: &ArrowExpr, _: &dyn Node) {}
+    fn visit_function(&mut self, _: &Function) {}
+
+    fn visit_arrow_expr(&mut self, _: &ArrowExpr) {}
 }
 
 fn always_terminates_with_return_arg(s: &Stmt) -> bool {
     match s {
         Stmt::Return(ReturnStmt { arg: Some(..), .. }) => true,
         Stmt::If(IfStmt { cons, alt, .. }) => {
-            always_terminates_with_return_arg(&cons)
+            always_terminates_with_return_arg(cons)
                 && alt
                     .as_deref()
                     .map(always_terminates_with_return_arg)
@@ -600,13 +540,10 @@ fn always_terminates_with_return_arg(s: &Stmt) -> bool {
 
 fn can_merge_as_if_return(s: &Stmt) -> bool {
     fn cost(s: &Stmt) -> Option<isize> {
-        match s {
-            Stmt::Block(..) => {
-                if !always_terminates(s) {
-                    return None;
-                }
+        if let Stmt::Block(..) = s {
+            if !s.terminates() {
+                return None;
             }
-            _ => {}
         }
 
         match s {
@@ -617,7 +554,7 @@ fn can_merge_as_if_return(s: &Stmt) -> bool {
             Stmt::Throw(..) | Stmt::Break(..) | Stmt::Continue(..) => Some(0),
 
             Stmt::If(IfStmt { cons, alt, .. }) => {
-                Some(cost(&cons)? + alt.as_deref().and_then(cost).unwrap_or(0))
+                Some(cost(cons)? + alt.as_deref().and_then(cost).unwrap_or(0))
             }
             Stmt::Block(s) => {
                 let mut sum = 0;
@@ -642,9 +579,7 @@ fn can_merge_as_if_return(s: &Stmt) -> bool {
 
     let c = cost(s);
 
-    if cfg!(feature = "debug") {
-        tracing::trace!("merging cost of `{}` = {:?}", dump(s), c);
-    }
+    trace_op!("merging cost of `{}` = {:?}", dump(s, false), c);
 
     c.unwrap_or(0) < 0
 }

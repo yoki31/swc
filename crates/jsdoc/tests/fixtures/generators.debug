@@ -2,96 +2,96 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                15,
+                16,
             ),
             hi: BytePos(
-                15,
+                16,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    15,
+                    16,
                 ),
                 hi: BytePos(
-                    49,
+                    50,
                 ),
                 ctxt: #0,
             },
-            value: Atom('Generate unique IDs starting at 0.' type=dynamic),
+            value: "Generate unique IDs starting at 0.",
         },
         tags: [],
     },
     JsDoc {
         span: Span {
             lo: BytePos(
-                151,
+                152,
             ),
             hi: BytePos(
-                151,
+                152,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    151,
+                    152,
                 ),
                 hi: BytePos(
-                    185,
+                    186,
                 ),
                 ctxt: #0,
             },
-            value: Atom('Generate unique IDs starting at 1.' type=dynamic),
+            value: "Generate unique IDs starting at 1.",
         },
         tags: [],
     },
     JsDoc {
         span: Span {
             lo: BytePos(
-                304,
+                305,
             ),
             hi: BytePos(
-                304,
+                305,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    304,
+                    305,
                 ),
                 hi: BytePos(
-                    320,
+                    321,
                 ),
                 ctxt: #0,
             },
-            value: Atom('Generator class.' type=dynamic),
+            value: "Generator class.",
         },
         tags: [],
     },
     JsDoc {
         span: Span {
             lo: BytePos(
-                350,
+                351,
             ),
             hi: BytePos(
-                350,
+                351,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    350,
+                    351,
                 ),
                 hi: BytePos(
-                    384,
+                    385,
                 ),
                 ctxt: #0,
             },
-            value: Atom('Generate unique IDs starting at 2.' type=dynamic),
+            value: "Generate unique IDs starting at 2.",
         },
         tags: [],
     },

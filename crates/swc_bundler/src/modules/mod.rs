@@ -1,9 +1,10 @@
-use crate::ModuleId;
-use retain_mut::RetainMut;
 use std::mem::take;
+
 use swc_common::{collections::AHashMap, SourceMap, SyntaxContext, DUMMY_SP};
 use swc_ecma_ast::*;
 use swc_ecma_visit::{Fold, FoldWith, Visit, VisitMut, VisitMutWith, VisitWith};
+
+use crate::ModuleId;
 
 mod sort;
 
@@ -225,8 +226,7 @@ impl Modules {
     where
         V: Visit,
     {
-        self.iter()
-            .for_each(|item| item.1.visit_with(&Invalid { span: DUMMY_SP }, v));
+        self.iter().for_each(|item| item.1.visit_with(v));
     }
 
     pub fn retain_mut<F>(&mut self, mut op: F)
@@ -262,10 +262,7 @@ impl Modules {
                 if module_span.is_dummy() {
                     return None;
                 }
-                Some(format!(
-                    "{}\n",
-                    cm.lookup_source_file(module_span.lo).name.to_string()
-                ))
+                Some(format!("{}\n", cm.lookup_source_file(module_span.lo).name))
             })
             .collect::<String>();
         let mut cloned = self.clone();
@@ -282,14 +279,9 @@ impl Modules {
                     .into_iter(),
             );
 
-            module.body.extend(
-                cloned
-                    .appended_stmts
-                    .get(&id)
-                    .cloned()
-                    .unwrap_or_default()
-                    .into_iter(),
-            );
+            module
+                .body
+                .extend(cloned.appended_stmts.get(&id).cloned().unwrap_or_default());
 
             stmts.extend(module.body);
         }

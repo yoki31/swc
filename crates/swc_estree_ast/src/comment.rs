@@ -1,6 +1,8 @@
-use crate::common::Loc;
 use serde::{Deserialize, Serialize};
+use swc_atoms::Atom;
 use swc_common::ast_serde;
+
+use crate::common::Loc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CommentType {
@@ -9,17 +11,17 @@ pub enum CommentType {
     #[serde(rename = "CommentBlock")]
     Block,
 }
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BaseComment {
     #[serde(rename = "type")]
     pub type_: CommentType,
-    pub value: String,
-    pub start: usize,
-    pub end: usize,
+    pub value: Atom,
+    pub start: u32,
+    pub end: u32,
     pub loc: Loc,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[ast_serde]
 pub enum Comment {
     #[tag("CommentBlock")]
@@ -28,7 +30,7 @@ pub enum Comment {
     Line(BaseComment),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum CommentTypeShorthand {
     Leading,

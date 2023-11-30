@@ -1,3 +1,7 @@
+use serde::{Deserialize, Serialize};
+use swc_atoms::JsWord;
+use swc_common::ast_serde;
+
 use crate::{
     class::{ClassBody, ClassImpl},
     common::{
@@ -16,9 +20,6 @@ use crate::{
         TSAsExpression, TSNonNullExpression, TSTypeAssertion, TSTypeParameterInstantiation,
     },
 };
-use serde::{Deserialize, Serialize};
-use swc_atoms::JsWord;
-use swc_common::ast_serde;
 
 #[derive(Debug, Clone, PartialEq)]
 #[ast_serde]
@@ -176,7 +177,7 @@ pub struct MemberExpression {
 }
 
 // Source: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Expressions_and_Operators
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum BinaryExprOp {
     #[serde(rename = "+")]
     Addition,
@@ -243,7 +244,7 @@ pub struct BinaryExpression {
     pub right: Box<Expression>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[ast_serde("V8IntrinsicIdentifier")]
 pub struct V8IntrinsicIdentifier {
     #[serde(flatten)]
@@ -267,7 +268,7 @@ impl From<Expression> for Callee {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[ast_serde("ArgumentPlaceholder")]
 pub struct ArgumentPlaceholder {
     #[serde(flatten)]
@@ -362,7 +363,7 @@ pub struct NewExpression {
 }
 
 // Source: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Expressions_and_Operators
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum LogicalExprOp {
     #[serde(rename = "||")]
     Or,
@@ -419,7 +420,7 @@ pub struct ParenthesizedExpression {
     pub expression: Box<Expression>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[ast_serde("ThisExpression")]
 pub struct ThisExpression {
     #[serde(flatten)]
@@ -427,7 +428,7 @@ pub struct ThisExpression {
 }
 
 // Source: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Expressions_and_Operators
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum UnaryExprOp {
     Void,
@@ -460,7 +461,7 @@ pub struct UnaryExpression {
 }
 
 // Source: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Expressions_and_Operators
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum UpdateExprOp {
     #[serde(rename = "++")]
     Increment,
@@ -625,7 +626,7 @@ pub struct BindExpression {
     pub callee: Box<Expression>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[ast_serde("PipelinePrimaryTopicReference")]
 pub struct PipelinePrimaryTopicReference {
     #[serde(flatten)]
@@ -684,7 +685,7 @@ pub struct ModuleExpression {
     pub body: Program,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[ast_serde("Super")]
 pub struct Super {
     #[serde(flatten)]

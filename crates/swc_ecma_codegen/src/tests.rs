@@ -1,37 +1,39 @@
-use self::swc_ecma_parser::{EsConfig, Parser, StringInput, Syntax};
-use super::*;
-use crate::{config::Config, text_writer::omit_trailing_semi};
 use std::{
     fmt::Debug,
     io::Write,
+    path::PathBuf,
     sync::{Arc, RwLock},
 };
+
 use swc_common::{comments::SingleThreadedComments, FileName, SourceMap};
 use swc_ecma_parser;
+use swc_ecma_testing::{exec_node_js, JsExecOptions};
 use testing::DebugUsingDisplay;
+
+use self::swc_ecma_parser::{EsConfig, Parser, StringInput, Syntax};
+use super::*;
+use crate::{config::Config, text_writer::omit_trailing_semi};
 
 struct Builder {
     cfg: Config,
     cm: Lrc<SourceMap>,
     comments: SingleThreadedComments,
-    target: EsVersion,
 }
 
 impl Builder {
-    pub fn with<'a, F, Ret>(self, src: &str, s: &'a mut Vec<u8>, op: F) -> Ret
+    pub fn with<'a, F, Ret>(self, _: &str, s: &'a mut Vec<u8>, op: F) -> Ret
     where
-        F: for<'aa> FnOnce(&mut Emitter<'aa, Box<(dyn WriteJs + 'aa)>>) -> Ret,
+        F: for<'aa> FnOnce(&mut Emitter<'aa, Box<(dyn WriteJs + 'aa)>, SourceMap>) -> Ret,
         Ret: 'static,
     {
-        let writer =
-            text_writer::JsWriter::with_target(self.cm.clone(), "\n", s, None, self.target);
+        let writer = text_writer::JsWriter::new(self.cm.clone(), "\n", s, None);
         let writer: Box<dyn WriteJs> = if self.cfg.minify {
             Box::new(omit_trailing_semi(writer))
         } else {
             Box::new(writer)
         };
 
-        let ret = {
+        {
             let mut e = Emitter {
                 cfg: self.cfg,
                 cm: self.cm.clone(),
@@ -40,14 +42,12 @@ impl Builder {
             };
 
             op(&mut e)
-        };
-
-        ret
+        }
     }
 
     pub fn text<F>(self, src: &str, op: F) -> String
     where
-        F: for<'aa> FnOnce(&mut Emitter<'aa, Box<(dyn WriteJs + 'aa)>>),
+        F: for<'aa> FnOnce(&mut Emitter<'aa, Box<(dyn WriteJs + 'aa)>, SourceMap>),
     {
         let mut buf = vec![];
 
@@ -57,7 +57,7 @@ impl Builder {
     }
 }
 
-fn parse_then_emit(from: &str, cfg: Config, syntax: Syntax, target: EsVersion) -> String {
+fn parse_then_emit(from: &str, cfg: Config, syntax: Syntax) -> String {
     ::testing::run_test(false, |cm, handler| {
         let src = cm.new_source_file(FileName::Real("custom.js".into()), from.to_string());
         println!(
@@ -79,34 +79,39 @@ fn parse_then_emit(from: &str, cfg: Config, syntax: Syntax, target: EsVersion) -
             res?
         };
 
-        let out = Builder {
-            cfg,
-            cm,
-            comments,
-            target,
-        }
-        .text(from, |e| e.emit_module(&res).unwrap());
+        let out = Builder { cfg, cm, comments }.text(from, |e| e.emit_module(&res).unwrap());
         Ok(out)
     })
     .unwrap()
 }
 
+#[track_caller]
 pub(crate) fn assert_min(from: &str, to: &str) {
     let out = parse_then_emit(
         from,
-        Config { minify: true },
-        Syntax::Es(EsConfig {
-            static_blocks: true,
+        Config {
+            minify: true,
+            target: EsVersion::latest(),
+            omit_last_semi: true,
             ..Default::default()
-        }),
-        EsVersion::latest(),
+        },
+        Syntax::Es(Default::default()),
     );
 
     assert_eq!(DebugUsingDisplay(out.trim()), DebugUsingDisplay(to),);
 }
 
 pub(crate) fn assert_min_target(from: &str, to: &str, target: EsVersion) {
-    let out = parse_then_emit(from, Config { minify: true }, Syntax::default(), target);
+    let out = parse_then_emit(
+        from,
+        Config {
+            minify: true,
+            omit_last_semi: true,
+            target,
+            ..Default::default()
+        },
+        Syntax::default(),
+    );
 
     assert_eq!(DebugUsingDisplay(out.trim()), DebugUsingDisplay(to),);
 }
@@ -115,9 +120,13 @@ pub(crate) fn assert_min_target(from: &str, to: &str, target: EsVersion) {
 pub(crate) fn assert_min_typescript(from: &str, to: &str) {
     let out = parse_then_emit(
         from,
-        Config { minify: true },
+        Config {
+            minify: true,
+            omit_last_semi: true,
+            target: EsVersion::latest(),
+            ..Default::default()
+        },
         Syntax::Typescript(Default::default()),
-        EsVersion::latest(),
     );
 
     assert_eq!(DebugUsingDisplay(out.trim()), DebugUsingDisplay(to),);
@@ -126,23 +135,28 @@ pub(crate) fn assert_min_typescript(from: &str, to: &str) {
 pub(crate) fn assert_pretty(from: &str, to: &str) {
     let out = parse_then_emit(
         from,
-        Config { minify: false },
+        Config {
+            minify: false,
+            target: EsVersion::latest(),
+            ..Default::default()
+        },
         Syntax::default(),
-        EsVersion::latest(),
     );
 
     println!("Expected: {:?}", to);
-    println!("Actaul:   {:?}", out);
-    assert_eq!(DebugUsingDisplay(&out.trim()), DebugUsingDisplay(to),);
+    println!("Actual:   {:?}", out);
+    assert_eq!(DebugUsingDisplay(out.trim()), DebugUsingDisplay(to),);
 }
 
 #[track_caller]
 fn test_from_to(from: &str, expected: &str) {
     let out = parse_then_emit(
         from,
-        Default::default(),
+        Config {
+            target: EsVersion::latest(),
+            ..Default::default()
+        },
         Syntax::default(),
-        EsVersion::latest(),
     );
 
     dbg!(&out);
@@ -159,7 +173,14 @@ fn test_identical(from: &str) {
 }
 
 fn test_from_to_custom_config(from: &str, to: &str, cfg: Config, syntax: Syntax) {
-    let out = parse_then_emit(from, cfg, syntax, EsVersion::latest());
+    let out = parse_then_emit(
+        from,
+        Config {
+            omit_last_semi: true,
+            ..cfg
+        },
+        syntax,
+    );
 
     assert_eq!(DebugUsingDisplay(out.trim()), DebugUsingDisplay(to.trim()),);
 }
@@ -216,14 +237,14 @@ a;",
 #[test]
 fn no_octal_escape() {
     test_from_to(
-        r#"'\x00a';
+        r"'\x00a';
 '\x000';
 '\x001';
-'\x009'"#,
-        r#"'\x00a';
+'\x009'",
+        r"'\x00a';
 '\x000';
 '\x001';
-'\x009';"#,
+'\x009';",
     );
 }
 
@@ -237,7 +258,10 @@ fn empty_named_export_min() {
     test_from_to_custom_config(
         "export { }",
         "export{}",
-        Config { minify: true },
+        Config {
+            minify: true,
+            ..Default::default()
+        },
         Default::default(),
     );
 }
@@ -251,8 +275,11 @@ fn empty_named_export_from() {
 fn empty_named_export_from_min() {
     test_from_to_custom_config(
         "export { } from 'foo';",
-        "export{}from'foo'",
-        Config { minify: true },
+        "export{}from\"foo\"",
+        Config {
+            minify: true,
+            ..Default::default()
+        },
         Default::default(),
     );
 }
@@ -266,8 +293,11 @@ fn named_export_from() {
 fn named_export_from_min() {
     test_from_to_custom_config(
         "export { bar } from 'foo';",
-        "export{bar}from'foo'",
-        Config { minify: true },
+        "export{bar}from\"foo\"",
+        Config {
+            minify: true,
+            ..Default::default()
+        },
         Default::default(),
     );
 }
@@ -278,10 +308,7 @@ fn export_namespace_from() {
         "export * as Foo from 'foo';",
         "export * as Foo from 'foo';",
         Default::default(),
-        Syntax::Es(EsConfig {
-            export_namespace_from: true,
-            ..EsConfig::default()
-        }),
+        Syntax::Es(EsConfig::default()),
     );
 }
 
@@ -289,12 +316,12 @@ fn export_namespace_from() {
 fn export_namespace_from_min() {
     test_from_to_custom_config(
         "export * as Foo from 'foo';",
-        "export*as Foo from'foo'",
-        Config { minify: true },
-        Syntax::Es(EsConfig {
-            export_namespace_from: true,
-            ..EsConfig::default()
-        }),
+        "export*as Foo from\"foo\"",
+        Config {
+            minify: true,
+            ..Default::default()
+        },
+        Syntax::Es(EsConfig::default()),
     );
 }
 
@@ -305,7 +332,7 @@ fn named_and_namespace_export_from() {
         "export * as Foo, { bar } from 'foo';",
         Default::default(),
         Syntax::Es(EsConfig {
-            export_namespace_from: true,
+            export_default_from: true,
             ..EsConfig::default()
         }),
     );
@@ -315,10 +342,13 @@ fn named_and_namespace_export_from() {
 fn named_and_namespace_export_from_min() {
     test_from_to_custom_config(
         "export * as Foo, { bar } from 'foo';",
-        "export*as Foo,{bar}from'foo'",
-        Config { minify: true },
+        "export*as Foo,{bar}from\"foo\"",
+        Config {
+            minify: true,
+            ..Default::default()
+        },
         Syntax::Es(EsConfig {
-            export_namespace_from: true,
+            export_default_from: true,
             ..EsConfig::default()
         }),
     );
@@ -327,11 +357,11 @@ fn named_and_namespace_export_from_min() {
 #[test]
 fn issue_450() {
     test_from_to(
-        r#"console.log(`
+        r"console.log(`
 \`\`\`html
 <h1>It works!</h1>
 \`\`\`
-`);"#,
+`);",
         "console.log(`\n\\`\\`\\`html\n<h1>It works!</h1>\n\\`\\`\\`\n`);",
     );
 }
@@ -410,24 +440,24 @@ fn tpl_escape_2() {
 #[test]
 fn tpl_escape_3() {
     test_from_to(
-        r#"`${resolvedDevice.toLowerCase()}\\`"#,
-        r#"`${resolvedDevice.toLowerCase()}\\`;"#,
+        r"`${resolvedDevice.toLowerCase()}\\`",
+        r"`${resolvedDevice.toLowerCase()}\\`;",
     );
 }
 
 #[test]
 fn tpl_escape_4() {
     test_from_to(
-        r#"`\\\\${firstPart}\\${path.slice(last)}`"#,
-        r#"`\\\\${firstPart}\\${path.slice(last)}`;"#,
+        r"`\\\\${firstPart}\\${path.slice(last)}`",
+        r"`\\\\${firstPart}\\${path.slice(last)}`;",
     );
 }
 
 #[test]
 fn tpl_escape_5() {
     test_from_to(
-        r#"const data = text.encode(`${arg}\0`);"#,
-        r#"const data = text.encode(`${arg}\0`);"#,
+        r"const data = text.encode(`${arg}\0`);",
+        r"const data = text.encode(`${arg}\0`);",
     );
 }
 
@@ -446,21 +476,23 @@ fn tpl_escape_6() {
 
     let out = parse_then_emit(
         from,
-        Default::default(),
+        Config {
+            target: EsVersion::latest(),
+            ..Default::default()
+        },
         Syntax::Typescript(Default::default()),
-        EsVersion::latest(),
     );
     assert_eq!(DebugUsingDisplay(out.trim()), DebugUsingDisplay(to.trim()),);
 }
 
 #[test]
 fn issue_915_1() {
-    test_identical(r#"relResolveCacheIdentifier = `${parent.path}\x00${request}`;"#);
+    test_identical(r"relResolveCacheIdentifier = `${parent.path}\x00${request}`;");
 }
 
 #[test]
 fn issue_915_2() {
-    test_identical(r#"relResolveCacheIdentifier = `${parent.path}\x00${request}`;"#);
+    test_identical(r"relResolveCacheIdentifier = `${parent.path}\x00${request}`;");
 }
 
 #[test]
@@ -470,7 +502,7 @@ fn issue_915_3() {
 
 #[test]
 fn issue_915_4() {
-    test_identical(r#"`\\r\\n--${this.boundary}`;"#);
+    test_identical(r"`\\r\\n--${this.boundary}`;");
 }
 
 #[test]
@@ -525,7 +557,7 @@ fn integration_01_reduced_01() {
 }
 
 #[test]
-fn dneo_8541_1() {
+fn deno_8541_1() {
     test_from_to(
         "React.createElement('span', null, '\\u{b7}');",
         "React.createElement('span', null, '\\u{b7}');",
@@ -554,31 +586,56 @@ CONTENT\r
 }
 
 #[test]
-fn test_escape_without_source() {
+fn test_get_quoted_utf16() {
+    #[track_caller]
     fn es2020(src: &str, expected: &str) {
         assert_eq!(
-            super::escape_without_source(src, EsVersion::Es2020, true),
+            super::get_quoted_utf16(src, true, EsVersion::Es2020),
             expected
         )
     }
 
-    es2020("abcde", "abcde");
+    #[track_caller]
+    fn es2020_nonascii(src: &str, expected: &str) {
+        assert_eq!(
+            super::get_quoted_utf16(src, true, EsVersion::Es2020),
+            expected
+        )
+    }
+
+    #[track_caller]
+    fn es5(src: &str, expected: &str) {
+        assert_eq!(super::get_quoted_utf16(src, true, EsVersion::Es5), expected)
+    }
+
+    es2020("abcde", "\"abcde\"");
     es2020(
         "\x00\r\n\u{85}\u{2028}\u{2029};",
-        "\\x00\\r\\n\\x85\\u2028\\u2029;",
+        "\"\\x00\\r\\n\\x85\\u2028\\u2029;\"",
     );
 
-    es2020("\n", "\\n");
-    es2020("\t", "\\t");
+    es2020("\n", "\"\\n\"");
+    es2020("\t", "\"\t\"");
 
-    es2020("'string'", "\\'string\\'");
+    es2020("'string'", "\"'string'\"");
 
-    es2020("\u{0}", "\\x00");
-    es2020("\u{1}", "\\x01");
+    es2020("\u{0}", "\"\\x00\"");
+    es2020("\u{1}", "\"\\x01\"");
 
-    es2020("\u{1000}", "\u{1000}");
-    es2020("\u{ff}", "\\xff");
-    es2020("\u{10ffff}", "\u{10ffff}");
+    es2020("\u{1000}", "\"\\u1000\"");
+    es2020("\u{ff}", "\"\\xff\"");
+    es2020("\u{10ffff}", "\"\\u{10FFFF}\"");
+    es2020("😀", "\"\\u{1F600}\"");
+    es2020("ퟻ", "\"\\uD7FB\"");
+
+    es2020_nonascii("\u{FEFF}abc", "\"\\uFEFFabc\"");
+    es2020_nonascii("\u{10ffff}", "\"\\u{10FFFF}\"");
+
+    es5("\u{FEFF}abc", "\"\\uFEFFabc\"");
+    es5("\u{10ffff}", "\"\\uDBFF\\uDFFF\"");
+    es5("\u{FFFF}", "\"\\uFFFF\"");
+    es5("😀", "\"\\uD83D\\uDE00\"");
+    es5("ퟻ", "\"\\uD7FB\"");
 }
 
 #[test]
@@ -598,7 +655,7 @@ fn issue_1452_1() {
 fn issue_1619_1() {
     assert_min_target(
         "\"\\x00\" + \"\\x31\"",
-        "\"\\x00\"+\"\\x31\"",
+        "\"\\x00\"+\"1\"",
         EsVersion::latest(),
     );
 }
@@ -607,7 +664,7 @@ fn issue_1619_1() {
 fn issue_1619_2() {
     assert_min_target(
         "\"\\x00\" + \"\\x31\"",
-        "\"\\x00\"+\"\\x31\"",
+        "\"\\x00\"+\"1\"",
         EsVersion::latest(),
     );
 }
@@ -615,17 +672,20 @@ fn issue_1619_2() {
 #[test]
 fn issue_1619_3() {
     assert_eq!(
-        escape_without_source("\x00\x31", EsVersion::Es3, true),
-        "\\x001"
+        get_quoted_utf16("\x00\x31", true, EsVersion::Es3),
+        "\"\\x001\""
     );
 }
 
 fn check_latest(src: &str, expected: &str) {
     let actual = parse_then_emit(
-        &src,
-        Config { minify: false },
+        src,
+        Config {
+            minify: false,
+            target: EsVersion::latest(),
+            ..Default::default()
+        },
         Default::default(),
-        EsVersion::latest(),
     );
     assert_eq!(expected, actual.trim());
 }
@@ -659,4 +719,262 @@ impl Write for Buf {
 #[test]
 fn issue_2213() {
     assert_min("a - -b * c", "a- -b*c")
+}
+
+#[test]
+fn issue_3617() {
+    // Convert characters to es5 compatibility code
+    let from = r"// a string of all valid unicode whitespaces
+    module.exports = '\u0009\u000A\u000B\u000C\u000D\u0020\u00A0\u1680\u2000\u2001\u2002' +
+      '\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200A\u202F\u205F\u3000\u2028\u2029\uFEFF' + '\u{a0}';";
+    let expected = r#"// a string of all valid unicode whitespaces
+module.exports = "	\n\v\f\r \xa0\u1680\u2000\u2001\u2002" + "\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200A\u202F\u205F\u3000\u2028\u2029\uFEFF" + "\xa0";"#;
+
+    let out = parse_then_emit(
+        from,
+        Config {
+            ascii_only: true,
+            target: EsVersion::Es5,
+            ..Default::default()
+        },
+        Syntax::default(),
+    );
+
+    dbg!(&out);
+    dbg!(&expected);
+
+    assert_eq!(
+        DebugUsingDisplay(out.trim()),
+        DebugUsingDisplay(expected.trim()),
+    );
+}
+
+#[test]
+fn issue_3617_1() {
+    // Print characters as is for ECMA target > 5
+    let from = r"// a string of all valid unicode whitespaces
+    module.exports = '\u0009\u000A\u000B\u000C\u000D\u0020\u00A0\u1680\u2000\u2001\u2002' +
+      '\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200A\u202F\u205F\u3000\u2028\u2029\uFEFF' + '\u{a0}';";
+    let expected = r"// a string of all valid unicode whitespaces
+module.exports = '\u0009\u000A\u000B\u000C\u000D\u0020\u00A0\u1680\u2000\u2001\u2002' + '\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200A\u202F\u205F\u3000\u2028\u2029\uFEFF' + '\u{a0}';";
+
+    let out = parse_then_emit(
+        from,
+        Config {
+            target: EsVersion::Es2022,
+            ..Default::default()
+        },
+        Syntax::default(),
+    );
+
+    dbg!(&out);
+    dbg!(&expected);
+
+    assert_eq!(
+        DebugUsingDisplay(out.trim()),
+        DebugUsingDisplay(expected.trim()),
+    );
+}
+
+fn test_all(src: &str, expected: &str, expected_minified: &str, config: Config) {
+    {
+        let out = parse_then_emit(
+            src,
+            Config {
+                minify: false,
+                omit_last_semi: true,
+                ..config
+            },
+            Syntax::default(),
+        );
+
+        dbg!(out.trim());
+        dbg!(expected.trim());
+
+        assert_eq!(
+            DebugUsingDisplay(out.trim()),
+            DebugUsingDisplay(expected.trim()),
+        );
+    }
+    {
+        eprintln!("> minified");
+        let out = parse_then_emit(
+            src,
+            Config {
+                minify: true,
+                omit_last_semi: true,
+                ..config
+            },
+            Syntax::default(),
+        );
+
+        dbg!(out.trim());
+        dbg!(expected_minified.trim());
+
+        assert_eq!(
+            DebugUsingDisplay(out.trim()),
+            DebugUsingDisplay(expected_minified.trim()),
+        );
+    }
+}
+
+#[test]
+fn ascii_only_str_1() {
+    test_all(
+        "'😊❤️'",
+        "'😊❤️';\n",
+        r#""😊❤️""#,
+        Config {
+            ascii_only: false,
+            target: EsVersion::Es2015,
+            ..Default::default()
+        },
+    );
+}
+
+#[test]
+fn ascii_only_str_2() {
+    test_all(
+        "'😊❤️'",
+        r#""\u{1F60A}\u2764\uFE0F";"#,
+        r#""\u{1F60A}\u2764\uFE0F""#,
+        Config {
+            ascii_only: true,
+            ..Default::default()
+        },
+    );
+}
+
+#[test]
+fn ascii_only_str_3() {
+    test_all(
+        "'\\u{1F60A}'",
+        "'\\u{1F60A}';\n",
+        "\"\\u{1F60A}\"",
+        Config {
+            ascii_only: true,
+            ..Default::default()
+        },
+    );
+}
+
+#[test]
+fn ascii_only_tpl_lit() {
+    test_all(
+        "`😊❤️`",
+        r"`\u{1F60A}\u{2764}\u{FE0F}`;",
+        r"`\u{1F60A}\u{2764}\u{FE0F}`",
+        Config {
+            ascii_only: true,
+            ..Default::default()
+        },
+    );
+}
+
+#[test]
+fn ascii_only_issue_7240() {
+    test_all(
+        r#"
+        export default {
+            "\u3131": '\u11B0',
+        }
+        "#,
+        r#"
+export default {
+    "\u3131": '\u11B0'
+};
+        "#,
+        r#"export default{"\u3131":"\u11B0"}"#,
+        Config {
+            ascii_only: true,
+            ..Default::default()
+        },
+    );
+}
+
+#[test]
+fn emit_type_import_statement_named() {
+    let from = r#"
+      import type { X } from "y";
+    "#;
+    let to = r#"
+      import type { X } from "y";
+    "#;
+
+    let out = parse_then_emit(
+        from,
+        Default::default(),
+        Syntax::Typescript(Default::default()),
+    );
+    assert_eq!(DebugUsingDisplay(out.trim()), DebugUsingDisplay(to.trim()),);
+}
+
+#[test]
+fn emit_type_import_statement_default() {
+    let from = r#"
+      import type X from "y";
+    "#;
+    let to = r#"
+      import type X from "y";
+    "#;
+
+    let out = parse_then_emit(
+        from,
+        Default::default(),
+        Syntax::Typescript(Default::default()),
+    );
+    assert_eq!(DebugUsingDisplay(out.trim()), DebugUsingDisplay(to.trim()),);
+}
+
+#[test]
+fn emit_type_import_specifier() {
+    let from = r#"
+      import { type X } from "y";
+    "#;
+    let to = r#"
+      import { type X } from "y";
+    "#;
+
+    let out = parse_then_emit(
+        from,
+        Default::default(),
+        Syntax::Typescript(Default::default()),
+    );
+    assert_eq!(DebugUsingDisplay(out.trim()), DebugUsingDisplay(to.trim()),);
+}
+
+#[testing::fixture("tests/str-lits/**/*.txt")]
+fn test_str_lit(input: PathBuf) {
+    test_str_lit_inner(input)
+}
+
+/// Print text back using `console.log`
+fn run_node(code: &str) -> String {
+    exec_node_js(
+        code,
+        JsExecOptions {
+            cache: true,
+            module: false,
+            args: vec![],
+        },
+    )
+    .expect("failed to execute node.js")
+}
+
+fn test_str_lit_inner(input: PathBuf) {
+    let raw_str = std::fs::read_to_string(&*input).unwrap();
+    let input_code = format!("console.log('{raw_str}')");
+
+    let output_code = parse_then_emit(
+        &input_code,
+        Config::default()
+            .with_target(EsVersion::latest())
+            .with_minify(true),
+        Syntax::default(),
+    );
+
+    let expected = run_node(&input_code);
+    let actual = run_node(&output_code);
+
+    assert_eq!(actual, expected);
 }

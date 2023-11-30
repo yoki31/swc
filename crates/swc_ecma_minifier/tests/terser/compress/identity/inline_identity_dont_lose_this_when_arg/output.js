@@ -1,7 +1,6 @@
 "use strict";
-const id = (x) => x;
-leak(
-    {
-        leak: leak,
-    }.leak
-);
+const func_bag = {
+    leak: leak
+};
+var x;
+leak(x = func_bag.leak);

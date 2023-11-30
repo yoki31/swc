@@ -119,21 +119,17 @@ pub struct Annotation {
 impl Annotation {
     /// Whether this annotation is a vertical line placeholder.
     pub fn is_line(&self) -> bool {
-        if let AnnotationType::MultilineLine(_) = self.annotation_type {
-            true
-        } else {
-            false
-        }
+        matches!(self.annotation_type, AnnotationType::MultilineLine(_))
     }
 
     pub fn is_multiline(&self) -> bool {
-        match self.annotation_type {
+        matches!(
+            self.annotation_type,
             AnnotationType::Multiline(_)
-            | AnnotationType::MultilineStart(_)
-            | AnnotationType::MultilineLine(_)
-            | AnnotationType::MultilineEnd(_) => true,
-            _ => false,
-        }
+                | AnnotationType::MultilineStart(_)
+                | AnnotationType::MultilineLine(_)
+                | AnnotationType::MultilineEnd(_)
+        )
     }
 
     pub fn len(&self) -> usize {
@@ -165,10 +161,10 @@ impl Annotation {
 
     pub fn takes_space(&self) -> bool {
         // Multiline annotations always have to keep vertical space.
-        match self.annotation_type {
-            AnnotationType::MultilineStart(_) | AnnotationType::MultilineEnd(_) => true,
-            _ => false,
-        }
+        matches!(
+            self.annotation_type,
+            AnnotationType::MultilineStart(_) | AnnotationType::MultilineEnd(_)
+        )
     }
 }
 
@@ -178,11 +174,18 @@ pub struct StyledString {
     pub style: Style,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Hash)]
+#[allow(clippy::enum_variant_names)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(
     feature = "diagnostic-serde",
     derive(serde::Serialize, serde::Deserialize)
 )]
+#[cfg_attr(
+    any(feature = "rkyv-impl"),
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
+#[cfg_attr(feature = "rkyv-impl", archive(check_bytes))]
+#[cfg_attr(feature = "rkyv-impl", archive_attr(repr(u32)))]
 pub enum Style {
     MainHeaderMsg,
     HeaderMsg,

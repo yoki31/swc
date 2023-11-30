@@ -1,24 +1,24 @@
 use std::time::Instant;
-use swc_common::{
-    collections::AHashSet,
-    pass::{CompilerPass, Repeated},
-    util::take::Take,
-    Mark, Span, Spanned, DUMMY_SP,
-};
+
+use rustc_hash::FxHashSet;
+use swc_common::{util::take::Take, Mark, Span, Spanned, DUMMY_SP};
 use swc_ecma_ast::*;
-use swc_ecma_utils::{ident::IdentLike, Id, ModuleItemLike, StmtLike, Value};
-use swc_ecma_visit::{noop_visit_type, Fold, FoldWith, Node, Visit, VisitWith};
+use swc_ecma_utils::{ModuleItemLike, StmtLike, Value};
+use swc_ecma_visit::{noop_visit_type, visit_obj_and_computed, Visit, VisitWith};
 
 pub(crate) mod base54;
+pub(crate) mod size;
 pub(crate) mod sort;
 pub(crate) mod unit;
 
 ///
 pub(crate) fn make_number(span: Span, value: f64) -> Expr {
-    if cfg!(feature = "debug") {
-        tracing::debug!("Creating a numeric literal");
-    }
-    Expr::Lit(Lit::Num(Number { span, value }))
+    trace_op!("Creating a numeric literal");
+    Expr::Lit(Lit::Num(Number {
+        span,
+        value,
+        raw: None,
+    }))
 }
 
 pub trait ModuleItemExt:
@@ -36,8 +36,6 @@ pub trait ModuleItemExt:
     }
 
     fn into_module_decl(self) -> Result<ModuleDecl, Stmt>;
-
-    fn as_stmt_mut(&mut self) -> Option<&mut Stmt>;
 }
 
 impl ModuleItemExt for Stmt {
@@ -51,10 +49,6 @@ impl ModuleItemExt for Stmt {
 
     fn into_module_decl(self) -> Result<ModuleDecl, Stmt> {
         Err(self)
-    }
-
-    fn as_stmt_mut(&mut self) -> Option<&mut Stmt> {
-        Some(self)
     }
 }
 
@@ -76,28 +70,21 @@ impl ModuleItemExt for ModuleItem {
             ModuleItem::Stmt(v) => Err(v),
         }
     }
-
-    fn as_stmt_mut(&mut self) -> Option<&mut Stmt> {
-        match self {
-            ModuleItem::ModuleDecl(_) => None,
-            ModuleItem::Stmt(s) => Some(s),
-        }
-    }
 }
 
 ///
 /// - `!0` for true
 /// - `!1` for false
 pub(crate) fn make_bool(span: Span, value: bool) -> Expr {
-    if cfg!(feature = "debug") {
-        tracing::debug!("Creating a boolean literal");
-    }
+    trace_op!("Creating a boolean literal");
+
     Expr::Unary(UnaryExpr {
         span,
         op: op!("!"),
         arg: Box::new(Expr::Lit(Lit::Num(Number {
             span: DUMMY_SP,
             value: if value { 0.0 } else { 1.0 },
+            raw: None,
         }))),
     })
 }
@@ -148,7 +135,6 @@ pub(crate) trait ExprOptExt: Sized {
         }
     }
 
-    #[inline]
     fn prepend_exprs(&mut self, mut exprs: Vec<Box<Expr>>) {
         if exprs.is_empty() {
             return;
@@ -173,24 +159,20 @@ pub(crate) trait ExprOptExt: Sized {
 }
 
 impl ExprOptExt for Box<Expr> {
-    #[inline]
     fn as_expr(&self) -> &Expr {
-        &self
+        self
     }
 
-    #[inline]
     fn as_mut(&mut self) -> &mut Expr {
         self
     }
 }
 
 impl ExprOptExt for Expr {
-    #[inline]
     fn as_expr(&self) -> &Expr {
         self
     }
 
-    #[inline]
     fn as_mut(&mut self) -> &mut Expr {
         self
     }
@@ -205,29 +187,73 @@ pub(crate) trait SpanExt: Into<Span> {
 
 impl SpanExt for Span {}
 
+pub(crate) fn contains_leaping_continue_with_label<N>(n: &N, label: Id) -> bool
+where
+    N: VisitWith<LeapFinder>,
+{
+    let mut v = LeapFinder {
+        target_label: Some(label),
+        ..Default::default()
+    };
+    n.visit_with(&mut v);
+    v.found_continue_with_label
+}
+
+#[allow(unused)]
 pub(crate) fn contains_leaping_yield<N>(n: &N) -> bool
 where
     N: VisitWith<LeapFinder>,
 {
     let mut v = LeapFinder::default();
-    n.visit_with(&Invalid { span: DUMMY_SP }, &mut v);
+    n.visit_with(&mut v);
     v.found_yield
 }
 
 #[derive(Default)]
 pub(crate) struct LeapFinder {
+    found_await: bool,
     found_yield: bool,
+    found_continue_with_label: bool,
+    target_label: Option<Id>,
 }
 
 impl Visit for LeapFinder {
     noop_visit_type!();
 
-    fn visit_yield_expr(&mut self, _: &YieldExpr, _: &dyn Node) {
-        self.found_yield = true;
+    fn visit_await_expr(&mut self, n: &AwaitExpr) {
+        n.visit_children_with(self);
+
+        self.found_await = true;
     }
 
-    fn visit_function(&mut self, _: &Function, _: &dyn Node) {}
-    fn visit_arrow_expr(&mut self, _: &ArrowExpr, _: &dyn Node) {}
+    fn visit_arrow_expr(&mut self, _: &ArrowExpr) {}
+
+    fn visit_class_method(&mut self, _: &ClassMethod) {}
+
+    fn visit_constructor(&mut self, _: &Constructor) {}
+
+    fn visit_continue_stmt(&mut self, n: &ContinueStmt) {
+        n.visit_children_with(self);
+
+        if let Some(label) = &n.label {
+            self.found_continue_with_label |= self
+                .target_label
+                .as_ref()
+                .map_or(false, |l| *l == label.to_id());
+        }
+    }
+
+    fn visit_function(&mut self, _: &Function) {}
+
+    fn visit_getter_prop(&mut self, _: &GetterProp) {}
+
+    fn visit_setter_prop(&mut self, _: &SetterProp) {}
+
+    fn visit_yield_expr(&mut self, n: &YieldExpr) {
+        n.visit_children_with(self);
+
+        self.found_yield = true;
+    }
 }
 
 /// This method returns true only if `T` is `var`. (Not `const` or `let`)
@@ -236,12 +262,17 @@ where
     T: StmtLike,
 {
     let var = match t.as_stmt() {
-        Some(Stmt::Decl(Decl::Var(
-            v @ VarDecl {
-                kind: VarDeclKind::Var,
-                ..
-            },
-        ))) => v,
+        Some(Stmt::Decl(Decl::Var(v)))
+            if matches!(
+                &**v,
+                VarDecl {
+                    kind: VarDeclKind::Var,
+                    ..
+                }
+            ) =>
+        {
+            v
+        }
         _ => return false,
     };
     var.decls.iter().all(|decl| decl.init.is_none())
@@ -252,14 +283,12 @@ pub(crate) trait IsModuleItem {
 }
 
 impl IsModuleItem for Stmt {
-    #[inline]
     fn is_module_item() -> bool {
         false
     }
 }
 
 impl IsModuleItem for ModuleItem {
-    #[inline]
     fn is_module_item() -> bool {
         true
     }
@@ -276,59 +305,6 @@ pub trait ValueExt<T>: Into<Value<T>> {
 
 impl<T> ValueExt<T> for Value<T> {}
 
-/// TODO(kdy1): Modify swc_visit.
-/// Actually we should implement `swc_visit::Repeated` for
-/// `swc_visit::Optional`. But I'm too lazy to bump versions.
-pub(crate) struct Optional<V> {
-    pub enabled: bool,
-    pub visitor: V,
-}
-
-impl<V> Repeated for Optional<V>
-where
-    V: Repeated,
-{
-    #[inline]
-    fn changed(&self) -> bool {
-        if self.enabled {
-            return false;
-        }
-
-        self.visitor.changed()
-    }
-
-    #[inline]
-    fn reset(&mut self) {
-        if self.enabled {
-            return;
-        }
-
-        self.visitor.reset()
-    }
-}
-
-impl<V> CompilerPass for Optional<V>
-where
-    V: CompilerPass,
-{
-    fn name() -> std::borrow::Cow<'static, str> {
-        V::name()
-    }
-}
-
-impl<V> Fold for Optional<V>
-where
-    V: Fold,
-{
-    #[inline(always)]
-    fn fold_module(&mut self, module: Module) -> Module {
-        if !self.enabled {
-            return module;
-        }
-        module.fold_with(&mut self.visitor)
-    }
-}
-
 pub struct DeepThisExprVisitor {
     found: bool,
 }
@@ -336,7 +312,7 @@ pub struct DeepThisExprVisitor {
 impl Visit for DeepThisExprVisitor {
     noop_visit_type!();
 
-    fn visit_this_expr(&mut self, _: &ThisExpr, _: &dyn Node) {
+    fn visit_this_expr(&mut self, _: &ThisExpr) {
         self.found = true;
     }
 }
@@ -346,20 +322,22 @@ where
     N: VisitWith<DeepThisExprVisitor>,
 {
     let mut visitor = DeepThisExprVisitor { found: false };
-    body.visit_with(&Invalid { span: DUMMY_SP } as _, &mut visitor);
+    body.visit_with(&mut visitor);
     visitor.found
 }
 
 #[derive(Default)]
 pub(crate) struct IdentUsageCollector {
-    ids: AHashSet<Id>,
+    ids: FxHashSet<Id>,
     ignore_nested: bool,
 }
 
 impl Visit for IdentUsageCollector {
     noop_visit_type!();
 
-    fn visit_block_stmt_or_expr(&mut self, n: &BlockStmtOrExpr, _: &dyn Node) {
+    visit_obj_and_computed!();
+
+    fn visit_block_stmt_or_expr(&mut self, n: &BlockStmtOrExpr) {
         if self.ignore_nested {
             return;
         }
@@ -367,7 +345,7 @@ impl Visit for IdentUsageCollector {
         n.visit_children_with(self);
     }
 
-    fn visit_constructor(&mut self, n: &Constructor, _: &dyn Node) {
+    fn visit_constructor(&mut self, n: &Constructor) {
         if self.ignore_nested {
             return;
         }
@@ -375,7 +353,7 @@ impl Visit for IdentUsageCollector {
         n.visit_children_with(self);
     }
 
-    fn visit_function(&mut self, n: &Function, _: &dyn Node) {
+    fn visit_function(&mut self, n: &Function) {
         if self.ignore_nested {
             return;
         }
@@ -383,29 +361,97 @@ impl Visit for IdentUsageCollector {
         n.visit_children_with(self);
     }
 
-    fn visit_ident(&mut self, n: &Ident, _: &dyn Node) {
+    fn visit_getter_prop(&mut self, n: &GetterProp) {
+        if self.ignore_nested {
+            return;
+        }
+
+        n.visit_children_with(self);
+    }
+
+    fn visit_setter_prop(&mut self, n: &SetterProp) {
+        if self.ignore_nested {
+            return;
+        }
+
+        n.visit_children_with(self);
+    }
+
+    fn visit_ident(&mut self, n: &Ident) {
         self.ids.insert(n.to_id());
     }
 
-    fn visit_member_expr(&mut self, n: &MemberExpr, _: &dyn Node) {
-        n.obj.visit_with(n, self);
-
-        if n.computed {
-            n.prop.visit_with(n, self);
+    fn visit_member_prop(&mut self, n: &MemberProp) {
+        if let MemberProp::Computed(..) = n {
+            n.visit_children_with(self);
         }
     }
 
-    fn visit_prop_name(&mut self, n: &PropName, _: &dyn Node) {
-        match n {
-            PropName::Computed(..) => {
-                n.visit_children_with(self);
-            }
-            _ => {}
+    fn visit_prop_name(&mut self, n: &PropName) {
+        if let PropName::Computed(..) = n {
+            n.visit_children_with(self);
         }
     }
 }
 
-pub(crate) fn idents_used_by<N>(n: &N) -> AHashSet<Id>
+#[derive(Default)]
+pub(crate) struct CapturedIdCollector {
+    ids: FxHashSet<Id>,
+    is_nested: bool,
+}
+
+impl Visit for CapturedIdCollector {
+    noop_visit_type!();
+
+    visit_obj_and_computed!();
+
+    fn visit_block_stmt_or_expr(&mut self, n: &BlockStmtOrExpr) {
+        let old = self.is_nested;
+        self.is_nested = true;
+        n.visit_children_with(self);
+        self.is_nested = old;
+    }
+
+    fn visit_constructor(&mut self, n: &Constructor) {
+        let old = self.is_nested;
+        self.is_nested = true;
+        n.visit_children_with(self);
+        self.is_nested = old;
+    }
+
+    fn visit_function(&mut self, n: &Function) {
+        let old = self.is_nested;
+        self.is_nested = true;
+        n.visit_children_with(self);
+        self.is_nested = old;
+    }
+
+    fn visit_ident(&mut self, n: &Ident) {
+        if self.is_nested {
+            self.ids.insert(n.to_id());
+        }
+    }
+
+    fn visit_prop_name(&mut self, n: &PropName) {
+        if let PropName::Computed(..) = n {
+            n.visit_children_with(self);
+        }
+    }
+}
+
+pub(crate) fn idents_captured_by<N>(n: &N) -> FxHashSet<Id>
+where
+    N: VisitWith<CapturedIdCollector>,
+{
+    let mut v = CapturedIdCollector {
+        is_nested: false,
+        ..Default::default()
+    };
+    n.visit_with(&mut v);
+    v.ids
+}
+
+pub(crate) fn idents_used_by<N>(n: &N) -> FxHashSet<Id>
 where
     N: VisitWith<IdentUsageCollector>,
 {
@@ -413,11 +459,11 @@ where
         ignore_nested: false,
         ..Default::default()
     };
-    n.visit_with(&Invalid { span: DUMMY_SP }, &mut v);
+    n.visit_with(&mut v);
     v.ids
 }
 
-pub(crate) fn idents_used_by_ignoring_nested<N>(n: &N) -> AHashSet<Id>
+pub(crate) fn idents_used_by_ignoring_nested<N>(n: &N) -> FxHashSet<Id>
 where
     N: VisitWith<IdentUsageCollector>,
 {
@@ -425,51 +471,195 @@ where
         ignore_nested: true,
         ..Default::default()
     };
-    n.visit_with(&Invalid { span: DUMMY_SP }, &mut v);
+    n.visit_with(&mut v);
     v.ids
 }
 
-pub(crate) fn can_end_conditionally(s: &Stmt) -> bool {
-    ///
-    ///`ignore_always`: If true, [Stmt::Return] will be ignored.
-    fn can_end(s: &Stmt, ignore_always: bool) -> bool {
-        match s {
-            Stmt::If(s) => {
-                can_end(&s.cons, false)
-                    || s.alt
-                        .as_deref()
-                        .map(|s| can_end(s, false))
-                        .unwrap_or_default()
-            }
+pub fn now() -> Option<Instant> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        None
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        Some(Instant::now())
+    }
+}
 
-            Stmt::Switch(s) => s
-                .cases
-                .iter()
-                .any(|case| case.cons.iter().any(|s| can_end(&s, false))),
+pub(crate) fn contains_eval<N>(node: &N, include_with: bool) -> bool
+where
+    N: VisitWith<EvalFinder>,
+{
+    let mut v = EvalFinder {
+        found: false,
+        include_with,
+    };
 
-            Stmt::DoWhile(s) => can_end(&s.body, false),
+    node.visit_with(&mut v);
+    v.found
+}
 
-            Stmt::While(s) => can_end(&s.body, false),
+pub(crate) struct EvalFinder {
+    found: bool,
+    include_with: bool,
+}
 
-            Stmt::For(s) => can_end(&s.body, false),
+impl Visit for EvalFinder {
+    noop_visit_type!();
 
-            Stmt::ForOf(s) => can_end(&s.body, false),
+    visit_obj_and_computed!();
 
-            Stmt::ForIn(s) => can_end(&s.body, false),
-
-            Stmt::Return(..) | Stmt::Break(..) | Stmt::Continue(..) => !ignore_always,
-
-            _ => false,
+    fn visit_ident(&mut self, i: &Ident) {
+        if i.sym == "eval" {
+            self.found = true;
         }
     }
 
-    can_end(s, true)
+    fn visit_with_stmt(&mut self, s: &WithStmt) {
+        if self.include_with {
+            self.found = true;
+        } else {
+            s.visit_children_with(self);
+        }
+    }
 }
 
-pub fn now() -> Option<Instant> {
-    if cfg!(target_arch = "wasm32") {
-        None
-    } else {
-        Some(Instant::now())
-    }
+#[cfg(feature = "concurrent")]
+#[macro_export(local_inner_macros)]
+#[allow(clippy::crate_in_macro_def)]
+macro_rules! maybe_par {
+  ($prefix:ident.$name:ident.iter().$operator:ident($($rest:expr)*), $threshold:expr) => {
+      if $prefix.$name.len() >= $threshold {
+          use rayon::prelude::*;
+          $prefix.$name.par_iter().$operator($($rest)*)
+      } else {
+          $prefix.$name.iter().$operator($($rest)*)
+      }
+  };
+
+  ($prefix:ident.$name:ident.into_iter().$operator:ident($($rest:expr)*), $threshold:expr) => {
+      if $prefix.$name.len() >= $threshold {
+          use rayon::prelude::*;
+          $prefix.$name.into_par_iter().$operator($($rest)*)
+      } else {
+          $prefix.$name.into_iter().$operator($($rest)*)
+      }
+  };
+
+  ($name:ident.iter().$operator:ident($($rest:expr)*), $threshold:expr) => {
+      if $name.len() >= $threshold {
+          use rayon::prelude::*;
+          $name.par_iter().$operator($($rest)*)
+      } else {
+          $name.iter().$operator($($rest)*)
+      }
+  };
+
+  ($name:ident.into_iter().$operator:ident($($rest:expr)*), $threshold:expr) => {
+      if $name.len() >= $threshold {
+          use rayon::prelude::*;
+          $name.into_par_iter().$operator($($rest)*)
+      } else {
+          $name.into_iter().$operator($($rest)*)
+      }
+  };
+
+  ($name:ident.iter_mut().$operator:ident($($rest:expr)*), $threshold:expr) => {
+      if $name.len() >= $threshold {
+          use rayon::prelude::*;
+          $name.par_iter_mut().$operator($($rest)*)
+      } else {
+          $name.iter_mut().$operator($($rest)*)
+      }
+  };
+
+  ($name:ident.iter().$operator:ident($($rest:expr)*).$operator2:ident($($rest2:expr)*), $threshold:expr) => {
+      if $name.len() >= $threshold {
+          use rayon::prelude::*;
+          $name.par_iter().$operator($($rest)*).$operator2($($rest2)*)
+      } else {
+          $name.iter().$operator($($rest)*).$operator2($($rest2)*)
+      }
+  };
+
+  ($name:ident.into_iter().$operator:ident($($rest:expr)*).$operator2:ident($($rest2:expr)*), $threshold:expr) => {
+      if $name.len() >= $threshold {
+          use rayon::prelude::*;
+          $name.into_par_iter().$operator($($rest)*).$operator2($($rest2)*)
+      } else {
+          $name.into_iter().$operator($($rest)*).$operator2($($rest2)*)
+      }
+  };
+
+  ($name:ident.iter_mut().$operator:ident($($rest:expr)*).$operator2:ident($($rest2:expr)*), $threshold:expr) => {
+      if $name.len() >= $threshold {
+          use rayon::prelude::*;
+          $name.par_iter_mut().$operator($($rest)*).$operator2($($rest2)*)
+      } else {
+          $name.iter_mut().$operator($($rest)*).$operator2($($rest2)*)
+      }
+  };
+
+  ($name:ident.iter().$operator:ident($($rest:expr)*).$operator2:ident::<$t:ty>($($rest2:expr)*), $threshold:expr) => {
+      if $name.len() >= $threshold {
+          use rayon::prelude::*;
+          $name.par_iter().$operator($($rest)*).$operator2::<$t>($($rest2)*)
+      } else {
+          $name.iter().$operator($($rest)*).$operator2::<$t>($($rest2)*)
+      }
+  };
+
+  ($name:ident.iter().$operator:ident($($rest:expr)*).$operator2:ident($($rest2:expr)*).$operator3:ident($($rest3:expr)*), $threshold:expr) => {
+      if $name.len() >= $threshold {
+          use rayon::prelude::*;
+          $name.par_iter().$operator($($rest)*).$operator2($($rest2)*).$operator3($($rest3)*)
+      } else {
+          $name.iter().$operator($($rest)*).$operator2($($rest2)*).$operator3($($rest3)*)
+      }
+  };
+}
+
+#[cfg(not(feature = "concurrent"))]
+#[macro_export(local_inner_macros)]
+#[allow(clippy::crate_in_macro_def)]
+macro_rules! maybe_par {
+  ($prefix:ident.$name:ident.iter().$operator:ident($($rest:expr)*), $threshold:expr) => {
+    $prefix.$name.iter().$operator($($rest)*)
+  };
+
+  ($prefix:ident.$name:ident.into_iter().$operator:ident($($rest:expr)*), $threshold:expr) => {
+    $prefix.$name.into_iter().$operator($($rest)*)
+  };
+
+  ($name:ident.iter().$operator:ident($($rest:expr)*), $threshold:expr) => {
+    $name.iter().$operator($($rest)*)
+  };
+
+  ($name:ident.into_iter().$operator:ident($($rest:expr)*), $threshold:expr) => {
+    $name.into_iter().$operator($($rest)*)
+  };
+
+  ($name:ident.iter_mut().$operator:ident($($rest:expr)*), $threshold:expr) => {
+    $name.iter_mut().$operator($($rest)*)
+  };
+
+  ($name:ident.iter().$operator:ident($($rest:expr)*).$operator2:ident($($rest2:expr)*), $threshold:expr) => {
+    $name.iter().$operator($($rest)*).$operator2($($rest2)*)
+  };
+
+  ($name:ident.into_iter().$operator:ident($($rest:expr)*).$operator2:ident($($rest2:expr)*), $threshold:expr) => {
+    $name.into_iter().$operator($($rest)*).$operator2($($rest2)*)
+  };
+
+  ($name:ident.iter_mut().$operator:ident($($rest:expr)*).$operator2:ident($($rest2:expr)*), $threshold:expr) => {
+    $name.iter_mut().$operator($($rest)*).$operator2($($rest2)*)
+  };
+
+  ($name:ident.iter().$operator:ident($($rest:expr)*).$operator2:ident::<$t:ty>($($rest2:expr)*), $threshold:expr) => {
+    $name.iter().$operator($($rest)*).$operator2::<$t>($($rest2)*)
+  };
+
+  ($name:ident.iter().$operator:ident($($rest:expr)*).$operator2:ident($($rest2:expr)*).$operator3:ident($($rest3:expr)*), $threshold:expr) => {
+    $name.iter().$operator($($rest)*).$operator2($($rest2)*).$operator3($($rest3)*)
+  };
 }

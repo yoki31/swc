@@ -1,6 +1,8 @@
-error: Expected Declaration value
- --> $DIR/tests/recovery/delim-token/at-sign/input.css:2:12
-  |
-2 |     color: @ red;
-  |            ^
 
+  x Expected Declaration value
+   ,-[$DIR/tests/recovery/delim-token/at-sign/input.css:1:1]
+ 1 | a {
+ 2 |     color: @ red;
+   :            ^
+ 3 | }
+   `----

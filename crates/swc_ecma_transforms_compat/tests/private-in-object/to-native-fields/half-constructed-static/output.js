@@ -9,6 +9,5 @@ class F {
     static #y = (_tmp1 = (()=>{
         throw "error";
     })(), _brand_check_y.add(this), _tmp1);
-    static  #z() {
-    }
+    static  #z() {}
 }

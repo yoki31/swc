@@ -1,12 +1,12 @@
-use super::Context;
-use crate::swcify::Swcify;
-use swc_common::DUMMY_SP;
 use swc_ecma_ast::{BigInt, Bool, Expr, Lit, Null, Number, Regex, Str, Tpl, TplElement};
 use swc_estree_ast::{
     BigIntLiteral, BooleanLiteral, DecimalLiteral, Literal, NullLiteral, NumberLiteral,
     NumericLiteral, RegExpLiteral, StringLiteral, TemplateElement, TemplateLiteral,
     TemplateLiteralExpr,
 };
+
+use super::Context;
+use crate::swcify::Swcify;
 
 impl Swcify for Literal {
     type Output = Lit;
@@ -32,8 +32,7 @@ impl Swcify for StringLiteral {
         Str {
             span: ctx.span(&self.base),
             value: self.value,
-            has_escape: false,
-            kind: Default::default(),
+            raw: Some(self.raw),
         }
     }
 }
@@ -45,6 +44,8 @@ impl Swcify for NumberLiteral {
         Number {
             span: ctx.span(&self.base),
             value: self.value,
+            // TODO improve me
+            raw: None,
         }
     }
 }
@@ -56,6 +57,8 @@ impl Swcify for NumericLiteral {
         Number {
             span: ctx.span(&self.base),
             value: self.value,
+            // TODO improve me
+            raw: None,
         }
     }
 }
@@ -123,18 +126,8 @@ impl Swcify for TemplateElement {
         TplElement {
             span: ctx.span(&self.base),
             tail: self.tail,
-            cooked: self.value.cooked.map(|value| Str {
-                span: DUMMY_SP,
-                value,
-                has_escape: false,
-                kind: Default::default(),
-            }),
-            raw: Str {
-                span: DUMMY_SP,
-                value: self.value.raw,
-                has_escape: false,
-                kind: Default::default(),
-            },
+            cooked: self.value.cooked,
+            raw: self.value.raw,
         }
     }
 }
@@ -148,7 +141,10 @@ impl Swcify for BigIntLiteral {
             value: self
                 .value
                 .parse()
+                .map(Box::new)
                 .expect("failed to parse the value of BigIntLiteral"),
+            // TODO improve me
+            raw: None,
         }
     }
 }
@@ -163,6 +159,8 @@ impl Swcify for DecimalLiteral {
                 .value
                 .parse()
                 .expect("failed to parse the value of DecimalLiteral"),
+            // TODO improve me
+            raw: None,
         }
     }
 }

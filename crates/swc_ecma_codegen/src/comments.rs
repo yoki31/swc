@@ -1,5 +1,6 @@
-use super::*;
 use swc_common::comments::CommentKind;
+
+use super::*;
 
 macro_rules! write_comments {
     ($e:expr, $prefix_space:expr, $cmts:expr) => {{
@@ -11,21 +12,40 @@ macro_rules! write_comments {
         for cmt in cmts.iter() {
             match cmt.kind {
                 CommentKind::Line => {
-                    if $prefix_space {
-                        $e.wr.write_comment(cmt.span, " ")?;
+                    if $prefix_space && !$e.cfg.minify {
+                        $e.wr.write_comment(" ")?;
                     }
-                    $e.wr.write_comment(cmt.span, "//")?;
-                    $e.wr.write_comment(cmt.span, &cmt.text)?;
+
+                    srcmap!($e, cmt, true);
+
+                    $e.wr.write_comment("//")?;
+                    $e.wr.write_comment(&cmt.text)?;
+
+                    srcmap!($e, cmt, false);
+
                     $e.wr.write_line()?;
                 }
                 CommentKind::Block => {
-                    if $prefix_space {
-                        $e.wr.write_comment(cmt.span, " ")?;
+                    if $prefix_space && !$e.cfg.minify {
+                        $e.wr.write_comment(" ")?;
                     }
-                    $e.wr.write_comment(cmt.span, "/*")?;
-                    $e.wr.write_lit(cmt.span, &cmt.text)?;
-                    $e.wr.write_comment(cmt.span, "*/")?;
-                    $e.wr.write_space()?;
+
+                    srcmap!($e, cmt, true);
+
+                    $e.wr.write_comment("/*")?;
+                    $e.wr.write_comment(&cmt.text)?;
+
+                    {
+                        let hi = cmt.span_hi();
+                        if !hi.is_dummy() && hi.0 > 2 {
+                            $e.wr.add_srcmap(hi - swc_common::BytePos(2))?;
+                        }
+                    }
+                    $e.wr.write_comment("*/")?;
+
+                    if !$e.cfg.minify {
+                        $e.wr.write_space()?;
+                    }
                 }
             }
         }
@@ -34,9 +54,10 @@ macro_rules! write_comments {
     }};
 }
 
-impl<'a, W> Emitter<'a, W>
+impl<'a, W, S: SourceMapper> Emitter<'a, W, S>
 where
     W: WriteJs,
+    S: SourceMapperExt,
 {
     pub(super) fn emit_trailing_comments_of_pos(
         &mut self,
@@ -44,7 +65,7 @@ where
         prefix_space: bool,
         _is_hi: bool,
     ) -> Result {
-        if pos == BytePos(0) {
+        if pos.is_dummy() {
             return Ok(());
         }
 
@@ -59,6 +80,10 @@ where
     }
 
     pub(super) fn emit_leading_comments(&mut self, mut pos: BytePos, is_hi: bool) -> Result {
+        if pos.is_dummy() {
+            return Ok(());
+        }
+
         let comments = match self.comments {
             Some(ref comments) => comments,
             None => return Ok(()),
@@ -71,11 +96,8 @@ where
         write_comments!(self, false, comments.take_leading(pos))
     }
 
+    #[inline(always)]
     pub(super) fn emit_leading_comments_of_span(&mut self, span: Span, is_hi: bool) -> Result {
-        if span.is_dummy() {
-            return Ok(());
-        }
-
         let pos = if is_hi { span.hi } else { span.lo };
         self.emit_leading_comments(pos, is_hi)
     }

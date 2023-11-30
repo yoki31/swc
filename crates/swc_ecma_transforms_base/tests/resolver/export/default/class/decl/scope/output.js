@@ -1,7 +1,7 @@
-export default class Test {
+export default class Test__2 {
     hi() {
-        let Test__2 = 2;
-        console.log(Test__2);
+        let Test__3 = 2;
+        console.log(Test__3);
     }
-};
-Test = 2;
+}
+Test__2 = 2;

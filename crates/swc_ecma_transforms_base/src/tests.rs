@@ -1,4 +1,3 @@
-use crate::{fixer::fixer, helpers::HELPERS, hygiene::hygiene_with_config};
 use swc_common::{
     comments::SingleThreadedComments,
     errors::{Handler, HANDLER},
@@ -10,6 +9,8 @@ use swc_ecma_codegen::Emitter;
 use swc_ecma_parser::{error::Error, lexer::Lexer, Parser, StringInput, Syntax};
 use swc_ecma_utils::DropSpan;
 use swc_ecma_visit::{as_folder, Fold, FoldWith};
+
+use crate::{fixer::fixer, helpers::HELPERS, hygiene::hygiene_with_config};
 
 pub struct Tester<'a> {
     pub cm: Lrc<SourceMap>,
@@ -48,17 +49,17 @@ impl<'a> Tester<'a> {
         op: F,
     ) -> Result<T, ()>
     where
-        F: FnOnce(&mut Parser<Lexer<StringInput>>) -> Result<T, Error>,
+        F: FnOnce(&mut Parser<Lexer>) -> Result<T, Error>,
     {
         let fm = self
             .cm
             .new_source_file(FileName::Real(file_name.into()), src.into());
 
         let mut p = Parser::new(syntax, StringInput::from(&*fm), Some(&self.comments));
-        let res = op(&mut p).map_err(|e| e.into_diagnostic(&self.handler).emit());
+        let res = op(&mut p).map_err(|e| e.into_diagnostic(self.handler).emit());
 
         for e in p.take_errors() {
-            e.into_diagnostic(&self.handler).emit()
+            e.into_diagnostic(self.handler).emit()
         }
 
         res
@@ -98,10 +99,10 @@ impl<'a> Tester<'a> {
             let mut p = Parser::new(syntax, StringInput::from(&*fm), Some(&self.comments));
             let res = p
                 .parse_module()
-                .map_err(|e| e.into_diagnostic(&self.handler).emit());
+                .map_err(|e| e.into_diagnostic(self.handler).emit());
 
             for e in p.take_errors() {
-                e.into_diagnostic(&self.handler).emit()
+                e.into_diagnostic(self.handler).emit()
             }
 
             res?
@@ -133,7 +134,7 @@ impl<'a> Tester<'a> {
             };
 
             // println!("Emitting: {:?}", module);
-            emitter.emit_module(&module).unwrap();
+            emitter.emit_module(module).unwrap();
         }
 
         let s = String::from_utf8_lossy(&buf);
@@ -163,13 +164,6 @@ impl Fold for Normalizer {
 
         n
     }
-
-    fn fold_str(&mut self, s: Str) -> Str {
-        Str {
-            kind: Default::default(),
-            ..s
-        }
-    }
 }
 
 pub(crate) fn test_transform<F, P>(
@@ -178,7 +172,7 @@ pub(crate) fn test_transform<F, P>(
     input: &str,
     expected: &str,
     ok_if_code_eq: bool,
-    hygiene_config: crate::hygiene::Config,
+    hygiene_config: impl FnOnce() -> crate::hygiene::Config,
 ) where
     F: FnOnce(&mut Tester) -> P,
     P: Fold,
@@ -207,7 +201,7 @@ pub(crate) fn test_transform<F, P>(
         }
 
         let actual = actual
-            .fold_with(&mut hygiene_with_config(hygiene_config))
+            .fold_with(&mut hygiene_with_config(hygiene_config()))
             .fold_with(&mut fixer(None))
             .fold_with(&mut as_folder(DropSpan {
                 preserve_ctxt: false,

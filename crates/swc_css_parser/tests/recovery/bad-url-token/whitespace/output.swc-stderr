@@ -1,8 +1,8 @@
-error: Expected Declaration value
- --> $DIR/tests/recovery/bad-url-token/whitespace/input.css:2:17
-  |
-2 |       background: url(image.
-  |  _________________^
-3 | |     png);
-  | |________^
 
+  x Unexpected bad url in declaration value
+   ,-[$DIR/tests/recovery/bad-url-token/whitespace/input.css:1:1]
+ 1 |     div {
+ 2 | ,->     background: url(image.
+ 3 | `->     png);
+ 4 |         color: red;
+   `----

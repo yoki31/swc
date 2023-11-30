@@ -1,7 +1,8 @@
-use super::*;
-use crate::parser::test_parser;
 use swc_common::DUMMY_SP as span;
 use swc_ecma_visit::assert_eq_ignore_span;
+
+use super::*;
+use crate::parser::test_parser;
 
 fn jsx(src: &'static str) -> Box<Expr> {
     test_parser(
@@ -73,10 +74,7 @@ fn escape_in_attr() {
                     value: Some(JSXAttrValue::Lit(Lit::Str(Str {
                         span,
                         value: "w < w".into(),
-                        has_escape: false,
-                        kind: StrKind::Normal {
-                            contains_quote: true
-                        },
+                        raw: Some("\"w &lt; w\"".into()),
                     }))),
                 })],
                 name: JSXElementName::Ident(Ident::new("div".into(), span)),
@@ -105,7 +103,8 @@ fn issue_584() {
                         span,
                         expr: JSXExpr::Expr(Box::new(Expr::Lit(Lit::Num(Number {
                             span,
-                            value: 4.0
+                            value: 4.0,
+                            raw: Some("4".into())
                         }))))
                     })),
                 })],

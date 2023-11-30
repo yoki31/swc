@@ -1,14 +1,16 @@
-use crate::resolve::Resolve;
+use std::path::{Component, Path, PathBuf};
+
 use anyhow::{bail, Context, Error};
-use dashmap::DashMap;
-use once_cell::sync::Lazy;
-use regex::Regex;
-use std::path::{Component, PathBuf};
 use swc_common::FileName;
+use tracing::{debug, info, trace, warn, Level};
+
+use crate::resolve::Resolve;
 
 #[derive(Debug)]
 enum Pattern {
-    Regex(Regex),
+    Wildcard {
+        prefix: String,
+    },
     /// No wildcard.
     Exact(String),
 }
@@ -23,6 +25,7 @@ where
 {
     inner: R,
     base_url: PathBuf,
+    base_url_filename: FileName,
     paths: Vec<(Pattern, Vec<String>)>,
 }
 
@@ -48,6 +51,13 @@ where
     ///
     /// Note that this is not a hashmap because value is not used as a hash map.
     pub fn new(inner: R, base_url: PathBuf, paths: Vec<(String, Vec<String>)>) -> Self {
+        if cfg!(debug_assertions) {
+            info!(
+                base_url = tracing::field::display(base_url.display()),
+                "jsc.paths"
+            );
+        }
+
         let paths = paths
             .into_iter()
             .map(|(from, to)| {
@@ -57,14 +67,15 @@ where
                     from,
                 );
 
+                let pos = from.as_bytes().iter().position(|&c| c == b'*');
                 let pat = if from.contains('*') {
-                    if from.as_bytes().iter().rposition(|&c| c == b'*')
-                        != from.as_bytes().iter().position(|&c| c == b'*')
-                    {
+                    if from.as_bytes().iter().rposition(|&c| c == b'*') != pos {
                         panic!("`paths.{}` should have only one wildcard", from)
                     }
 
-                    Pattern::Regex(compile_regex(from))
+                    Pattern::Wildcard {
+                        prefix: from[..pos.unwrap()].to_string(),
+                    }
                 } else {
                     assert_eq!(
                         to.len(),
@@ -83,8 +94,61 @@ where
 
         Self {
             inner,
+            base_url_filename: FileName::Real(base_url.clone()),
             base_url,
             paths,
+        }
+    }
+
+    fn invoke_inner_resolver(
+        &self,
+        base: &FileName,
+        module_specifier: &str,
+    ) -> Result<FileName, Error> {
+        let res = self.inner.resolve(base, module_specifier).with_context(|| {
+            format!(
+                "failed to resolve `{module_specifier}` from `{base}` using inner \
+                 resolver\nbase_url={}",
+                self.base_url_filename
+            )
+        });
+
+        match res {
+            Ok(resolved) => {
+                info!(
+                    "Resolved `{}` as `{}` from `{}`",
+                    module_specifier, resolved, base
+                );
+
+                let is_base_in_node_modules = if let FileName::Real(v) = base {
+                    v.components().any(|c| match c {
+                        Component::Normal(v) => v == "node_modules",
+                        _ => false,
+                    })
+                } else {
+                    false
+                };
+                let is_target_in_node_modules = if let FileName::Real(v) = &resolved {
+                    v.components().any(|c| match c {
+                        Component::Normal(v) => v == "node_modules",
+                        _ => false,
+                    })
+                } else {
+                    false
+                };
+
+                // If node_modules is in path, we should return module specifier.
+                if !is_base_in_node_modules && is_target_in_node_modules {
+                    return Ok(FileName::Real(module_specifier.into()));
+                }
+
+                Ok(resolved)
+            }
+
+            Err(err) => {
+                warn!("{:?}", err);
+                Err(err)
+            }
         }
     }
 }
@@ -93,122 +157,145 @@ impl<R> Resolve for TsConfigResolver<R>
 where
     R: Resolve,
 {
-    fn resolve(&self, base: &FileName, src: &str) -> Result<FileName, Error> {
-        if src.starts_with(".") {
-            if src == ".." || src.starts_with("./") || src.starts_with("../") {
-                return self
-                    .inner
-                    .resolve(base, src)
-                    .context("not processed by tsc resolver because it's relative import");
+    fn resolve(&self, base: &FileName, module_specifier: &str) -> Result<FileName, Error> {
+        let _tracing = if cfg!(debug_assertions) {
+            Some(
+                tracing::span!(
+                    Level::ERROR,
+                    "TsConfigResolver::resolve",
+                    base_url = tracing::field::display(self.base_url.display()),
+                    base = tracing::field::display(base),
+                    src = tracing::field::display(module_specifier),
+                )
+                .entered(),
+            )
+        } else {
+            None
+        };
+
+        if module_specifier.starts_with('.')
+            && (module_specifier == ".."
+                || module_specifier.starts_with("./")
+                || module_specifier.starts_with("../"))
+        {
+            return self
+                .invoke_inner_resolver(base, module_specifier)
+                .context("not processed by tsc resolver because it's relative import");
+        }
+
+        if let FileName::Real(v) = base {
+            if v.components().any(|c| match c {
+                Component::Normal(v) => v == "node_modules",
+                _ => false,
+            }) {
+                return self.invoke_inner_resolver(base, module_specifier).context(
+                    "not processed by tsc resolver because base module is in node_modules",
+                );
             }
         }
 
-        match base {
-            FileName::Real(v) => {
-                if v.components().any(|c| match c {
-                    Component::Normal(v) => v == "node_modules",
-                    _ => false,
-                }) {
-                    return self.inner.resolve(base, src).context(
-                        "not processed by tsc resolver because base module is in node_modules",
-                    );
-                }
-            }
-            _ => {}
-        }
+        info!("Checking `jsc.paths`");
 
         // https://www.typescriptlang.org/docs/handbook/module-resolution.html#path-mapping
         for (from, to) in &self.paths {
             match from {
-                Pattern::Regex(from) => {
-                    let captures = from.captures(src);
-                    let captures = match captures {
+                Pattern::Wildcard { prefix } => {
+                    debug!("Checking `{}` in `jsc.paths`", prefix);
+
+                    let extra = module_specifier.strip_prefix(prefix);
+                    let extra = match extra {
                         Some(v) => v,
-                        None => continue,
+                        None => {
+                            if cfg!(debug_assertions) {
+                                trace!("skip because src doesn't start with prefix");
+                            }
+                            continue;
+                        }
                     };
 
-                    let mut iter = captures.iter();
-                    let _ = iter.next();
+                    if cfg!(debug_assertions) {
+                        debug!("Extra: `{}`", extra);
+                    }
 
-                    let capture = iter.next().flatten().expect(
-                        "capture group should be created by initializer of TsConfigResolver",
-                    );
                     let mut errors = vec![];
                     for target in to {
-                        let mut replaced = target.replace('*', capture.as_str());
-                        let rel = format!("./{}", replaced);
+                        let mut replaced = target.replace('*', extra);
 
-                        let res = self.inner.resolve(base, &rel).with_context(|| {
-                            format!(
-                                "failed to resolve `{}`, which is expanded from `{}`",
-                                replaced, src
+                        let _tracing = if cfg!(debug_assertions) {
+                            Some(
+                                tracing::span!(
+                                    Level::ERROR,
+                                    "TsConfigResolver::resolve::jsc.paths",
+                                    replaced = tracing::field::display(&replaced),
+                                )
+                                .entered(),
                             )
-                        });
+                        } else {
+                            None
+                        };
+
+                        let relative = format!("./{}", replaced);
+
+                        let res = self
+                            .invoke_inner_resolver(base, module_specifier)
+                            .or_else(|_| {
+                                self.invoke_inner_resolver(&self.base_url_filename, &relative)
+                            })
+                            .or_else(|_| {
+                                self.invoke_inner_resolver(&self.base_url_filename, &replaced)
+                            });
 
                         errors.push(match res {
-                            Ok(v) => return Ok(v),
+                            Ok(resolved) => return Ok(resolved),
                             Err(err) => err,
                         });
 
                         if cfg!(target_os = "windows") {
-                            if replaced.starts_with("./") {
-                                replaced = replaced[2..].to_string();
-                            }
                             replaced = replaced.replace('/', "\\");
                         }
 
                         if to.len() == 1 {
-                            return Ok(FileName::Real(self.base_url.join(replaced)));
+                            info!(
+                                "Using `{}` for `{}` because the length of the jsc.paths entry is \
+                                 1",
+                                replaced, module_specifier
+                            );
+                            return Ok(FileName::Real(replaced.into()));
                         }
                     }
 
                     bail!(
                         "`{}` matched `{}` (from tsconfig.paths) but failed to resolve:\n{:?}",
-                        src,
-                        from.as_str(),
+                        module_specifier,
+                        prefix,
                         errors
                     )
                 }
                 Pattern::Exact(from) => {
                     // Should be exactly matched
-                    if src == from {
-                        let replaced = self.base_url.join(&to[0]);
-                        if replaced.exists() {
-                            return Ok(FileName::Real(replaced));
-                        }
-
-                        return self
-                            .inner
-                            .resolve(base, &format!("./{}", &to[0]))
-                            .with_context(|| {
-                                format!(
-                                    "tried to resolve `{}` because `{}` was exactly matched",
-                                    to[0], from
-                                )
-                            });
+                    if module_specifier != from {
+                        continue;
                     }
+
+                    let tp = Path::new(&to[0]);
+                    if tp.is_absolute() {
+                        return Ok(FileName::Real(tp.into()));
+                    }
+
+                    if let Ok(res) = self.resolve(&self.base_url_filename, &format!("./{}", &to[0]))
+                    {
+                        return Ok(res);
+                    }
+
+                    return Ok(FileName::Real(self.base_url.join(&to[0])));
                 }
             }
         }
 
-        self.inner.resolve(base, src)
+        if let Ok(v) = self.invoke_inner_resolver(&self.base_url_filename, module_specifier) {
+            return Ok(v);
+        }
+
+        self.invoke_inner_resolver(base, module_specifier)
     }
-}
-
-fn compile_regex(src: String) -> Regex {
-    static CACHE: Lazy<DashMap<String, Regex, ahash::RandomState>> =
-        Lazy::new(|| Default::default());
-
-    if !CACHE.contains_key(&*src) {
-        // Create capture group
-        let regex_pat = src.replace("*", "(.*)");
-        let re = Regex::new(&regex_pat).unwrap_or_else(|err| {
-            panic!("failed to compile `{}` as a pattern: {:?}", regex_pat, err)
-        });
-        CACHE.insert(src.clone(), re);
-    }
-
-    let re = CACHE.get(&*src).unwrap();
-
-    (*re).clone()
 }

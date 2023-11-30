@@ -1,14 +1,16 @@
 //! Utilities for testing.
-use super::{load::TransformedModule, Bundler, Config};
-use crate::{load::ModuleData, util::HygieneRemover, Load, ModuleRecord, Resolve};
+use std::path::PathBuf;
+
 use anyhow::Error;
 use indexmap::IndexMap;
-use std::path::PathBuf;
-use swc_common::{sync::Lrc, FileName, SourceMap, Span, GLOBALS};
+use swc_common::{collections::ARandomState, sync::Lrc, FileName, SourceMap, Span, GLOBALS};
 use swc_ecma_ast::*;
 use swc_ecma_parser::{lexer::Lexer, Parser, StringInput};
 use swc_ecma_utils::drop_span;
 use swc_ecma_visit::VisitMutWith;
+
+use super::{load::TransformedModule, Bundler, Config};
+use crate::{load::ModuleData, util::HygieneRemover, Load, ModuleRecord, Resolve};
 
 pub(crate) struct Tester<'a> {
     pub cm: Lrc<SourceMap>,
@@ -17,7 +19,7 @@ pub(crate) struct Tester<'a> {
 
 pub struct Loader {
     cm: Lrc<SourceMap>,
-    files: IndexMap<String, String, ahash::RandomState>,
+    files: IndexMap<String, String, ARandomState>,
 }
 
 impl Load for Loader {
@@ -106,7 +108,7 @@ pub(crate) fn suite() -> TestBuilder {
 
 #[derive(Default)]
 pub(crate) struct TestBuilder {
-    files: IndexMap<String, String, ahash::RandomState>,
+    files: IndexMap<String, String, ARandomState>,
 }
 
 impl TestBuilder {
@@ -132,6 +134,9 @@ impl TestBuilder {
                     Config {
                         require: true,
                         disable_inliner: true,
+                        disable_hygiene: false,
+                        disable_fixer: false,
+                        disable_dce: false,
                         external_modules: vec![],
                         module: Default::default(),
                     },

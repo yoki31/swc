@@ -1,5 +1,5 @@
 {
-  "mappings": ";;;;;AAEO,KAAK,CAACA,GAAG,GAAG,CAAC;IAChBC,GAAG,EAAE,CAAC,CAAC;AACX,CAAC;QAFYD,GAAG,GAAHA,GAAG",
+  "mappings": ";;;;+BAAaA;;;eAAAA;;;AAAN,MAAMA,MAAM;IACfC,KAAK,EAAE;AACX",
   "names": [
     "foo",
     "arr"
@@ -8,7 +8,7 @@
     "../../input/index.ts"
   ],
   "sourcesContent": [
-    "\n\nexport const foo = {\n    arr: []\n};"
+    "export const foo = {\n    arr: [],\n};\n"
   ],
   "version": 3
 }

@@ -2,56 +2,56 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                0,
+                1,
             ),
             hi: BytePos(
-                6,
+                7,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    0,
+                    1,
                 ),
                 hi: BytePos(
-                    0,
+                    1,
                 ),
                 ctxt: #0,
             },
-            value: Atom('' type=static),
+            value: "",
         },
         tags: [
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        0,
+                        1,
                     ),
                     hi: BytePos(
-                        6,
+                        7,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            0,
+                            1,
                         ),
                         hi: BytePos(
-                            6,
+                            7,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('module' type=static),
+                    value: "module",
                 },
                 tag: Module(
                     ModuleTag {
                         span: Span {
                             lo: BytePos(
-                                0,
+                                1,
                             ),
                             hi: BytePos(
-                                6,
+                                7,
                             ),
                             ctxt: #0,
                         },
@@ -65,19 +65,19 @@
                                 ),
                                 ctxt: #0,
                             },
-                            value: Atom('' type=static),
+                            value: "",
                         },
                         ty: Text {
                             span: Span {
                                 lo: BytePos(
-                                    0,
+                                    1,
                                 ),
                                 hi: BytePos(
-                                    5,
+                                    6,
                                 ),
                                 ctxt: #0,
                             },
-                            value: Atom('color' type=inline),
+                            value: "color",
                         },
                     },
                 ),
@@ -87,129 +87,128 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                28,
+                29,
             ),
             hi: BytePos(
-                28,
+                29,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    28,
+                    29,
                 ),
                 hi: BytePos(
-                    51,
+                    52,
                 ),
                 ctxt: #0,
             },
-            value: Atom('The name of the module.' type=dynamic),
+            value: "The name of the module.",
         },
         tags: [],
     },
     JsDoc {
         span: Span {
             lo: BytePos(
-                89,
+                90,
             ),
             hi: BytePos(
-                89,
+                90,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    89,
+                    90,
                 ),
                 hi: BytePos(
-                    119,
+                    120,
                 ),
                 ctxt: #0,
             },
-            value: Atom('The most recent blended color.' type=dynamic),
+            value: "The most recent blended color.",
         },
         tags: [],
     },
     JsDoc {
         span: Span {
             lo: BytePos(
-                157,
+                158,
             ),
             hi: BytePos(
-                157,
+                158,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    157,
+                    158,
                 ),
                 hi: BytePos(
-                    183,
+                    184,
                 ),
                 ctxt: #0,
             },
-            value: Atom('Blend two colors together.' type=dynamic),
+            value: "Blend two colors together.",
         },
         tags: [],
     },
     JsDoc {
         span: Span {
             lo: BytePos(
-                321,
+                322,
             ),
             hi: BytePos(
-                321,
+                322,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    321,
+                    322,
                 ),
                 hi: BytePos(
-                    375,
+                    376,
                 ),
                 ctxt: #0,
             },
-            value: Atom('Get the red, green, and blue values of a color.
-                 *' type=dynamic),
+            value: "Get the red, green, and blue values of a color.\n     *",
         },
         tags: [
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        321,
+                        322,
                     ),
                     hi: BytePos(
-                        329,
+                        330,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            321,
+                            322,
                         ),
                         hi: BytePos(
-                            329,
+                            330,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('function' type=static),
+                    value: "function",
                 },
                 tag: Function(
                     FunctionTag {
                         span: Span {
                             lo: BytePos(
-                                321,
+                                322,
                             ),
                             hi: BytePos(
-                                329,
+                                330,
                             ),
                             ctxt: #0,
                         },

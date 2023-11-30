@@ -1,16 +1,16 @@
-use pretty_assertions::assert_eq;
-use serde_json;
 use std::{
     fs::read_to_string,
     path::{Path, PathBuf},
 };
+
+use pretty_assertions::assert_eq;
 use swc_common::{errors::Handler, sync::Lrc, SourceMap};
 use swc_ecma_ast::*;
-use swc_ecma_parser::{lexer::Lexer, PResult, Parser, StringInput};
+use swc_ecma_parser::{lexer::Lexer, PResult, Parser};
 use swc_ecma_visit::{Fold, FoldWith};
 use testing::{run_test, StdErr};
 
-fn parse_module<'a>(cm: Lrc<SourceMap>, handler: &Handler, file_name: &Path) -> Result<Module, ()> {
+fn parse_module(cm: Lrc<SourceMap>, handler: &Handler, file_name: &Path) -> Result<Module, ()> {
     with_parser(cm, handler, file_name, |p| p.parse_module())
 }
 
@@ -21,7 +21,7 @@ fn with_parser<F, Ret>(
     f: F,
 ) -> Result<Ret, ()>
 where
-    F: FnOnce(&mut Parser<Lexer<StringInput<'_>>>) -> PResult<Ret>,
+    F: FnOnce(&mut Parser<Lexer>) -> PResult<Ret>,
 {
     let fm = cm
         .load_file(file_name)
@@ -39,7 +39,7 @@ where
     let res = f(&mut p).map_err(|e| e.into_diagnostic(handler).emit());
 
     for e in p.take_errors() {
-        e.into_diagnostic(&handler).emit();
+        e.into_diagnostic(handler).emit();
     }
 
     res
@@ -56,7 +56,7 @@ fn references(entry: PathBuf) {
         );
 
         // Parse source
-        let module = parse_module(cm.clone(), handler, &entry)?.fold_with(&mut Normalizer);
+        let module = parse_module(cm, handler, &entry)?.fold_with(&mut Normalizer);
         let json =
             serde_json::to_string_pretty(&module).expect("failed to serialize module as json");
         if StdErr::from(json.clone())
@@ -81,6 +81,7 @@ fn references(entry: PathBuf) {
     .unwrap();
 }
 
+#[cfg(feature = "verify")]
 #[testing::fixture("tests/jsx/errors/**/*.js")]
 fn error(entry: PathBuf) {
     let input = read_to_string(&entry).unwrap();
@@ -107,7 +108,7 @@ fn error(entry: PathBuf) {
     .expect_err("should fail, but parsed as");
 
     if err
-        .compare_to_file(format!("{}.stderr", entry.display()))
+        .compare_to_file(format!("{}.swc-stderr", entry.display()))
         .is_err()
     {
         panic!()

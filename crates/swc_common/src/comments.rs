@@ -1,12 +1,15 @@
+use std::{
+    cell::{Ref, RefCell, RefMut},
+    rc::Rc,
+    sync::Arc,
+};
+
+use rustc_hash::FxHashMap;
+use swc_atoms::{atom, Atom};
+
 use crate::{
     pos::Spanned,
     syntax_pos::{BytePos, Span, DUMMY_SP},
-};
-use rustc_hash::FxHashMap;
-use std::{
-    cell::{Ref, RefCell},
-    rc::Rc,
-    sync::Arc,
 };
 
 /// Stores comment.
@@ -50,7 +53,7 @@ pub trait Comments {
         let cmts = self.take_leading(pos);
 
         let ret = if let Some(cmts) = &cmts {
-            f(&cmts)
+            f(cmts)
         } else {
             f(&[])
         };
@@ -70,13 +73,54 @@ pub trait Comments {
         let cmts = self.take_trailing(pos);
 
         let ret = if let Some(cmts) = &cmts {
-            f(&cmts)
+            f(cmts)
         } else {
             f(&[])
         };
 
         if let Some(cmts) = cmts {
             self.add_trailing_comments(pos, cmts);
+        }
+
+        ret
+    }
+
+    /// This method is used to check if a comment with the given flag exist.
+    ///
+    /// If `flag` is `PURE`, this method will look for `@__PURE__` and
+    /// `#__PURE__`.
+    fn has_flag(&self, lo: BytePos, flag: &str) -> bool {
+        let cmts = self.take_leading(lo);
+
+        let ret = if let Some(comments) = &cmts {
+            (|| {
+                for c in comments {
+                    if c.kind == CommentKind::Block {
+                        for line in c.text.lines() {
+                            // jsdoc
+                            let line = line.trim_start_matches(['*', ' ']);
+                            let line = line.trim();
+
+                            //
+                            if line.len() == (flag.len() + 5)
+                                && (line.starts_with("#__") || line.starts_with("@__"))
+                                && line.ends_with("__")
+                                && flag == &line[3..line.len() - 2]
+                            {
+                                return true;
+                            }
+                        }
+                    }
+                }
+
+                false
+            })()
+        } else {
+            false
+        };
+
+        if let Some(cmts) = cmts {
+            self.add_trailing_comments(lo, cmts);
         }
 
         ret
@@ -135,6 +179,10 @@ macro_rules! delegate {
 
         fn add_pure_comment(&self, pos: BytePos) {
             (**self).add_pure_comment(pos)
+        }
+
+        fn has_flag(&self, lo: BytePos, flag: &str) -> bool {
+            (**self).has_flag(lo, flag)
         }
     };
 }
@@ -222,6 +270,11 @@ impl Comments for NoopComments {
 
     #[cfg_attr(not(debug_assertions), inline(always))]
     fn add_pure_comment(&self, _: BytePos) {}
+
+    #[inline]
+    fn has_flag(&self, _: BytePos, _: &str) -> bool {
+        false
+    }
 }
 
 /// This implementation behaves like [NoopComments] if it's [None].
@@ -314,6 +367,8 @@ where
     }
 
     fn add_pure_comment(&self, pos: BytePos) {
+        assert_ne!(pos, BytePos(0), "cannot add pure comment to zero position");
+
         if let Some(c) = self {
             c.add_pure_comment(pos)
         }
@@ -340,6 +395,15 @@ where
             c.with_trailing(pos, f)
         } else {
             f(&[])
+        }
+    }
+
+    #[inline]
+    fn has_flag(&self, lo: BytePos, flag: &str) -> bool {
+        if let Some(c) = self {
+            c.has_flag(lo, flag)
+        } else {
+            false
         }
     }
 }
@@ -376,10 +440,14 @@ impl Comments for SingleThreadedComments {
     }
 
     fn move_leading(&self, from: BytePos, to: BytePos) {
-        let cmt = self.leading.borrow_mut().remove(&from);
+        let cmt = self.take_leading(from);
 
-        if let Some(cmt) = cmt {
-            self.leading.borrow_mut().entry(to).or_default().extend(cmt);
+        if let Some(mut cmt) = cmt {
+            if from < to && self.has_leading(to) {
+                cmt.extend(self.take_leading(to).unwrap());
+            }
+
+            self.add_leading_comments(to, cmt);
         }
     }
 
@@ -412,14 +480,14 @@ impl Comments for SingleThreadedComments {
     }
 
     fn move_trailing(&self, from: BytePos, to: BytePos) {
-        let cmt = self.trailing.borrow_mut().remove(&from);
+        let cmt = self.take_trailing(from);
 
-        if let Some(cmt) = cmt {
-            self.trailing
-                .borrow_mut()
-                .entry(to)
-                .or_default()
-                .extend(cmt);
+        if let Some(mut cmt) = cmt {
+            if from < to && self.has_trailing(to) {
+                cmt.extend(self.take_trailing(to).unwrap());
+            }
+
+            self.add_trailing_comments(to, cmt);
         }
     }
 
@@ -432,12 +500,14 @@ impl Comments for SingleThreadedComments {
     }
 
     fn add_pure_comment(&self, pos: BytePos) {
+        assert_ne!(pos, BytePos(0), "cannot add pure comment to zero position");
+
         let mut leading_map = self.leading.borrow_mut();
         let leading = leading_map.entry(pos).or_default();
         let pure_comment = Comment {
             kind: CommentKind::Block,
             span: DUMMY_SP,
-            text: "#__PURE__".into(),
+            text: atom!("#__PURE__"),
         };
 
         if !leading.iter().any(|c| c.text == pure_comment.text) {
@@ -453,13 +523,11 @@ impl Comments for SingleThreadedComments {
         let b = self.leading.borrow();
         let cmts = b.get(&pos);
 
-        let ret = if let Some(cmts) = &cmts {
-            f(&cmts)
+        if let Some(cmts) = &cmts {
+            f(cmts)
         } else {
             f(&[])
-        };
-
-        ret
+        }
     }
 
     fn with_trailing<F, Ret>(&self, pos: BytePos, f: F) -> Ret
@@ -470,13 +538,36 @@ impl Comments for SingleThreadedComments {
         let b = self.trailing.borrow();
         let cmts = b.get(&pos);
 
-        let ret = if let Some(cmts) = &cmts {
-            f(&cmts)
+        if let Some(cmts) = &cmts {
+            f(cmts)
         } else {
             f(&[])
-        };
+        }
+    }
 
-        ret
+    fn has_flag(&self, lo: BytePos, flag: &str) -> bool {
+        self.with_leading(lo, |comments| {
+            for c in comments {
+                if c.kind == CommentKind::Block {
+                    for line in c.text.lines() {
+                        // jsdoc
+                        let line = line.trim_start_matches(['*', ' ']);
+                        let line = line.trim();
+
+                        //
+                        if line.len() == (flag.len() + 5)
+                            && (line.starts_with("#__") || line.starts_with("@__"))
+                            && line.ends_with("__")
+                            && flag == &line[3..line.len() - 2]
+                        {
+                            return true;
+                        }
+                    }
+                }
+            }
+
+            false
+        })
     }
 }
 
@@ -496,13 +587,23 @@ impl SingleThreadedComments {
     }
 
     /// Borrows all the comments as (leading, trailing).
-    pub fn borrow_all<'a>(
-        &'a self,
+    pub fn borrow_all(
+        &self,
     ) -> (
-        Ref<'a, SingleThreadedCommentsMapInner>,
-        Ref<'a, SingleThreadedCommentsMapInner>,
+        Ref<SingleThreadedCommentsMapInner>,
+        Ref<SingleThreadedCommentsMapInner>,
     ) {
         (self.leading.borrow(), self.trailing.borrow())
+    }
+
+    /// Borrows all the comments as (leading, trailing).
+    pub fn borrow_all_mut(
+        &self,
+    ) -> (
+        RefMut<SingleThreadedCommentsMapInner>,
+        RefMut<SingleThreadedCommentsMapInner>,
+    ) {
+        (self.leading.borrow_mut(), self.trailing.borrow_mut())
     }
 
     pub fn with_leading<F, Ret>(&self, pos: BytePos, op: F) -> Ret
@@ -510,7 +611,7 @@ impl SingleThreadedComments {
         F: FnOnce(&[Comment]) -> Ret,
     {
         if let Some(comments) = self.leading.borrow().get(&pos) {
-            op(&*comments)
+            op(comments)
         } else {
             op(&[])
         }
@@ -521,18 +622,25 @@ impl SingleThreadedComments {
         F: FnOnce(&[Comment]) -> Ret,
     {
         if let Some(comments) = self.trailing.borrow().get(&pos) {
-            op(&*comments)
+            op(comments)
         } else {
             op(&[])
         }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(
+    any(feature = "rkyv-impl"),
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
+#[cfg_attr(feature = "rkyv-impl", archive(check_bytes))]
+#[cfg_attr(feature = "rkyv-impl", archive_attr(repr(C)))]
 pub struct Comment {
     pub kind: CommentKind,
     pub span: Span,
-    pub text: String,
+    /// [`Atom::new_bad`][] is perfectly fine for this value.
+    pub text: Atom,
 }
 
 impl Spanned for Comment {
@@ -541,10 +649,15 @@ impl Spanned for Comment {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(
+    any(feature = "rkyv-impl"),
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
+#[cfg_attr(feature = "rkyv-impl", archive(check_bytes))]
 pub enum CommentKind {
-    Line,
-    Block,
+    Line = 0,
+    Block = 1,
 }
 
 #[deprecated(

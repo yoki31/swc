@@ -1,25 +1,80 @@
-use super::Optimizer;
-use crate::{compress::util::eval_as_number, mode::Mode, DISABLE_BUGGY_PASSES};
 use std::num::FpCategory;
-use swc_atoms::js_word;
+
+use swc_atoms::atom;
 use swc_common::{util::take::Take, Spanned, SyntaxContext, DUMMY_SP};
 use swc_ecma_ast::*;
-use swc_ecma_utils::{ident::IdentLike, undefined, ExprExt, Value::Known};
+use swc_ecma_utils::{undefined, ExprExt, Value::Known};
+
+use super::Optimizer;
+use crate::{compress::util::eval_as_number, maybe_par, DISABLE_BUGGY_PASSES};
 
 /// Methods related to the option `evaluate`.
-impl<M> Optimizer<'_, M>
-where
-    M: Mode,
-{
+impl Optimizer<'_> {
     /// Evaluate expression if possible.
     ///
-    /// This method call apppropriate methods for each ast types.
+    /// This method call appropriate methods for each ast types.
     pub(super) fn evaluate(&mut self, e: &mut Expr) {
         self.eval_global_vars(e);
+
+        self.eval_fn_props(e);
 
         self.eval_numbers(e);
 
         self.eval_known_static_method_call(e);
+    }
+
+    fn eval_fn_props(&mut self, e: &mut Expr) -> Option<()> {
+        if self.ctx.is_delete_arg || self.ctx.is_update_arg || self.ctx.is_lhs_of_assign {
+            return None;
+        }
+
+        if let Expr::Member(MemberExpr {
+            span,
+            obj,
+            prop: MemberProp::Ident(prop),
+            ..
+        }) = e
+        {
+            if let Expr::Ident(obj) = &**obj {
+                let metadata = *self.functions.get(&obj.to_id())?;
+
+                let usage = self.data.vars.get(&obj.to_id())?;
+
+                if usage.reassigned {
+                    return None;
+                }
+
+                if self.options.unsafe_passes {
+                    match &*prop.sym {
+                        "length" => {
+                            report_change!("evaluate: function.length");
+
+                            *e = Expr::Lit(Lit::Num(Number {
+                                span: *span,
+                                value: metadata.len as _,
+                                raw: None,
+                            }));
+                            self.changed = true;
+                        }
+
+                        "name" => {
+                            report_change!("evaluate: function.name");
+
+                            *e = Expr::Lit(Lit::Str(Str {
+                                span: *span,
+                                value: obj.sym.clone(),
+                                raw: None,
+                            }));
+                            self.changed = true;
+                        }
+
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        None
     }
 
     fn eval_global_vars(&mut self, e: &mut Expr) {
@@ -27,58 +82,51 @@ where
             return;
         }
 
-        if self.ctx.is_delete_arg || self.ctx.is_update_arg || self.ctx.is_lhs_of_assign {
+        if self.ctx.is_delete_arg
+            || self.ctx.is_update_arg
+            || self.ctx.is_lhs_of_assign
+            || self.ctx.in_with_stmt
+        {
             return;
         }
 
         // We should not convert used-defined `undefined` to `void 0`.
-        match e {
-            Expr::Ident(i) => {
-                if self
-                    .data
-                    .as_ref()
-                    .and_then(|data| data.vars.get(&i.to_id()))
-                    .map(|var| var.declared)
-                    .unwrap_or(false)
-                {
-                    return;
-                }
+        if let Expr::Ident(i) = e {
+            if self
+                .data
+                .vars
+                .get(&i.to_id())
+                .map(|var| var.declared)
+                .unwrap_or(false)
+            {
+                return;
             }
-            _ => {}
         }
 
         match e {
-            Expr::Ident(Ident {
-                span,
-                sym: js_word!("undefined"),
-                ..
-            }) => {
-                tracing::debug!("evaluate: `undefined` -> `void 0`");
+            Expr::Ident(Ident { span, sym, .. }) if &**sym == "undefined" => {
+                report_change!("evaluate: `undefined` -> `void 0`");
                 self.changed = true;
                 *e = *undefined(*span);
-                return;
             }
 
-            Expr::Ident(Ident {
-                span,
-                sym: js_word!("Infinity"),
-                ..
-            }) => {
-                tracing::debug!("evaluate: `Infinity` -> `1 / 0`");
+            Expr::Ident(Ident { span, sym, .. }) if &**sym == "Infinity" => {
+                report_change!("evaluate: `Infinity` -> `1 / 0`");
                 self.changed = true;
                 *e = Expr::Bin(BinExpr {
-                    span: span.with_ctxt(self.done_ctxt),
+                    span: *span,
                     op: op!("/"),
                     left: Box::new(Expr::Lit(Lit::Num(Number {
                         span: DUMMY_SP,
                         value: 1.0,
+                        raw: None,
                     }))),
                     right: Box::new(Expr::Lit(Lit::Num(Number {
                         span: DUMMY_SP,
                         value: 0.0,
+                        raw: None,
                     }))),
                 });
-                return;
             }
 
             _ => {}
@@ -99,7 +147,7 @@ where
         let (span, callee, args) = match e {
             Expr::Call(CallExpr {
                 span,
-                callee: ExprOrSuper::Expr(callee),
+                callee: Callee::Expr(callee),
                 args,
                 ..
             }) => (span, callee, args),
@@ -110,17 +158,14 @@ where
         //
 
         for arg in &*args {
-            if arg.spread.is_some() || arg.expr.may_have_side_effects() {
+            if arg.spread.is_some() || arg.expr.may_have_side_effects(&self.expr_ctx) {
                 return;
             }
         }
 
         match &**callee {
-            Expr::Ident(Ident {
-                sym: js_word!("RegExp"),
-                ..
-            }) if self.options.unsafe_regexp => {
-                if args.len() >= 1 {
+            Expr::Ident(Ident { sym, .. }) if &**sym == "RegExp" && self.options.unsafe_regexp => {
+                if !args.is_empty() {
                     self.optimize_expr_in_str_ctx(&mut args[0].expr);
                 }
                 if args.len() >= 2 {
@@ -133,27 +178,28 @@ where
                 }
 
                 match args.len() {
-                    0 => return,
-                    1 => match &*args[0].expr {
-                        Expr::Lit(Lit::Str(exp)) => {
+                    0 => {}
+                    1 => {
+                        if let Expr::Lit(Lit::Str(exp)) = &*args[0].expr {
                             self.changed = true;
-                            tracing::debug!(
+                            report_change!(
                                 "evaluate: Converting RegExpr call into a regexp literal `/{}/`",
                                 exp.value
                             );
 
                             *e = Expr::Lit(Lit::Regex(Regex {
                                 span,
-                                exp: exp.value.clone(),
-                                flags: js_word!(""),
+                                exp: exp.value.as_ref().into(),
+                                flags: atom!(""),
                             }));
                         }
-                        _ => {}
-                    },
-                    _ => match (&*args[0].expr, &*args[1].expr) {
-                        (Expr::Lit(Lit::Str(exp)), Expr::Lit(Lit::Str(flags))) => {
+                    }
+                    _ => {
+                        if let (Expr::Lit(Lit::Str(exp)), Expr::Lit(Lit::Str(flags))) =
+                            (&*args[0].expr, &*args[1].expr)
+                        {
                             self.changed = true;
-                            tracing::debug!(
+                            report_change!(
                                 "evaluate: Converting RegExpr call into a regexp literal `/{}/{}`",
                                 exp.value,
                                 flags.value
@@ -161,143 +207,116 @@ where
 
                             *e = Expr::Lit(Lit::Regex(Regex {
                                 span,
-                                exp: exp.value.clone(),
-                                flags: flags.value.clone(),
+                                exp: exp.value.as_ref().into(),
+                                flags: flags.value.as_ref().into(),
                             }));
                         }
-                        _ => {}
-                    },
+                    }
                 }
             }
 
             Expr::Member(MemberExpr {
-                obj: ExprOrSuper::Expr(obj),
-                prop,
-                computed: false,
+                obj,
+                prop: MemberProp::Ident(prop),
                 ..
-            }) => {
-                let prop = match &**prop {
-                    Expr::Ident(i) => i,
-                    _ => return,
-                };
+            }) => match &**obj {
+                Expr::Ident(Ident { sym, .. }) if &**sym == "String" => {
+                    if &*prop.sym == "fromCharCode" {
+                        if args.len() != 1 {
+                            return;
+                        }
 
-                match &**obj {
-                    Expr::Ident(Ident {
-                        sym: js_word!("String"),
-                        ..
-                    }) => match &*prop.sym {
-                        "fromCharCode" => {
-                            if args.len() != 1 {
-                                return;
-                            }
+                        if let Known(char_code) = args[0].expr.as_pure_number(&self.expr_ctx) {
+                            let v = char_code.floor() as u32;
 
-                            if let Known(char_code) = args[0].expr.as_number() {
-                                let v = char_code.floor() as u32;
-
-                                match char::from_u32(v) {
-                                    Some(v) => {
-                                        self.changed = true;
-                                        tracing::debug!(
-                                            "evanluate: Evaluated `String.charCodeAt({})` as `{}`",
-                                            char_code,
-                                            v
-                                        );
-                                        *e = Expr::Lit(Lit::Str(Str {
-                                            span: e.span(),
-                                            value: v.to_string().into(),
-                                            has_escape: false,
-                                            kind: Default::default(),
-                                        }));
-                                        return;
-                                    }
-                                    None => {}
+                            if let Some(v) = char::from_u32(v) {
+                                if !v.is_ascii() {
+                                    return;
                                 }
+                                self.changed = true;
+                                report_change!(
+                                    "evaluate: Evaluated `String.charCodeAt({})` as `{}`",
+                                    char_code,
+                                    v
+                                );
+
+                                let value = v.to_string();
+
+                                *e = Expr::Lit(Lit::Str(Str {
+                                    span: e.span(),
+                                    raw: None,
+                                    value: value.into(),
+                                }));
                             }
                         }
-                        _ => {}
-                    },
+                    }
+                }
 
-                    Expr::Ident(Ident {
-                        sym: js_word!("Object"),
-                        ..
-                    }) => match &*prop.sym {
-                        "keys" => {
-                            if args.len() != 1 {
-                                return;
-                            }
+                Expr::Ident(Ident { sym, .. }) if &**sym == "Object" => {
+                    if &*prop.sym == "keys" {
+                        if args.len() != 1 {
+                            return;
+                        }
 
-                            let obj = match &*args[0].expr {
-                                Expr::Object(obj) => obj,
-                                _ => return,
-                            };
+                        let obj = match &*args[0].expr {
+                            Expr::Object(obj) => obj,
+                            _ => return,
+                        };
 
-                            let mut keys = vec![];
+                        let mut keys = vec![];
 
-                            for prop in &obj.props {
-                                match prop {
-                                    PropOrSpread::Spread(_) => return,
-                                    PropOrSpread::Prop(p) => match &**p {
-                                        Prop::Shorthand(p) => {
+                        for prop in &obj.props {
+                            match prop {
+                                PropOrSpread::Spread(_) => return,
+                                PropOrSpread::Prop(p) => match &**p {
+                                    Prop::Shorthand(p) => {
+                                        keys.push(Some(ExprOrSpread {
+                                            spread: None,
+                                            expr: Box::new(Expr::Lit(Lit::Str(Str {
+                                                span: p.span,
+                                                raw: None,
+                                                value: p.sym.clone(),
+                                            }))),
+                                        }));
+                                    }
+                                    Prop::KeyValue(p) => match &p.key {
+                                        PropName::Ident(key) => {
                                             keys.push(Some(ExprOrSpread {
                                                 spread: None,
                                                 expr: Box::new(Expr::Lit(Lit::Str(Str {
-                                                    span: p.span,
-                                                    value: p.sym.clone(),
-                                                    has_escape: false,
-                                                    kind: Default::default(),
+                                                    span: key.span,
+                                                    raw: None,
+                                                    value: key.sym.clone(),
                                                 }))),
                                             }));
                                         }
-                                        Prop::KeyValue(p) => match &p.key {
-                                            PropName::Ident(key) => {
-                                                keys.push(Some(ExprOrSpread {
-                                                    spread: None,
-                                                    expr: Box::new(Expr::Lit(Lit::Str(Str {
-                                                        span: key.span,
-                                                        value: key.sym.clone(),
-                                                        has_escape: false,
-                                                        kind: Default::default(),
-                                                    }))),
-                                                }));
-                                            }
-                                            PropName::Str(key) => {
-                                                keys.push(Some(ExprOrSpread {
-                                                    spread: None,
-                                                    expr: Box::new(Expr::Lit(Lit::Str(
-                                                        key.clone(),
-                                                    ))),
-                                                }));
-                                            }
-                                            _ => return,
-                                        },
+                                        PropName::Str(key) => {
+                                            keys.push(Some(ExprOrSpread {
+                                                spread: None,
+                                                expr: Box::new(Expr::Lit(Lit::Str(key.clone()))),
+                                            }));
+                                        }
                                         _ => return,
                                     },
-                                }
+                                    _ => return,
+                                },
                             }
-
-                            *e = Expr::Array(ArrayLit { span, elems: keys })
                         }
 
-                        _ => {}
-                    },
-
-                    Expr::Ident(Ident { sym, .. }) => match &**sym {
-                        "console" => match &*prop.sym {
-                            "log" => {
-                                for arg in args {
-                                    self.optimize_expr_in_str_ctx_unsafely(&mut arg.expr);
-                                }
-                            }
-
-                            _ => {}
-                        },
-
-                        _ => {}
-                    },
-
-                    _ => {}
+                        *e = Expr::Array(ArrayLit { span, elems: keys })
+                    }
                 }
-            }
+
+                Expr::Ident(Ident { sym, .. }) => {
+                    if &**sym == "console" && &*prop.sym == "log" {
+                        for arg in args {
+                            self.optimize_expr_in_str_ctx_unsafely(&mut arg.expr);
+                        }
+                    }
+                }
+
+                _ => {}
+            },
             _ => {}
         }
     }
@@ -311,111 +330,100 @@ where
             return;
         }
 
-        match e {
-            Expr::Call(..) => {
-                if let Some(value) = eval_as_number(&e) {
-                    self.changed = true;
-                    tracing::debug!("evaluate: Evaluated an expression as `{}`", value);
+        if let Expr::Call(..) = e {
+            if let Some(value) = eval_as_number(&self.expr_ctx, e) {
+                self.changed = true;
+                report_change!("evaluate: Evaluated an expression as `{}`", value);
 
-                    *e = Expr::Lit(Lit::Num(Number {
-                        span: e.span(),
-                        value,
-                    }));
-                    return;
-                }
+                *e = Expr::Lit(Lit::Num(Number {
+                    span: e.span(),
+                    value,
+                    raw: None,
+                }));
+                return;
             }
-            _ => {}
         }
 
         match e {
             Expr::Bin(bin @ BinExpr { op: op!("**"), .. }) => {
-                let l = bin.left.as_number();
-                let r = bin.right.as_number();
+                let l = bin.left.as_pure_number(&self.expr_ctx);
+                let r = bin.right.as_pure_number(&self.expr_ctx);
 
                 if let Known(l) = l {
                     if let Known(r) = r {
                         self.changed = true;
-                        tracing::debug!("evaluate: Evaulated `{:?} ** {:?}`", l, r);
+                        report_change!("evaluate: Evaluated `{:?} ** {:?}`", l, r);
 
                         let value = l.powf(r);
                         *e = Expr::Lit(Lit::Num(Number {
                             span: bin.span,
                             value,
+                            raw: None,
                         }));
-                        return;
                     }
                 }
             }
 
             Expr::Bin(bin @ BinExpr { op: op!("/"), .. }) => {
-                let ln = bin.left.as_number();
+                let ln = bin.left.as_pure_number(&self.expr_ctx);
 
-                let rn = bin.right.as_number();
-                match (ln, rn) {
-                    (Known(ln), Known(rn)) => {
-                        // Prefer `0/0` over NaN.
-                        if ln == 0.0 && rn == 0.0 {
-                            return;
-                        }
-                        // Prefer `1/0` over Infinity.
-                        if ln == 1.0 && rn == 0.0 {
-                            return;
-                        }
-
-                        // It's NaN
-                        match (ln.classify(), rn.classify()) {
-                            (FpCategory::Zero, FpCategory::Zero) => {
-                                // If a variable named `NaN` is in scope, don't convert e into NaN.
-                                if self
-                                    .data
-                                    .as_ref()
-                                    .map(|data| {
-                                        data.vars.iter().any(|(name, v)| {
-                                            v.declared && name.0 == js_word!("NaN")
-                                        })
-                                    })
-                                    .unwrap_or(false)
-                                {
-                                    return;
-                                }
-
-                                self.changed = true;
-                                tracing::debug!("evaluate: `0 / 0` => `NaN`");
-
-                                // Sign does not matter for NaN
-                                *e = Expr::Ident(Ident::new(
-                                    js_word!("NaN"),
-                                    bin.span.with_ctxt(SyntaxContext::empty()),
-                                ));
-                                return;
-                            }
-                            (FpCategory::Normal, FpCategory::Zero) => {
-                                self.changed = true;
-                                tracing::debug!("evaluate: `{} / 0` => `Infinity`", ln);
-
-                                // Sign does not matter for NaN
-                                *e = if ln.is_sign_positive() == rn.is_sign_positive() {
-                                    Expr::Ident(Ident::new(
-                                        js_word!("Infinity"),
-                                        bin.span.with_ctxt(SyntaxContext::empty()),
-                                    ))
-                                } else {
-                                    Expr::Unary(UnaryExpr {
-                                        span: bin.span,
-                                        op: op!(unary, "-"),
-                                        arg: Box::new(Expr::Ident(Ident::new(
-                                            js_word!("Infinity"),
-                                            bin.span.with_ctxt(SyntaxContext::empty()),
-                                        ))),
-                                    })
-                                };
-                                return;
-                            }
-                            _ => {}
-                        }
+                let rn = bin.right.as_pure_number(&self.expr_ctx);
+                if let (Known(ln), Known(rn)) = (ln, rn) {
+                    // Prefer `0/0` over NaN.
+                    if ln == 0.0 && rn == 0.0 {
                         return;
                     }
-                    _ => {}
+                    // Prefer `1/0` over Infinity.
+                    if ln == 1.0 && rn == 0.0 {
+                        return;
+                    }
+
+                    // It's NaN
+                    match (ln.classify(), rn.classify()) {
+                        (FpCategory::Zero, FpCategory::Zero) => {
+                            // If a variable named `NaN` is in scope, don't convert e into NaN.
+                            let data = &self.data.vars;
+                            if maybe_par!(
+                                data.iter().any(|(name, v)| v.declared && name.0 == "NaN"),
+                                *crate::LIGHT_TASK_PARALLELS
+                            ) {
+                                return;
+                            }
+
+                            self.changed = true;
+                            report_change!("evaluate: `0 / 0` => `NaN`");
+
+                            // Sign does not matter for NaN
+                            *e = Expr::Ident(Ident::new(
+                                "NaN".into(),
+                                bin.span.with_ctxt(
+                                    SyntaxContext::empty().apply_mark(self.marks.unresolved_mark),
+                                ),
+                            ));
+                        }
+                        (FpCategory::Normal, FpCategory::Zero) => {
+                            self.changed = true;
+                            report_change!("evaluate: `{} / 0` => `Infinity`", ln);
+
+                            // Sign does not matter for NaN
+                            *e = if ln.is_sign_positive() == rn.is_sign_positive() {
+                                Expr::Ident(Ident::new(
+                                    "Infinity".into(),
+                                    bin.span.with_ctxt(SyntaxContext::empty()),
+                                ))
+                            } else {
+                                Expr::Unary(UnaryExpr {
+                                    span: bin.span,
+                                    op: op!(unary, "-"),
+                                    arg: Box::new(Expr::Ident(Ident::new(
+                                        "Infinity".into(),
+                                        bin.span.with_ctxt(SyntaxContext::empty()),
+                                    ))),
+                                })
+                            };
+                        }
+                        _ => {}
+                    }
                 }
             }
 
@@ -438,38 +446,30 @@ where
             _ => return,
         }
 
-        match &mut *e.left {
-            Expr::Bin(left) => {
-                if left.op != e.op {
+        if let Expr::Bin(left) = &mut *e.left {
+            if left.op != e.op {
+                return;
+            }
+            // Remove rhs of lhs if possible.
+
+            let v = left.right.as_pure_bool(&self.expr_ctx);
+            if let Known(v) = v {
+                // As we used as_pure_bool, we can drop it.
+                if v && e.op == op!("&&") {
+                    self.changed = true;
+                    report_change!("Removing `b` from `a && b && c` because b is always truthy");
+
+                    left.right.take();
                     return;
                 }
-                // Remove rhs of lhs if possible.
 
-                let v = left.right.as_pure_bool();
-                if let Known(v) = v {
-                    // As we used as_pure_bool, we can drop it.
-                    if v && e.op == op!("&&") {
-                        self.changed = true;
-                        tracing::debug!(
-                            "Removing `b` from `a && b && c` because b is always truthy"
-                        );
+                if !v && e.op == op!("||") {
+                    self.changed = true;
+                    report_change!("Removing `b` from `a || b || c` because b is always falsy");
 
-                        left.right.take();
-                        return;
-                    }
-
-                    if !v && e.op == op!("||") {
-                        self.changed = true;
-                        tracing::debug!(
-                            "Removing `b` from `a || b || c` because b is always falsy"
-                        );
-
-                        left.right.take();
-                        return;
-                    }
+                    left.right.take();
                 }
             }
-            _ => return,
         }
     }
 }

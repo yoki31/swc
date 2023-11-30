@@ -1,23 +1,27 @@
-use super::{list::ListFormat, Emitter, Result};
-use crate::text_writer::WriteJs;
-use swc_common::Spanned;
+use swc_common::{SourceMapper, Spanned};
 use swc_ecma_ast::*;
 use swc_ecma_codegen_macros::emitter;
 
-impl<'a, W> Emitter<'a, W>
+use super::{Emitter, Result};
+use crate::text_writer::WriteJs;
+
+impl<'a, W, S: SourceMapper> Emitter<'a, W, S>
 where
     W: WriteJs,
+    S: SourceMapperExt,
 {
     #[emitter]
     fn emit_decl(&mut self, node: &Decl) -> Result {
-        match *node {
+        match node {
             Decl::Class(ref n) => emit!(n),
             Decl::Fn(ref n) => emit!(n),
 
             Decl::Var(ref n) => {
-                emit!(n);
-                formatting_semi!(); // VarDecl is also used for for-loops
+                self.emit_var_decl_inner(n)?;
+                formatting_semi!();
+                srcmap!(n, false);
             }
+            Decl::Using(n) => emit!(n),
             Decl::TsEnum(ref n) => emit!(n),
             Decl::TsInterface(ref n) => emit!(n),
             Decl::TsModule(ref n) => emit!(n),
@@ -27,27 +31,65 @@ where
 
     #[emitter]
     fn emit_class_decl(&mut self, node: &ClassDecl) -> Result {
+        self.emit_class_decl_inner(node, false)?;
+    }
+
+    #[emitter]
+    fn emit_using_decl(&mut self, node: &UsingDecl) -> Result {
         self.emit_leading_comments_of_span(node.span(), false)?;
 
-        if node.declare {
-            keyword!("declare");
+        if node.is_await {
+            keyword!("await");
             space!();
         }
 
-        for dec in &node.class.decorators {
-            emit!(dec);
-        }
-        keyword!("class");
+        keyword!("using");
         space!();
-        emit!(node.ident);
-        emit!(node.class.type_params);
+
+        self.emit_list(
+            node.span,
+            Some(&node.decls),
+            ListFormat::VariableDeclarationList,
+        )?;
+    }
+
+    pub(super) fn emit_class_decl_inner(
+        &mut self,
+        node: &ClassDecl,
+        skip_decorators: bool,
+    ) -> Result {
+        self.emit_leading_comments_of_span(node.span(), false)?;
+
+        srcmap!(self, node, true);
+
+        if node.declare {
+            keyword!(self, "declare");
+            space!(self);
+        }
+
+        if !skip_decorators {
+            for dec in &node.class.decorators {
+                emit!(self, dec);
+            }
+        }
+
+        keyword!(self, "class");
+        space!(self);
+        emit!(self, node.ident);
+        emit!(self, node.class.type_params);
 
         self.emit_class_trailing(&node.class)?;
+
+        Ok(())
     }
 
     #[emitter]
     fn emit_fn_decl(&mut self, node: &FnDecl) -> Result {
         self.emit_leading_comments_of_span(node.span(), false)?;
+
+        self.wr.commit_pending_semi()?;
+
+        srcmap!(node, true);
 
         if node.declare {
             keyword!("declare");
@@ -74,17 +116,22 @@ where
 
     #[emitter]
     fn emit_var_decl(&mut self, node: &VarDecl) -> Result {
+        self.emit_var_decl_inner(node)?;
+    }
+
+    fn emit_var_decl_inner(&mut self, node: &VarDecl) -> Result {
         self.emit_leading_comments_of_span(node.span, false)?;
 
+        self.wr.commit_pending_semi()?;
+
+        srcmap!(self, node, true);
+
         if node.declare {
-            keyword!("declare");
-            space!();
+            keyword!(self, "declare");
+            space!(self);
         }
 
-        {
-            let span = self.cm.span_until_char(node.span, ' ');
-            keyword!(span, node.kind.as_str());
-        }
+        keyword!(self, node.kind.as_str());
 
         let starts_with_ident = match node.decls.first() {
             Some(VarDeclarator {
@@ -94,9 +141,9 @@ where
             _ => true,
         };
         if starts_with_ident {
-            space!();
+            space!(self);
         } else {
-            formatting_space!();
+            formatting_space!(self);
         }
 
         self.emit_list(
@@ -104,11 +151,15 @@ where
             Some(&node.decls),
             ListFormat::VariableDeclarationList,
         )?;
+
+        Ok(())
     }
 
     #[emitter]
     fn emit_var_declarator(&mut self, node: &VarDeclarator) -> Result {
         self.emit_leading_comments_of_span(node.span(), false)?;
+
+        srcmap!(node, true);
 
         emit!(node.name);
 

@@ -1,169 +1,173 @@
-use super::Optimizer;
-use crate::{mode::Mode, util::ExprOptExt};
-use std::mem::take;
-use swc_common::{util::take::Take, EqIgnoreSpan, DUMMY_SP};
+use swc_common::{util::take::Take, EqIgnoreSpan, Spanned, DUMMY_SP};
 use swc_ecma_ast::*;
-use swc_ecma_utils::{ident::IdentLike, prepend, ExprExt, StmtExt, Type, Value::Known};
-use swc_ecma_visit::{noop_visit_type, Node, Visit, VisitWith};
+use swc_ecma_utils::{prepend_stmt, ExprExt, ExprFactory, StmtExt};
+use swc_ecma_visit::{noop_visit_type, Visit, VisitWith};
+
+use super::Optimizer;
+use crate::{compress::util::is_primitive, util::idents_used_by};
 
 /// Methods related to option `switches`.
-impl<M> Optimizer<'_, M>
-where
-    M: Mode,
-{
+impl Optimizer<'_> {
     /// Handle switches in the case where we can know which branch will be
     /// taken.
     pub(super) fn optimize_const_switches(&mut self, s: &mut Stmt) {
-        if !self.options.switches || self.ctx.stmt_labelled {
+        if !self.options.switches || !self.options.dead_code {
             return;
         }
 
-        let (label, stmt) = match s {
-            Stmt::Switch(s) => (None, s),
-            Stmt::Labeled(l) => match &mut *l.body {
-                Stmt::Switch(s) => (Some(l.label.clone()), s),
-                _ => return,
-            },
+        let stmt = match s {
+            Stmt::Switch(s) => s,
             _ => return,
         };
 
-        let discriminant = &mut stmt.discriminant;
-        match &**discriminant {
-            Expr::Update(..) => return,
-            _ => {}
+        // TODO: evaluate
+        fn tail_expr(e: &Expr) -> &Expr {
+            match e {
+                Expr::Seq(s) => s.exprs.last().unwrap(),
+                _ => e,
+            }
         }
 
-        let matching_case = stmt.cases.iter_mut().position(|case| {
-            case.test
-                .as_ref()
-                .map(|test| discriminant.value_mut().eq_ignore_span(&test))
-                .unwrap_or(false)
-        });
+        let discriminant = &mut stmt.discriminant;
 
-        if let Some(case_idx) = matching_case {
-            let mut var_ids = vec![];
-            let mut stmts = vec![];
+        let tail = if let Some(e) = is_primitive(&self.expr_ctx, tail_expr(discriminant)) {
+            e
+        } else {
+            return;
+        };
 
-            let should_preserve_switch = stmt.cases.iter().skip(case_idx).any(|case| {
-                let mut v = BreakFinder {
-                    found_unlabelled_break_for_stmt: false,
-                };
-                case.visit_with(&Invalid { span: DUMMY_SP }, &mut v);
-                v.found_unlabelled_break_for_stmt
-            });
-            if should_preserve_switch {
-                // Prevent infinite loop.
-                if stmt.cases.len() == 1 {
-                    return;
+        let mut var_ids = vec![];
+        let mut cases = Vec::new();
+        let mut exact = None;
+        let mut may_match_other_than_exact = false;
+
+        for (idx, case) in stmt.cases.iter_mut().enumerate() {
+            if let Some(test) = case.test.as_ref() {
+                if let Some(e) = is_primitive(&self.expr_ctx, tail_expr(test)) {
+                    if e.eq_ignore_span(tail) {
+                        cases.push(case.take());
+
+                        exact = Some(idx);
+                        break;
+                    } else {
+                        var_ids.extend(case.cons.extract_var_ids())
+                    }
+                } else {
+                    if !may_match_other_than_exact
+                        && !test.is_ident()
+                        && !idents_used_by(test).is_empty()
+                    {
+                        may_match_other_than_exact = true;
+                    }
+
+                    cases.push(case.take())
                 }
-
-                tracing::debug!("switches: Removing unreachable cases from a constant switch");
             } else {
-                tracing::debug!("switches: Removing a constant switch");
+                cases.push(case.take())
             }
+        }
 
-            self.changed = true;
-            let mut preserved = vec![];
-            if !should_preserve_switch && !discriminant.is_lit() {
-                preserved.push(Stmt::Expr(ExprStmt {
-                    span: stmt.span,
-                    expr: discriminant.take(),
-                }));
-
-                if let Some(expr) = stmt.cases[case_idx].test.take() {
-                    preserved.push(Stmt::Expr(ExprStmt {
-                        span: stmt.cases[case_idx].span,
-                        expr,
-                    }));
+        if let Some(exact) = exact {
+            let exact_case = cases.last_mut().unwrap();
+            let mut terminate = exact_case.cons.terminates();
+            for case in stmt.cases[(exact + 1)..].iter_mut() {
+                if terminate {
+                    var_ids.extend(case.cons.extract_var_ids())
+                } else {
+                    terminate |= case.cons.terminates();
+                    exact_case.cons.extend(case.cons.take())
                 }
             }
 
-            for case in &stmt.cases[..case_idx] {
-                for cons in &case.cons {
-                    var_ids.extend(
-                        cons.extract_var_ids()
-                            .into_iter()
-                            .map(|name| VarDeclarator {
-                                span: DUMMY_SP,
-                                name: Pat::Ident(name.into()),
-                                init: None,
-                                definite: Default::default(),
-                            }),
-                    );
-                }
+            if !may_match_other_than_exact {
+                // remove default if there's an exact match
+                cases.retain(|case| case.test.is_some());
             }
 
-            for case in stmt.cases.iter_mut().skip(case_idx) {
-                let mut found_break = false;
-                case.cons.retain(|stmt| match stmt {
-                    Stmt::Break(BreakStmt { label: None, .. }) => {
-                        found_break = true;
-                        false
-                    }
+            if cases.len() == 2 {
+                let last = cases.last_mut().unwrap();
 
-                    // TODO: Search recursively.
-                    Stmt::Break(BreakStmt {
-                        label: Some(break_label),
-                        ..
-                    }) => {
-                        if Some(break_label.to_id()) == label.as_ref().map(|label| label.to_id()) {
-                            found_break = true;
-                            false
-                        } else {
-                            !found_break
-                        }
-                    }
-                    _ => !found_break,
-                });
-
-                stmts.append(&mut case.cons);
-                if found_break {
-                    break;
+                self.changed = true;
+                report_change!("switches: Turn exact match into default");
+                // so that following pass could turn it into if else
+                if let Some(test) = last.test.take() {
+                    prepend_stmt(&mut last.cons, test.into_stmt())
                 }
             }
+        }
+
+        if cases.len() == stmt.cases.len() {
+            stmt.cases = cases;
+            return;
+        }
+
+        self.optimize_switch_cases(&mut cases);
+
+        let var_ids: Vec<VarDeclarator> = var_ids
+            .into_iter()
+            .map(|name| VarDeclarator {
+                span: DUMMY_SP,
+                name: Pat::Ident(name.into()),
+                init: None,
+                definite: Default::default(),
+            })
+            .collect();
+
+        self.changed = true;
+
+        if cases.len() == 1
+            && (cases[0].test.is_none() || exact.is_some())
+            && !contains_nested_break(&cases[0])
+        {
+            report_change!("switches: Removing a constant switch");
+
+            let mut stmts = Vec::new();
 
             if !var_ids.is_empty() {
-                prepend(
-                    &mut stmts,
-                    Stmt::Decl(Decl::Var(VarDecl {
+                stmts.push(
+                    VarDecl {
                         span: DUMMY_SP,
                         kind: VarDeclKind::Var,
                         declare: Default::default(),
-                        decls: take(&mut var_ids),
-                    })),
+                        decls: var_ids,
+                    }
+                    .into(),
                 )
             }
 
-            let inner = if should_preserve_switch {
-                let mut cases = stmt.cases.take();
-                let case = SwitchCase {
-                    span: cases[case_idx].span,
-                    test: cases[case_idx].test.take(),
-                    cons: stmts,
-                };
+            stmts.push(discriminant.take().into_stmt());
+            let mut last = cases.pop().unwrap();
+            remove_last_break(&mut last.cons);
 
-                Stmt::Switch(SwitchStmt {
-                    span: stmt.span,
-                    discriminant: stmt.discriminant.take(),
-                    cases: vec![case],
-                })
-            } else {
-                preserved.extend(stmts);
-                Stmt::Block(BlockStmt {
-                    span: DUMMY_SP,
-                    stmts: preserved,
-                })
-            };
+            if let Some(test) = last.test {
+                stmts.push(test.into_stmt());
+            }
 
-            *s = match label {
-                Some(label) => Stmt::Labeled(LabeledStmt {
+            stmts.extend(last.cons);
+            *s = Stmt::Block(BlockStmt {
+                span: DUMMY_SP,
+                stmts,
+            })
+        } else {
+            report_change!("switches: Removing unreachable cases from a constant switch");
+
+            stmt.cases = cases;
+
+            if !var_ids.is_empty() {
+                *s = Stmt::Block(BlockStmt {
                     span: DUMMY_SP,
-                    label,
-                    body: Box::new(inner),
-                }),
-                None => inner,
-            };
-            return;
+                    stmts: vec![
+                        VarDecl {
+                            span: DUMMY_SP,
+                            kind: VarDeclKind::Var,
+                            declare: Default::default(),
+                            decls: var_ids,
+                        }
+                        .into(),
+                        s.take(),
+                    ],
+                })
+            }
         }
     }
 
@@ -172,191 +176,396 @@ where
     /// This method will
     ///
     /// - drop the empty cases at the end.
+    /// - drop break at last case
+    /// - merge branch with default at the end
     pub(super) fn optimize_switch_cases(&mut self, cases: &mut Vec<SwitchCase>) {
-        if !self.options.switches {
+        if !self.options.switches || !self.options.dead_code || cases.is_empty() {
             return;
-        }
-
-        // If default is not last, we can't remove empty cases.
-        let has_default = cases.iter().any(|case| case.test.is_none());
-        let all_ends_with_break = cases
-            .iter()
-            .all(|case| case.cons.is_empty() || case.cons.last().unwrap().is_break_stmt());
-        let mut preserve_cases = false;
-        if !all_ends_with_break && has_default {
-            if let Some(last) = cases.last() {
-                if last.test.is_some() {
-                    preserve_cases = true;
-                }
-            }
         }
 
         self.merge_cases_with_same_cons(cases);
 
-        let last_non_empty = cases.iter().rposition(|case| {
-            // We should preserve test cases if the test is not a literal.
-            match case.test.as_deref() {
-                Some(Expr::Lit(..)) | None => {}
-                _ => return true,
-            }
+        // last case with no empty body
+        let mut last = cases.len();
 
-            if case.cons.is_empty() {
-                return false;
-            }
+        for (idx, case) in cases.iter_mut().enumerate().rev() {
+            self.changed |= remove_last_break(&mut case.cons);
 
-            if case.cons.len() == 1 {
-                match case.cons[0] {
-                    Stmt::Break(BreakStmt { label: None, .. }) => return false,
-                    _ => {}
-                }
-            }
-
-            true
-        });
-
-        if !preserve_cases {
-            if let Some(last_non_empty) = last_non_empty {
-                if last_non_empty + 1 != cases.len() {
-                    tracing::debug!("switches: Removing empty cases at the end");
-                    self.changed = true;
-                    cases.drain(last_non_empty + 1..);
-                }
+            if !case.cons.is_empty() {
+                last = idx + 1;
+                break;
             }
         }
 
-        if let Some(last) = cases.last_mut() {
-            match last.cons.last() {
-                Some(Stmt::Break(BreakStmt { label: None, .. })) => {
-                    tracing::debug!("switches: Removing `break` at the end");
-                    self.changed = true;
-                    last.cons.pop();
+        let has_side_effect = cases.iter().skip(last).rposition(|case| {
+            case.test
+                .as_deref()
+                .map(|test| test.may_have_side_effects(&self.expr_ctx))
+                .unwrap_or(false)
+        });
+
+        if let Some(has_side_effect) = has_side_effect {
+            last += has_side_effect + 1
+        }
+
+        let default = cases.iter().position(|case| case.test.is_none());
+
+        // if default is before empty cases, we must ensure empty case is preserved
+        if last < cases.len() && default.map(|idx| idx >= last).unwrap_or(true) {
+            self.changed = true;
+            report_change!("switches: Removing empty cases at the end");
+            cases.drain(last..);
+        }
+
+        if let Some(default) = default {
+            let end = cases
+                .iter()
+                .skip(default)
+                .position(|case| !case.cons.is_empty())
+                .unwrap_or(0)
+                + default;
+
+            if end != cases.len() - 1 {
+                return;
+            }
+            let start = cases.iter().enumerate().rposition(|(idx, case)| {
+                case.test
+                    .as_deref()
+                    .map(|test| test.may_have_side_effects(&self.expr_ctx))
+                    .unwrap_or(false)
+                    || (idx != end && !case.cons.is_empty())
+            });
+
+            let start = start.map(|s| s + 1).unwrap_or(0);
+
+            if start <= default {
+                if start < end {
+                    cases[start].cons = cases[end].cons.take();
+                    cases.drain((start + 1)..);
+                    cases[start].test = None;
                 }
-                _ => {}
+            } else {
+                if start <= end {
+                    cases[start].cons = cases[end].cons.take();
+                    cases.drain(start..);
+                }
             }
         }
     }
 
-    /// If a case ends with break but content is same with the consequtive case
-    /// except the break statement, we merge them.
+    /// If a case ends with break but content is same with the another case
+    /// without break case order, except the break statement, we merge
+    /// them.
     fn merge_cases_with_same_cons(&mut self, cases: &mut Vec<SwitchCase>) {
-        let stop_pos = cases.iter().position(|case| match case.test.as_deref() {
-            Some(Expr::Update(..)) => true,
-            _ => false,
-        });
+        let mut i = 0;
+        let len = cases.len();
 
-        let mut found = None;
-        'l: for (li, l) in cases.iter().enumerate().rev() {
-            if l.cons.is_empty() {
+        // may some smarter person find a better solution
+        while i < len {
+            if cases[i].cons.is_empty() {
+                i += 1;
                 continue;
             }
+            let mut block_start = i + 1;
+            let mut cannot_cross_block = false;
 
-            if let Some(stop_pos) = stop_pos {
-                if li > stop_pos {
+            for j in (i + 1)..len {
+                cannot_cross_block |= cases[j]
+                    .test
+                    .as_deref()
+                    .map(|test| is_primitive(&self.expr_ctx, test).is_none())
+                    .unwrap_or(false)
+                    || !(cases[j].cons.is_empty()
+                        || cases[j].cons.terminates()
+                        || j == cases.len() - 1);
+
+                if cases[j].cons.is_empty() {
                     continue;
                 }
-            }
 
-            if let Some(l_last) = l.cons.last() {
-                match l_last {
-                    Stmt::Break(BreakStmt { label: None, .. }) => {}
-                    _ => continue,
-                }
-            }
-
-            for r in cases.iter().skip(li + 1) {
-                if r.cons.is_empty() {
-                    continue;
+                if cannot_cross_block && block_start != i + 1 {
+                    break;
                 }
 
-                let mut r_cons_slice = r.cons.len();
+                block_start = j + 1;
 
-                if let Some(last) = r.cons.last() {
-                    match last {
-                        Stmt::Break(BreakStmt { label: None, .. }) => {
-                            r_cons_slice -= 1;
+                // To merge cases, the first one should be terminate the switch statement.
+                //
+                // Otherwise fallthough will be skipped
+                let case_i_terminates = cases[i]
+                    .cons
+                    .last()
+                    .map(|s| s.terminates())
+                    .unwrap_or(false);
+
+                // first case with a body and don't cross non-primitive branch
+                let found = case_i_terminates
+                    && if j != len - 1 {
+                        cases[i].cons.eq_ignore_span(&cases[j].cons)
+                    } else {
+                        if let Some(Stmt::Break(BreakStmt { label: None, .. })) =
+                            cases[i].cons.last()
+                        {
+                            cases[i].cons[..(cases[i].cons.len() - 1)]
+                                .eq_ignore_span(&cases[j].cons)
+                        } else {
+                            cases[i].cons.eq_ignore_span(&cases[j].cons)
                         }
-                        _ => {}
-                    }
-                }
+                    };
 
-                if l.cons[..l.cons.len() - 1].eq_ignore_span(&r.cons[..r_cons_slice]) {
-                    found = Some(li);
-                    break 'l;
+                if found {
+                    self.changed = true;
+                    report_change!("switches: Merging cases with same cons");
+                    let mut len = 1;
+                    while len < j && cases[j - len].cons.is_empty() {
+                        len += 1;
+                    }
+                    cases[j].cons = cases[i].cons.take();
+                    cases[(i + 1)..=j].rotate_right(len);
+                    i += len;
                 }
             }
-        }
 
-        if let Some(idx) = found {
-            self.changed = true;
-            tracing::debug!("switches: Merging cases with same cons");
-            cases[idx].cons.clear();
+            i += 1;
         }
     }
 
-    /// Remove unreachable cases using discriminant.
-    pub(super) fn drop_unreachable_cases(&mut self, s: &mut SwitchStmt) {
-        if !self.options.switches {
+    /// Try turn switch into if and remove empty switch
+    pub(super) fn optimize_switches(&mut self, s: &mut Stmt) {
+        if !self.options.switches || !self.options.dead_code {
             return;
         }
 
-        let dt = s.discriminant.get_type();
-
-        if let Known(Type::Bool) = dt {
-            let db = s.discriminant.as_pure_bool();
-
-            if let Known(db) = db {
-                s.cases.retain(|case| match case.test.as_deref() {
-                    Some(test) => {
-                        let tb = test.as_pure_bool();
-                        match tb {
-                            Known(tb) if db != tb => false,
-                            _ => true,
-                        }
+        if let Stmt::Switch(sw) = s {
+            match &mut *sw.cases {
+                [] => {
+                    self.changed = true;
+                    report_change!("switches: Removing empty switch");
+                    *s = Stmt::Expr(ExprStmt {
+                        span: sw.span,
+                        expr: sw.discriminant.take(),
+                    })
+                }
+                [case] => {
+                    if contains_nested_break(case) {
+                        return;
                     }
-                    None => false,
-                })
+                    self.changed = true;
+                    report_change!("switches: Turn one case switch into if");
+                    remove_last_break(&mut case.cons);
+
+                    let case = case.take();
+                    let discriminant = sw.discriminant.take();
+
+                    if let Some(test) = case.test {
+                        let test = Box::new(Expr::Bin(BinExpr {
+                            left: discriminant,
+                            right: test,
+                            op: op!("==="),
+                            span: DUMMY_SP,
+                        }));
+
+                        *s = Stmt::If(IfStmt {
+                            span: sw.span,
+                            test,
+                            cons: Box::new(Stmt::Block(BlockStmt {
+                                span: DUMMY_SP,
+                                stmts: case.cons,
+                            })),
+                            alt: None,
+                        })
+                    } else {
+                        // is default
+                        let mut stmts = vec![Stmt::Expr(ExprStmt {
+                            span: discriminant.span(),
+                            expr: discriminant,
+                        })];
+                        stmts.extend(case.cons);
+                        *s = Stmt::Block(BlockStmt {
+                            span: sw.span,
+                            stmts,
+                        })
+                    }
+                }
+                [first, second] if first.test.is_none() || second.test.is_none() => {
+                    if contains_nested_break(first) || contains_nested_break(second) {
+                        return;
+                    }
+                    self.changed = true;
+                    report_change!("switches: Turn two cases switch into if else");
+                    let terminate = first.cons.terminates();
+
+                    if terminate {
+                        remove_last_break(&mut first.cons);
+                        // they cannot both be default as that's syntax error
+                        let (def, case) = if first.test.is_none() {
+                            (first, second)
+                        } else {
+                            (second, first)
+                        };
+                        *s = Stmt::If(IfStmt {
+                            span: sw.span,
+                            test: Expr::Bin(BinExpr {
+                                span: DUMMY_SP,
+                                op: op!("==="),
+                                left: sw.discriminant.take(),
+                                right: case.test.take().unwrap(),
+                            })
+                            .into(),
+                            cons: Stmt::Block(BlockStmt {
+                                span: DUMMY_SP,
+                                stmts: case.cons.take(),
+                            })
+                            .into(),
+                            alt: Some(
+                                Stmt::Block(BlockStmt {
+                                    span: DUMMY_SP,
+                                    stmts: def.cons.take(),
+                                })
+                                .into(),
+                            ),
+                        })
+                    } else {
+                        let mut stmts = vec![Stmt::If(IfStmt {
+                            span: DUMMY_SP,
+                            test: Expr::Bin(if first.test.is_none() {
+                                BinExpr {
+                                    span: DUMMY_SP,
+                                    op: op!("!=="),
+                                    left: sw.discriminant.take(),
+                                    right: second.test.take().unwrap(),
+                                }
+                            } else {
+                                BinExpr {
+                                    span: DUMMY_SP,
+                                    op: op!("==="),
+                                    left: sw.discriminant.take(),
+                                    right: first.test.take().unwrap(),
+                                }
+                            })
+                            .into(),
+                            cons: Stmt::Block(BlockStmt {
+                                span: DUMMY_SP,
+                                stmts: first.cons.take(),
+                            })
+                            .into(),
+                            alt: None,
+                        })];
+                        stmts.extend(second.cons.take());
+                        *s = Stmt::Block(BlockStmt {
+                            span: sw.span,
+                            stmts,
+                        })
+                    }
+                }
+                _ => (),
             }
         }
     }
+}
 
-    pub(super) fn optimize_switches(&mut self, _s: &mut Stmt) {
-        if !self.options.switches || self.ctx.stmt_labelled {
-            return;
+fn remove_last_break(stmt: &mut Vec<Stmt>) -> bool {
+    match stmt.last_mut() {
+        Some(Stmt::Break(BreakStmt { label: None, .. })) => {
+            report_change!("switches: Removing `break` at the end");
+            stmt.pop();
+            true
         }
+        Some(Stmt::If(i)) => {
+            let mut changed = false;
+            match &mut *i.cons {
+                Stmt::Break(BreakStmt { label: None, .. }) => {
+                    report_change!("switches: Removing `break` at the end");
+                    i.cons.take();
+                    changed = true
+                }
+                Stmt::Block(b) => changed |= remove_last_break(&mut b.stmts),
+                _ => (),
+            };
+            if let Some(alt) = i.alt.as_mut() {
+                match &mut **alt {
+                    Stmt::Break(BreakStmt { label: None, .. }) => {
+                        report_change!("switches: Removing `break` at the end");
+                        alt.take();
+                        changed = true
+                    }
+                    Stmt::Block(b) => changed |= remove_last_break(&mut b.stmts),
+                    _ => (),
+                };
+            }
+            changed
+        }
+        Some(Stmt::Try(t)) => {
+            let mut changed = false;
+            changed |= remove_last_break(&mut t.block.stmts);
 
-        //
+            if let Some(h) = t.handler.as_mut() {
+                changed |= remove_last_break(&mut h.body.stmts);
+            }
+            if let Some(f) = t.finalizer.as_mut() {
+                changed |= remove_last_break(&mut f.stmts);
+            }
+            changed
+        }
+        Some(Stmt::Block(BlockStmt { stmts, .. })) => remove_last_break(stmts),
+        _ => false,
     }
+}
+
+fn contains_nested_break(case: &SwitchCase) -> bool {
+    let mut v = BreakFinder {
+        top_level: true,
+        nested_unlabelled_break: false,
+    };
+    case.visit_with(&mut v);
+    v.nested_unlabelled_break
 }
 
 #[derive(Default)]
 struct BreakFinder {
-    found_unlabelled_break_for_stmt: bool,
+    top_level: bool,
+    nested_unlabelled_break: bool,
 }
 
 impl Visit for BreakFinder {
     noop_visit_type!();
 
-    fn visit_break_stmt(&mut self, s: &BreakStmt, _: &dyn Node) {
-        if s.label.is_none() {
-            self.found_unlabelled_break_for_stmt = true;
+    fn visit_break_stmt(&mut self, s: &BreakStmt) {
+        if !self.top_level && s.label.is_none() {
+            self.nested_unlabelled_break = true;
         }
     }
 
-    /// We don't care about breaks in a lop[
-    fn visit_for_stmt(&mut self, _: &ForStmt, _: &dyn Node) {}
+    fn visit_if_stmt(&mut self, i: &IfStmt) {
+        if self.top_level {
+            self.top_level = false;
+            i.visit_children_with(self);
+            self.top_level = true;
+        } else {
+            i.visit_children_with(self);
+        }
+    }
 
-    /// We don't care about breaks in a lop[
-    fn visit_for_in_stmt(&mut self, _: &ForInStmt, _: &dyn Node) {}
+    /// We don't care about breaks in a loop
+    fn visit_for_stmt(&mut self, _: &ForStmt) {}
 
-    /// We don't care about breaks in a lop[
-    fn visit_for_of_stmt(&mut self, _: &ForOfStmt, _: &dyn Node) {}
+    /// We don't care about breaks in a loop
+    fn visit_for_in_stmt(&mut self, _: &ForInStmt) {}
 
-    /// We don't care about breaks in a lop[
-    fn visit_do_while_stmt(&mut self, _: &DoWhileStmt, _: &dyn Node) {}
+    /// We don't care about breaks in a loop
+    fn visit_for_of_stmt(&mut self, _: &ForOfStmt) {}
 
-    /// We don't care about breaks in a lop[
-    fn visit_while_stmt(&mut self, _: &WhileStmt, _: &dyn Node) {}
+    /// We don't care about breaks in a loop
+    fn visit_do_while_stmt(&mut self, _: &DoWhileStmt) {}
 
-    fn visit_function(&mut self, _: &Function, _: &dyn Node) {}
-    fn visit_arrow_expr(&mut self, _: &ArrowExpr, _: &dyn Node) {}
+    /// We don't care about breaks in a loop
+    fn visit_while_stmt(&mut self, _: &WhileStmt) {}
+
+    fn visit_switch_stmt(&mut self, _: &SwitchStmt) {}
+
+    fn visit_function(&mut self, _: &Function) {}
+
+    fn visit_arrow_expr(&mut self, _: &ArrowExpr) {}
+
+    fn visit_class(&mut self, _: &Class) {}
 }

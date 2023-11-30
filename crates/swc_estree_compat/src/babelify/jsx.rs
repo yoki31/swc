@@ -1,4 +1,3 @@
-use crate::babelify::{Babelify, Context};
 use copyless::BoxHelper;
 use swc_common::{BytePos, Span, Spanned};
 use swc_ecma_ast::{
@@ -17,6 +16,8 @@ use swc_estree_ast::{
     JSXOpeningElement as BabelJSXOpeningElement, JSXOpeningFragment as BabelJSXOpeningFragment,
     JSXSpreadAttribute, JSXSpreadChild as BabelJSXSpreadChild, JSXText as BabelJSXText,
 };
+
+use crate::babelify::{Babelify, Context};
 
 impl Babelify for JSXObject {
     type Output = JSXMemberExprObject;
@@ -212,7 +213,7 @@ impl Babelify for JSXAttrValue {
     fn babelify(self, ctx: &Context) -> Self::Output {
         match self {
             JSXAttrValue::Lit(lit) => {
-                // TODO(dwoznicki): Babel only seems to accept string literals here. Is taht
+                // TODO(dwoznicki): Babel only seems to accept string literals here. Is that
                 // right?
                 match lit {
                     Lit::Str(s) => JSXAttrVal::String(s.babelify(ctx)),
@@ -246,7 +247,7 @@ impl Babelify for JSXElement {
     fn babelify(self, ctx: &Context) -> Self::Output {
         let self_closing = match Flavor::current() {
             Flavor::Babel => None,
-            Flavor::Acorn => Some(self.closing.is_some()),
+            Flavor::Acorn { .. } => Some(self.closing.is_some()),
         };
         BabelJSXElement {
             base: ctx.base(self.span),

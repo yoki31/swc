@@ -1,27 +1,31 @@
 //! Ported from [babylon/util/identifier.js][]
 //!
-//! Note: Currently this use xid instead of id because unicode_xid crate
-//! exists.
-//!
 //!
 //! [babylon/util/identifier.js]:https://github.com/babel/babel/blob/master/packages/babylon/src/util/identifier.js
-use super::{comments_buffer::BufferedComment, input::Input, Char, LexResult, Lexer};
+use std::char;
+
+use smartstring::{LazyCompact, SmartString};
+use swc_common::{
+    comments::{Comment, CommentKind},
+    BytePos, Span, SyntaxContext,
+};
+use swc_ecma_ast::Ident;
+use tracing::warn;
+
+use super::{
+    comments_buffer::BufferedComment, input::Input, whitespace::SkipWhitespace, Char, LexResult,
+    Lexer,
+};
 use crate::{
     error::{Error, SyntaxError},
     lexer::comments_buffer::BufferedCommentKind,
     Tokens,
 };
-use std::char;
-use swc_common::{
-    comments::{Comment, CommentKind},
-    BytePos, Span, SyntaxContext,
-};
-use unicode_xid::UnicodeXID;
 
 /// Collector for raw string.
 ///
 /// Methods of this struct is noop if the value is [None].
-pub(super) struct Raw(pub Option<String>);
+pub(super) struct Raw(pub Option<SmartString<LazyCompact>>);
 
 impl Raw {
     #[inline]
@@ -30,6 +34,7 @@ impl Raw {
             st.push_str(s)
         }
     }
+
     #[inline]
     pub fn push(&mut self, c: char) {
         if let Some(ref mut st) = self.0 {
@@ -45,7 +50,7 @@ impl Raw {
 // pub const LINE_SEPARATOR: char = '\u{2028}';
 // pub const PARAGRAPH_SEPARATOR: char = '\u{2029}';
 
-impl<'a, I: Input> Lexer<'a, I> {
+impl<'a> Lexer<'a> {
     pub(super) fn span(&self, start: BytePos) -> Span {
         let end = self.last_pos();
         if cfg!(debug_assertions) && start > end {
@@ -62,31 +67,50 @@ impl<'a, I: Input> Lexer<'a, I> {
         }
     }
 
+    #[inline(always)]
     pub(super) fn bump(&mut self) {
-        self.input.bump()
+        unsafe {
+            // Safety: Actually this is not safe but this is an internal method.
+            self.input.bump()
+        }
     }
 
+    #[inline(always)]
     pub(super) fn is(&mut self, c: u8) -> bool {
         self.input.is_byte(c)
     }
 
+    #[inline(always)]
+    pub(super) fn is_str(&self, s: &str) -> bool {
+        self.input.is_str(s)
+    }
+
+    #[inline(always)]
     pub(super) fn eat(&mut self, c: u8) -> bool {
         self.input.eat_byte(c)
     }
 
+    #[inline(always)]
     pub(super) fn cur(&mut self) -> Option<char> {
         self.input.cur()
     }
+
+    #[inline(always)]
     pub(super) fn peek(&mut self) -> Option<char> {
         self.input.peek()
     }
+
+    #[inline(always)]
     pub(super) fn peek_ahead(&mut self) -> Option<char> {
         self.input.peek_ahead()
     }
 
+    #[inline(always)]
     pub(super) fn cur_pos(&mut self) -> BytePos {
         self.input.cur_pos()
     }
+
+    #[inline(always)]
     pub(super) fn last_pos(&self) -> BytePos {
         self.input.last_pos()
     }
@@ -102,9 +126,7 @@ impl<'a, I: Input> Lexer<'a, I> {
     #[cold]
     #[inline(never)]
     pub(super) fn error_span<T>(&mut self, span: Span, kind: SyntaxError) -> LexResult<T> {
-        Err(Error {
-            error: Box::new((span, kind)),
-        })
+        Err(Error::new(span, kind))
     }
 
     #[cold]
@@ -117,9 +139,12 @@ impl<'a, I: Input> Lexer<'a, I> {
     #[cold]
     #[inline(never)]
     pub(super) fn emit_error_span(&mut self, span: Span, kind: SyntaxError) {
-        let err = Error {
-            error: Box::new((span, kind)),
-        };
+        if self.ctx.ignore_error {
+            return;
+        }
+
+        warn!("Lexer error at {:?}", span);
+        let err = Error::new(span, kind);
         self.errors.borrow_mut().push(err);
     }
 
@@ -138,9 +163,7 @@ impl<'a, I: Input> Lexer<'a, I> {
             return;
         }
 
-        let err = Error {
-            error: Box::new((span, kind)),
-        };
+        let err = Error::new(span, kind);
 
         self.add_module_mode_error(err);
     }
@@ -157,9 +180,7 @@ impl<'a, I: Input> Lexer<'a, I> {
     #[cold]
     #[inline(never)]
     pub(super) fn emit_module_mode_error_span(&mut self, span: Span, kind: SyntaxError) {
-        let err = Error {
-            error: Box::new((span, kind)),
-        };
+        let err = Error::new(span, kind);
 
         self.add_module_mode_error(err);
     }
@@ -167,43 +188,44 @@ impl<'a, I: Input> Lexer<'a, I> {
     /// Skip comments or whitespaces.
     ///
     /// See https://tc39.github.io/ecma262/#sec-white-space
-    pub(super) fn skip_space(&mut self) -> LexResult<()> {
-        while let Some(c) = self.cur() {
-            match c {
-                // white spaces
-                '\u{0009}' | '\u{000b}' | '\u{000c}' | '\u{0020}' | '\u{00a0}' | '\u{feff}' => {}
-                // line breaks
-                '\r' | '\n' | '\u{2028}' | '\u{2029}' => {
-                    self.state.had_line_break = true;
+    #[inline(never)]
+    pub(super) fn skip_space<const LEX_COMMENTS: bool>(&mut self) -> LexResult<()> {
+        loop {
+            let (offset, newline) = {
+                let mut skip = SkipWhitespace {
+                    input: self.input.as_str(),
+                    newline: false,
+                    offset: 0,
+                };
+
+                skip.scan();
+
+                (skip.offset, skip.newline)
+            };
+
+            self.input.bump_bytes(offset);
+            self.state.had_line_break |= newline;
+
+            if LEX_COMMENTS && self.input.is_byte(b'/') {
+                if self.peek() == Some('/') {
+                    self.skip_line_comment(2);
+                    continue;
+                } else if self.peek() == Some('*') {
+                    self.skip_block_comment()?;
+                    continue;
                 }
-
-                '/' => {
-                    if self.peek() == Some('/') {
-                        self.skip_line_comment(2);
-                        continue;
-                    } else if self.peek() == Some('*') {
-                        self.skip_block_comment()?;
-                        continue;
-                    }
-                    break;
-                }
-
-                _ if c.is_whitespace() => {}
-
-                _ => break,
             }
 
-            self.bump();
+            break;
         }
 
         Ok(())
     }
 
+    #[inline(never)]
     pub(super) fn skip_line_comment(&mut self, start_skip: usize) {
         let start = self.cur_pos();
-        for _ in 0..start_skip {
-            self.bump();
-        }
+        self.input.bump_bytes(start_skip);
         let slice_start = self.cur_pos();
 
         // foo // comment for foo
@@ -213,25 +235,29 @@ impl<'a, I: Input> Lexer<'a, I> {
         // // comment for bar
         // bar
         //
-        let is_for_next = self.state.had_line_break;
-        let mut end = self.cur_pos();
+        let is_for_next = self.state.had_line_break || !self.state.can_have_trailing_line_comment();
 
-        while let Some(c) = self.cur() {
-            self.bump();
-            if c.is_line_terminator() {
+        let idx = self
+            .input
+            .as_str()
+            .find(['\r', '\n', '\u{2028}', '\u{2029}'])
+            .map_or(self.input.as_str().len(), |v| {
                 self.state.had_line_break = true;
-                break;
-            } else {
-                end = self.cur_pos();
-            }
-        }
+                v
+            });
+
+        self.input.bump_bytes(idx);
+        let end = self.cur_pos();
 
         if let Some(comments) = self.comments_buffer.as_mut() {
-            let s = self.input.slice(slice_start, end);
+            let s = unsafe {
+                // Safety: We know that the start and the end are valid
+                self.input.slice(slice_start, end)
+            };
             let cmt = Comment {
                 kind: CommentKind::Line,
                 span: Span::new(start, end, SyntaxContext::empty()),
-                text: s.into(),
+                text: self.atoms.atom(s),
             };
 
             if is_for_next {
@@ -245,18 +271,21 @@ impl<'a, I: Input> Lexer<'a, I> {
             }
         }
 
-        self.input.reset_to(end);
+        unsafe {
+            // Safety: We got end from self.input
+            self.input.reset_to(end);
+        }
     }
 
     /// Expects current char to be '/' and next char to be '*'.
+    #[inline(never)]
     pub(super) fn skip_block_comment(&mut self) -> LexResult<()> {
         let start = self.cur_pos();
 
         debug_assert_eq!(self.cur(), Some('/'));
         debug_assert_eq!(self.peek(), Some('*'));
 
-        self.bump();
-        self.bump();
+        self.input.bump_bytes(2);
 
         // jsdoc
         let slice_start = self.cur_pos();
@@ -267,7 +296,7 @@ impl<'a, I: Input> Lexer<'a, I> {
             false
         };
 
-        let is_for_next = self.state.had_line_break || !self.state.can_have_trailing_comment();
+        let mut is_for_next = self.state.had_line_break || !self.state.can_have_trailing_comment();
 
         while let Some(c) = self.cur() {
             if was_star && c == '/' {
@@ -276,26 +305,13 @@ impl<'a, I: Input> Lexer<'a, I> {
 
                 let end = self.cur_pos();
 
-                if let Some(comments) = self.comments_buffer.as_mut() {
-                    let src = self.input.slice(slice_start, end);
-                    let s = &src[..src.len() - 2];
-                    let cmt = Comment {
-                        kind: CommentKind::Block,
-                        span: Span::new(start, end, SyntaxContext::empty()),
-                        text: s.into(),
-                    };
+                self.skip_space::<false>()?;
 
-                    let _ = self.input.peek();
-                    if is_for_next {
-                        comments.push_pending_leading(cmt);
-                    } else {
-                        comments.push(BufferedComment {
-                            kind: BufferedCommentKind::Trailing,
-                            pos: self.state.prev_hi,
-                            comment: cmt,
-                        });
-                    }
+                if self.input.is_byte(b';') {
+                    is_for_next = false;
                 }
+
+                self.store_comment(is_for_next, start, end, slice_start);
 
                 return Ok(());
             }
@@ -308,6 +324,39 @@ impl<'a, I: Input> Lexer<'a, I> {
         }
 
         self.error(start, SyntaxError::UnterminatedBlockComment)?
+    }
+
+    #[inline(never)]
+    fn store_comment(
+        &mut self,
+        is_for_next: bool,
+        start: BytePos,
+        end: BytePos,
+        slice_start: BytePos,
+    ) {
+        if let Some(comments) = self.comments_buffer.as_mut() {
+            let src = unsafe {
+                // Safety: We got slice_start and end from self.input so those are valid.
+                self.input.slice(slice_start, end)
+            };
+            let s = &src[..src.len() - 2];
+            let cmt = Comment {
+                kind: CommentKind::Block,
+                span: Span::new(start, end, SyntaxContext::empty()),
+                text: self.atoms.atom(s),
+            };
+
+            let _ = self.input.peek();
+            if is_for_next {
+                comments.push_pending_leading(cmt);
+            } else {
+                comments.push(BufferedComment {
+                    kind: BufferedCommentKind::Trailing,
+                    pos: self.state.prev_hi,
+                    comment: cmt,
+                });
+            }
+        }
     }
 }
 
@@ -324,14 +373,7 @@ pub trait CharExt: Copy {
             Some(c) => c,
             None => return false,
         };
-        // TODO: Use Unicode ID instead of XID.
-        c == '$' || c == '_' || c.is_ascii_alphabetic() || {
-            if c.is_ascii() {
-                false
-            } else {
-                UnicodeXID::is_xid_start(c)
-            }
-        }
+        Ident::is_valid_start(c)
     }
 
     /// Test whether a given character is part of an identifier.
@@ -341,14 +383,7 @@ pub trait CharExt: Copy {
             Some(c) => c,
             None => return false,
         };
-        // TODO: Use Unicode ID instead of XID.
-        c == '$' || c == '_' || c == '\u{200c}' || c == '\u{200d}' || c.is_ascii_alphanumeric() || {
-            if c.is_ascii() {
-                false
-            } else {
-                UnicodeXID::is_xid_continue(c)
-            }
-        }
+        Ident::is_valid_continue(c)
     }
 
     /// See https://tc39.github.io/ecma262/#sec-line-terminators
@@ -358,10 +393,7 @@ pub trait CharExt: Copy {
             Some(c) => c,
             None => return false,
         };
-        match c {
-            '\r' | '\n' | '\u{2028}' | '\u{2029}' => true,
-            _ => false,
-        }
+        matches!(c, '\r' | '\n' | '\u{2028}' | '\u{2029}')
     }
 
     /// See https://tc39.github.io/ecma262/#sec-literals-string-literals
@@ -371,10 +403,7 @@ pub trait CharExt: Copy {
             Some(c) => c,
             None => return false,
         };
-        match c {
-            '\r' | '\n' => true,
-            _ => false,
-        }
+        matches!(c, '\r' | '\n')
     }
 
     /// See https://tc39.github.io/ecma262/#sec-white-space

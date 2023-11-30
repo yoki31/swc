@@ -1,4 +1,3 @@
-use crate::babelify::{Babelify, Context};
 use copyless::BoxHelper;
 use serde::{Deserialize, Serialize};
 use swc_common::Spanned;
@@ -10,6 +9,8 @@ use swc_estree_ast::{
     Identifier, LVal, ObjectKey, ObjectPattern, ObjectPatternProp, ObjectPropVal, ObjectProperty,
     Param, Pattern, PatternLike, RestElement,
 };
+
+use crate::babelify::{Babelify, Context};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum PatOutput {
@@ -229,9 +230,7 @@ impl Babelify for AssignPat {
             base: ctx.base(self.span),
             left: self.left.babelify(ctx).into(),
             right: Box::alloc().init(self.right.babelify(ctx).into()),
-            type_annotation: self
-                .type_ann
-                .map(|a| Box::alloc().init(a.babelify(ctx).into())),
+            type_annotation: None,
             decorators: Default::default(),
         }
     }

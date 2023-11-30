@@ -1,11 +1,12 @@
-use crate::flavor::Flavor;
 use serde::Serializer;
+
+use crate::flavor::Flavor;
 
 pub(crate) fn serialize_optional<S>(o: &Option<bool>, s: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
-    return s.serialize_some(&o.unwrap_or(false));
+    s.serialize_some(&o.unwrap_or(false))
 }
 
 /// Always serializes as a boolean value.
@@ -18,21 +19,28 @@ where
 
 pub(crate) fn skip_expression_for_fn<T>(_: T) -> bool {
     match Flavor::current() {
-        Flavor::Acorn => false,
+        Flavor::Acorn { .. } => false,
         Flavor::Babel => true,
     }
 }
 
 pub(crate) fn skip_interpreter<T>(_: T) -> bool {
     match Flavor::current() {
-        Flavor::Acorn => true,
+        Flavor::Acorn { .. } => true,
         Flavor::Babel => false,
     }
 }
 
 pub(crate) fn skip_typescript<T>(_: T) -> bool {
     match Flavor::current() {
-        Flavor::Acorn => true,
+        Flavor::Acorn { .. } => true,
         Flavor::Babel => false,
+    }
+}
+
+pub(crate) fn skip_comments_on_program<T>(_: T) -> bool {
+    match Flavor::current() {
+        Flavor::Acorn { extra_comments } => !extra_comments,
+        _ => true,
     }
 }

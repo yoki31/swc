@@ -8,14 +8,16 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use super::{Applicability, Diagnostic, DiagnosticId, DiagnosticStyledString, Handler, Level};
-use crate::syntax_pos::{MultiSpan, Span};
 use std::{
     fmt::{self, Debug},
     ops::{Deref, DerefMut},
     thread::panicking,
 };
+
 use tracing::debug;
+
+use super::{Applicability, Diagnostic, DiagnosticId, DiagnosticStyledString, Handler, Level};
+use crate::syntax_pos::{MultiSpan, Span};
 
 /// Used for emitting structured error messages and other diagnostic
 /// information.
@@ -27,7 +29,10 @@ use tracing::debug;
 #[derive(Clone)]
 pub struct DiagnosticBuilder<'a> {
     pub handler: &'a Handler,
+    #[cfg(not(feature = "__plugin_mode"))]
     pub(crate) diagnostic: Box<Diagnostic>,
+    #[cfg(feature = "__plugin_mode")]
+    pub diagnostic: Box<Diagnostic>,
     allow_suggestions: bool,
 }
 
@@ -39,6 +44,7 @@ pub struct DiagnosticBuilder<'a> {
 /// `diagnostic`, because the return type would be a `&Diagnostic`
 /// instead of a `&DiagnosticBuilder<'a>`. This `forward!` macro makes
 /// it easy to declare such methods on the builder.
+#[allow(unused)]
 macro_rules! forward {
     // Forward pattern for &self -> &Self
     (pub fn $n:ident(&self, $($name:ident: $ty:ty),* $(,)*) -> &Self) => {
@@ -87,13 +93,74 @@ impl<'a> DerefMut for DiagnosticBuilder<'a> {
 }
 
 impl<'a> DiagnosticBuilder<'a> {
+    forward!(pub fn note_expected_found(&mut self,
+                                        label: &dyn fmt::Display,
+                                        expected: DiagnosticStyledString,
+                                        found: DiagnosticStyledString,
+                                        ) -> &mut Self);
+
+    forward!(pub fn note_expected_found_extra(&mut self,
+                                              label: &dyn fmt::Display,
+                                              expected: DiagnosticStyledString,
+                                              found: DiagnosticStyledString,
+                                              expected_extra: &dyn fmt::Display,
+                                              found_extra: &dyn fmt::Display,
+                                              ) -> &mut Self);
+
+    forward!(pub fn note(&mut self, msg: &str) -> &mut Self);
+
+    forward!(pub fn span_note<S: Into<MultiSpan>>(&mut self,
+                                                  sp: S,
+                                                  msg: &str,
+                                                  ) -> &mut Self);
+
+    forward!(pub fn warn(&mut self, msg: &str) -> &mut Self);
+
+    forward!(pub fn span_warn<S: Into<MultiSpan>>(&mut self, sp: S, msg: &str) -> &mut Self);
+
+    forward!(pub fn help(&mut self , msg: &str) -> &mut Self);
+
+    forward!(pub fn span_help<S: Into<MultiSpan>>(&mut self,
+                                                  sp: S,
+                                                  msg: &str,
+                                                  ) -> &mut Self);
+
+    forward!(pub fn span_suggestion_short(
+                                      &mut self,
+                                      sp: Span,
+                                      msg: &str,
+                                      suggestion: String,
+                                      ) -> &mut Self);
+
+    forward!(pub fn multipart_suggestion(
+        &mut self,
+        msg: &str,
+        suggestion: Vec<(Span, String)>,
+    ) -> &mut Self);
+
+    forward!(pub fn span_suggestion(&mut self,
+                                    sp: Span,
+                                    msg: &str,
+                                    suggestion: String,
+                                    ) -> &mut Self);
+
+    forward!(pub fn span_suggestions(&mut self,
+                                     sp: Span,
+                                     msg: &str,
+                                     suggestions: Vec<String>,
+                                     ) -> &mut Self);
+
+    forward!(pub fn set_span<S: Into<MultiSpan>>(&mut self, sp: S) -> &mut Self);
+
+    forward!(pub fn code(&mut self, s: DiagnosticId) -> &mut Self);
+
     /// Emit the diagnostic.
     pub fn emit(&mut self) {
         if self.cancelled() {
             return;
         }
 
-        self.handler.emit_db(&self);
+        self.handler.emit_db(self);
         self.cancel();
     }
 
@@ -128,7 +195,7 @@ impl<'a> DiagnosticBuilder<'a> {
         message: &str,
         span: Option<S>,
     ) -> &mut Self {
-        let span = span.map(|s| s.into()).unwrap_or_else(MultiSpan::new);
+        let span = span.map(|s| s.into()).unwrap_or_default();
         self.diagnostic.sub(level, message, span, None);
         self
     }
@@ -159,58 +226,6 @@ impl<'a> DiagnosticBuilder<'a> {
         self.diagnostic.span_label(span, label);
         self
     }
-
-    forward!(pub fn note_expected_found(&mut self,
-                                        label: &dyn fmt::Display,
-                                        expected: DiagnosticStyledString,
-                                        found: DiagnosticStyledString,
-                                        ) -> &mut Self);
-
-    forward!(pub fn note_expected_found_extra(&mut self,
-                                              label: &dyn fmt::Display,
-                                              expected: DiagnosticStyledString,
-                                              found: DiagnosticStyledString,
-                                              expected_extra: &dyn fmt::Display,
-                                              found_extra: &dyn fmt::Display,
-                                              ) -> &mut Self);
-
-    forward!(pub fn note(&mut self, msg: &str) -> &mut Self);
-    forward!(pub fn span_note<S: Into<MultiSpan>>(&mut self,
-                                                  sp: S,
-                                                  msg: &str,
-                                                  ) -> &mut Self);
-    forward!(pub fn warn(&mut self, msg: &str) -> &mut Self);
-    forward!(pub fn span_warn<S: Into<MultiSpan>>(&mut self, sp: S, msg: &str) -> &mut Self);
-    forward!(pub fn help(&mut self , msg: &str) -> &mut Self);
-    forward!(pub fn span_help<S: Into<MultiSpan>>(&mut self,
-                                                  sp: S,
-                                                  msg: &str,
-                                                  ) -> &mut Self);
-
-    forward!(pub fn span_suggestion_short(
-                                      &mut self,
-                                      sp: Span,
-                                      msg: &str,
-                                      suggestion: String,
-                                      ) -> &mut Self);
-
-    forward!(pub fn multipart_suggestion(
-        &mut self,
-        msg: &str,
-        suggestion: Vec<(Span, String)>,
-    ) -> &mut Self);
-
-    forward!(pub fn span_suggestion(&mut self,
-                                    sp: Span,
-                                    msg: &str,
-                                    suggestion: String,
-                                    ) -> &mut Self);
-
-    forward!(pub fn span_suggestions(&mut self,
-                                     sp: Span,
-                                     msg: &str,
-                                     suggestions: Vec<String>,
-                                     ) -> &mut Self);
 
     pub fn multipart_suggestion_with_applicability(
         &mut self,
@@ -274,8 +289,6 @@ impl<'a> DiagnosticBuilder<'a> {
         );
         self
     }
-    forward!(pub fn set_span<S: Into<MultiSpan>>(&mut self, sp: S) -> &mut Self);
-    forward!(pub fn code(&mut self, s: DiagnosticId) -> &mut Self);
 
     pub fn allow_suggestions(&mut self, allow: bool) -> &mut Self {
         self.allow_suggestions = allow;

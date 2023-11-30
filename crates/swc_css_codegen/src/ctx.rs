@@ -1,5 +1,6 @@
-use crate::{writer::CssWriter, CodeGenerator};
 use std::ops::{Deref, DerefMut};
+
+use crate::{writer::CssWriter, CodeGenerator};
 
 impl<W> CodeGenerator<W>
 where
@@ -19,7 +20,10 @@ where
 
 #[derive(Debug, Default, Clone, Copy)]
 pub(crate) struct Ctx {
-    pub semi_after_property: bool,
+    pub allow_to_lowercase: bool,
+    pub is_dimension_unit: bool,
+    pub in_single_line_selectors: bool,
+    pub in_list_of_component_values: bool,
 }
 
 pub(super) struct WithCtx<'w, I: 'w + CssWriter> {
@@ -31,12 +35,12 @@ impl<'w, I: CssWriter> Deref for WithCtx<'w, I> {
     type Target = CodeGenerator<I>;
 
     fn deref(&self) -> &CodeGenerator<I> {
-        &self.inner
+        self.inner
     }
 }
 impl<'w, I: CssWriter> DerefMut for WithCtx<'w, I> {
     fn deref_mut(&mut self) -> &mut CodeGenerator<I> {
-        &mut self.inner
+        self.inner
     }
 }
 

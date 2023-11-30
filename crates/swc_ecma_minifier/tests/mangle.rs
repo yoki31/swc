@@ -1,14 +1,11 @@
-use ansi_term::Color;
-use anyhow::{bail, Context, Error};
+#![deny(warnings)]
+
 use std::{
-    fs::read_to_string,
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
 };
-use swc_common::{
-    comments::SingleThreadedComments, errors::Handler, input::SourceFileInput, sync::Lrc, FileName,
-    Mark, SourceFile, SourceMap,
-};
+
+use swc_common::{errors::Handler, sync::Lrc, FileName, Mark, SourceFile, SourceMap};
 use swc_ecma_ast::*;
 use swc_ecma_codegen::{
     text_writer::{omit_trailing_semi, JsWriter, WriteJs},
@@ -18,14 +15,12 @@ use swc_ecma_minifier::{
     optimize,
     option::{ExtraOptions, MangleOptions, ManglePropertiesOptions, MinifyOptions},
 };
-use swc_ecma_parser::{lexer::Lexer, Parser};
-use swc_ecma_transforms::{
-    fixer,
-    hygiene::{self, hygiene_with_config},
-    resolver_with_mark,
-};
-use swc_ecma_visit::{FoldWith, VisitMutWith};
-use testing::{DebugUsingDisplay, NormalizedOutput};
+use swc_ecma_parser::parse_file_as_module;
+use swc_ecma_transforms_base::{fixer::paren_remover, resolver};
+use swc_ecma_utils::drop_span;
+use swc_ecma_visit::VisitMutWith;
+use testing::{assert_eq, NormalizedOutput};
+use tracing::warn;
 
 fn print(cm: Lrc<SourceMap>, m: &Module, minify: bool) -> String {
     let mut buf = vec![];
@@ -38,8 +33,8 @@ fn print(cm: Lrc<SourceMap>, m: &Module, minify: bool) -> String {
         }
 
         let mut emitter = Emitter {
-            cfg: swc_ecma_codegen::Config { minify },
-            cm: cm.clone(),
+            cfg: swc_ecma_codegen::Config::default().with_minify(minify),
+            cm,
             comments: None,
             wr,
         };
@@ -50,172 +45,133 @@ fn print(cm: Lrc<SourceMap>, m: &Module, minify: bool) -> String {
     String::from_utf8(buf).unwrap()
 }
 
-fn parse(cm: Lrc<SourceMap>, path: &Path) -> Module {
+fn parse(handler: &Handler, cm: Lrc<SourceMap>, path: &Path) -> Result<Module, ()> {
     let fm = cm.load_file(path).unwrap();
-    parse_fm(fm)
+    parse_fm(handler, fm)
 }
 
-fn parse_fm(fm: Lrc<SourceFile>) -> Module {
-    let lexer = Lexer::new(
+fn parse_fm(handler: &Handler, fm: Lrc<SourceFile>) -> Result<Module, ()> {
+    parse_file_as_module(
+        &fm,
         Default::default(),
         EsVersion::latest(),
-        SourceFileInput::from(&*fm),
         None,
-    );
-
-    let mut parser = Parser::new_from(lexer);
-    parser.parse_module().unwrap()
-}
-
-fn run(
-    cm: Lrc<SourceMap>,
-    handler: &Handler,
-    input: &Path,
-    mangle: MangleOptions,
-) -> Option<Module> {
-    let _ = rayon::ThreadPoolBuilder::new()
-        .thread_name(|i| format!("rayon-{}", i + 1))
-        .build_global();
-
-    let fm = cm.load_file(&input).expect("failed to load input.js");
-    let comments = SingleThreadedComments::default();
-
-    eprintln!("---- {} -----\n{}", Color::Green.paint("Input"), fm.src);
-
-    let top_level_mark = Mark::fresh(Mark::root());
-
-    let lexer = Lexer::new(
-        Default::default(),
-        Default::default(),
-        SourceFileInput::from(&*fm),
-        Some(&comments),
-    );
-
-    let mut parser = Parser::new_from(lexer);
-    let program = parser
-        .parse_module()
-        .map_err(|err| {
-            err.into_diagnostic(&handler).emit();
-        })
-        .map(|module| module.fold_with(&mut resolver_with_mark(top_level_mark)));
-
-    // Ignore parser errors.
-    //
-    // This is typically related to strict mode caused by module context.
-    let program = match program {
-        Ok(v) => v,
-        _ => return None,
-    };
-
-    let output = optimize(
-        program,
-        cm.clone(),
-        Some(&comments),
-        None,
-        &MinifyOptions {
-            compress: None,
-            mangle: Some(mangle),
-            ..Default::default()
-        },
-        &ExtraOptions { top_level_mark },
-    );
-
-    let output = output
-        .fold_with(&mut hygiene_with_config(hygiene::Config {
-            ..Default::default()
-        }))
-        .fold_with(&mut fixer(None));
-
-    Some(output)
-}
-
-fn stdout_of(code: &str) -> Result<String, Error> {
-    let actual_output = Command::new("node")
-        .arg("-e")
-        .arg(&code)
-        .output()
-        .context("failed to execute output of minifier")?;
-
-    if !actual_output.status.success() {
-        bail!(
-            "failed to execute:\n{}\n{}",
-            String::from_utf8_lossy(&actual_output.stdout),
-            String::from_utf8_lossy(&actual_output.stderr)
-        )
-    }
-
-    Ok(String::from_utf8_lossy(&actual_output.stdout).to_string())
-}
-
-#[testing::fixture("tests/compress/fixture/**/output.js")]
-fn compressed(compressed_file: PathBuf) {
-    testing::run_test2(false, |cm, _handler| {
-        let m = parse(cm.clone(), &compressed_file);
-
-        let top_level_mark = Mark::fresh(Mark::root());
-
-        let m = optimize(
-            m,
-            cm.clone(),
-            None,
-            None,
-            &MinifyOptions {
-                mangle: Some(MangleOptions {
-                    props: Some(ManglePropertiesOptions {
-                        reserved: Default::default(),
-                        undeclared: false,
-                        regex: Default::default(),
-                    }),
-                    top_level: true,
-                    keep_class_names: false,
-                    keep_fn_names: false,
-                    keep_private_props: false,
-                    ie8: false,
-                    safari10: false,
-                }),
-                compress: None,
-                ..Default::default()
-            },
-            &ExtraOptions { top_level_mark },
-        );
-
-        let mangled = print(cm.clone(), &m, false);
-        let minified = print(cm.clone(), &m, true);
-
-        parse_fm(cm.new_source_file(FileName::Anon, mangled));
-        parse_fm(cm.new_source_file(FileName::Anon, minified));
-
-        Ok(())
+        &mut vec![],
+    )
+    .map_err(|err| {
+        err.into_diagnostic(handler).emit();
     })
-    .unwrap();
 }
 
-#[testing::fixture("tests/mangle/**/input.js")]
-fn fixture(input: PathBuf) {
-    testing::run_test2(false, |cm, _handler| {
-        let mut m = parse(cm.clone(), &input);
+#[testing::fixture("tests/terser/**/input.js")]
+fn snapshot_compress_fixture(input: PathBuf) {
+    let output_path = input.parent().unwrap().join("output.mangleOnly.js");
 
-        let top_level_mark = Mark::fresh(Mark::root());
+    let _ = testing::run_test2(false, |cm, handler| {
+        let mut m = parse(&handler, cm.clone(), &input)?;
 
-        m.visit_mut_with(&mut resolver_with_mark(top_level_mark));
+        if option_env!("CI") != Some("1") {
+            let mut c = Command::new("node");
+            c.arg("scripts/mangler/charfreq.js");
+            c.arg(&input);
+            c.stderr(Stdio::inherit());
+            let output = c.output().unwrap();
+
+            warn!(
+                "Chars of terser: {}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+        }
+
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        m.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
 
         let m = optimize(
-            m,
+            m.into(),
             cm.clone(),
             None,
             None,
             &MinifyOptions {
                 mangle: Some(MangleOptions {
-                    top_level: true,
+                    top_level: Some(true),
                     ..Default::default()
                 }),
                 compress: None,
                 ..Default::default()
             },
-            &ExtraOptions { top_level_mark },
-        );
+            &ExtraOptions {
+                unresolved_mark,
+                top_level_mark,
+            },
+        )
+        .expect_module();
 
-        let mangled = print(cm.clone(), &m, false);
+        if output_path.exists() {
+            // Compare AST, and mark test as a success if ast is identical.
+
+            let mut actual = m.clone();
+            actual.visit_mut_with(&mut paren_remover(None));
+            actual = drop_span(actual);
+
+            let mut expected = parse(&handler, cm.clone(), &output_path)?;
+            expected.visit_mut_with(&mut paren_remover(None));
+            expected = drop_span(expected);
+
+            if actual == expected {
+                return Ok(());
+            }
+
+            let actual = print(cm.clone(), &actual, false);
+            let expected = print(cm.clone(), &expected, false);
+
+            if actual == expected {
+                return Ok(());
+            }
+        }
+
+        let mangled = print(cm, &m, false);
+
+        NormalizedOutput::from(mangled)
+            .compare_to_file(output_path)
+            .unwrap();
+
+        Ok(())
+    });
+}
+
+#[testing::fixture("tests/mangle/**/input.js")]
+fn fixture(input: PathBuf) {
+    testing::run_test2(false, |cm, handler| {
+        let mut m = parse(&handler, cm.clone(), &input)?;
+
+        let unresolved_mark = Mark::new();
+        let top_level_mark = Mark::new();
+
+        m.visit_mut_with(&mut resolver(unresolved_mark, top_level_mark, false));
+
+        let m = optimize(
+            m.into(),
+            cm.clone(),
+            None,
+            None,
+            &MinifyOptions {
+                mangle: Some(MangleOptions {
+                    top_level: Some(true),
+                    ..Default::default()
+                }),
+                compress: None,
+                ..Default::default()
+            },
+            &ExtraOptions {
+                unresolved_mark,
+                top_level_mark,
+            },
+        )
+        .expect_module();
+
+        let mangled = print(cm, &m, false);
 
         NormalizedOutput::from(mangled)
             .compare_to_file(input.parent().unwrap().join("output.js"))
@@ -226,53 +182,179 @@ fn fixture(input: PathBuf) {
     .unwrap();
 }
 
-/// Tests used to prevent regressions.
-#[testing::fixture("tests/exec/**/input.js")]
-fn exec(input: PathBuf) {
-    {
-        let s = input.to_string_lossy().replace("_", "-");
-        if s.contains("issue-1709")
-            || s.contains("issue-3146-1")
-            || s.contains("eval-collapse-vars")
-        {
-            return;
-        }
-    }
-
+fn assert_mangled(src: &str, expected: &str, opts: MangleOptions) {
     testing::run_test2(false, |cm, handler| {
-        let input_src = read_to_string(&input).expect("failed to read input.js as a string");
+        let fm = cm.new_source_file(FileName::Anon, src.into());
 
-        let output = run(
+        let m = parse_fm(&handler, fm)?;
+
+        let unresolved_mark = Mark::fresh(Mark::root());
+        let top_level_mark = Mark::fresh(Mark::root());
+
+        let m = optimize(
+            m.into(),
             cm.clone(),
-            &handler,
-            &input,
-            MangleOptions {
-                keep_fn_names: true,
+            None,
+            None,
+            &MinifyOptions {
+                mangle: Some(opts),
+                compress: None,
                 ..Default::default()
             },
-        );
+            &ExtraOptions {
+                unresolved_mark,
+                top_level_mark,
+            },
+        )
+        .expect_module();
 
-        let output = output.expect("Parsing in base test should not fail");
-        let output = print(cm.clone(), &output, false);
-
-        eprintln!(
-            "---- {} -----\n{}",
-            Color::Green.paint("Optimized code"),
-            output
-        );
-
-        println!("{}", input.display());
-
-        let expected_output = stdout_of(&input_src).unwrap();
-        let actual_output = stdout_of(&output).expect("failed to execute the optimized code");
-        assert_ne!(actual_output, "");
+        let mangled = print(cm, &m, false);
 
         assert_eq!(
-            DebugUsingDisplay(&actual_output),
-            DebugUsingDisplay(&*expected_output)
+            NormalizedOutput::from(mangled),
+            NormalizedOutput::from(expected.to_owned())
         );
 
         Ok(())
     })
     .unwrap()
+}
+
+#[test]
+fn reserved_func_names() {
+    let src = "function func1() {
+    console.log(1);
+}
+function func2() {
+    console.log(2);
+}";
+
+    let expected = "function func1() {
+    console.log(1);
+}
+function n() {
+    console.log(2);
+}";
+
+    assert_mangled(
+        src,
+        expected,
+        MangleOptions {
+            top_level: Some(true),
+            reserved: vec!["func1".into()],
+            ..Default::default()
+        },
+    )
+}
+
+#[test]
+fn reserved_class_names() {
+    let src = "class Class1 {
+    hello1 = 1;
+}
+class Class2 {
+    hello2 = 2;
+}";
+
+    let expected = "class Class1 {
+    hello1 = 1;
+}
+class l {
+    hello2 = 2;
+}";
+
+    assert_mangled(
+        src,
+        expected,
+        MangleOptions {
+            top_level: Some(true),
+            reserved: vec!["Class1".into()],
+            ..Default::default()
+        },
+    )
+}
+
+#[test]
+fn reserved_class_props() {
+    let src = "class Class1 {
+    hello1 = 1;
+}
+class Class2 {
+    hello2 = 2;
+}";
+
+    let expected = "class l {
+    l = 1;
+}
+class s {
+    hello2 = 2;
+}";
+
+    assert_mangled(
+        src,
+        expected,
+        MangleOptions {
+            top_level: Some(true),
+            reserved: vec!["hello1".into()],
+            props: Some(ManglePropertiesOptions {
+                reserved: vec!["hello2".into()],
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+    )
+}
+
+#[test]
+fn reserved_private_props() {
+    let src = "class Class1 {
+    #hello1 = 1;
+}
+class Class2 {
+    #hello2 = 2;
+}";
+
+    let expected = "class s {
+    #s = 1;
+}
+class a {
+    #a = 2;
+}";
+
+    assert_mangled(
+        src,
+        expected,
+        MangleOptions {
+            top_level: Some(true),
+            reserved: vec!["hello1".into()],
+            ..Default::default()
+        },
+    )
+}
+
+#[test]
+fn reserved_all_private_props() {
+    let src = "class Class1 {
+    #hello1 = 1;
+}
+class Class2 {
+    #hello2 = 2;
+}";
+
+    let expected = "class s {
+    #hello1 = 1;
+}
+class a {
+    #hello2 = 2;
+}";
+
+    assert_mangled(
+        src,
+        expected,
+        MangleOptions {
+            top_level: Some(true),
+            keep_private_props: true,
+            ..Default::default()
+        },
+    )
 }

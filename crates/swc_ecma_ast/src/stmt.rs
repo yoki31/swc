@@ -1,11 +1,13 @@
+use is_macro::Is;
+use swc_common::{ast_node, util::take::Take, EqIgnoreSpan, Span, DUMMY_SP};
+
 use crate::{
     decl::{Decl, VarDecl},
     expr::Expr,
     ident::Ident,
     pat::Pat,
+    UsingDecl,
 };
-use is_macro::Is;
-use swc_common::{ast_node, util::take::Take, EqIgnoreSpan, Span, DUMMY_SP};
 
 /// Use when only block statements are allowed.
 #[ast_node("BlockStatement")]
@@ -27,7 +29,7 @@ impl Take for BlockStmt {
     }
 }
 
-#[ast_node]
+#[ast_node(no_clone)]
 #[derive(Eq, Hash, Is, EqIgnoreSpan)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub enum Stmt {
@@ -71,7 +73,7 @@ pub enum Stmt {
     /// A try statement. If handler is null then finalizer must be a BlockStmt.
     #[tag("TryStatement")]
     #[is(name = "try_stmt")]
-    Try(TryStmt),
+    Try(Box<TryStmt>),
 
     #[tag("WhileStatement")]
     #[is(name = "while_stmt")]
@@ -103,18 +105,53 @@ pub enum Stmt {
     Expr(ExprStmt),
 }
 
+// Memory layout depedns on the version of rustc.
+// #[cfg(target_pointer_width = "64")]
+// assert_eq_size!(Stmt, [u8; 56]);
+
+// Implement Clone without inline to avoid multiple copies of the
+// implementation.
+impl Clone for Stmt {
+    fn clone(&self) -> Self {
+        use Stmt::*;
+        match self {
+            Block(s) => Block(s.clone()),
+            Empty(s) => Empty(s.clone()),
+            Debugger(s) => Debugger(s.clone()),
+            With(s) => With(s.clone()),
+            Return(s) => Return(s.clone()),
+            Labeled(s) => Labeled(s.clone()),
+            Break(s) => Break(s.clone()),
+            Continue(s) => Continue(s.clone()),
+            If(s) => If(s.clone()),
+            Switch(s) => Switch(s.clone()),
+            Throw(s) => Throw(s.clone()),
+            Try(s) => Try(s.clone()),
+            While(s) => While(s.clone()),
+            DoWhile(s) => DoWhile(s.clone()),
+            For(s) => For(s.clone()),
+            ForIn(s) => ForIn(s.clone()),
+            ForOf(s) => ForOf(s.clone()),
+            Decl(s) => Decl(s.clone()),
+            Expr(s) => Expr(s.clone()),
+        }
+    }
+}
+
 impl Take for Stmt {
     fn dummy() -> Self {
         Self::Empty(EmptyStmt { span: DUMMY_SP })
     }
 }
 
+bridge_stmt_from!(Box<TryStmt>, TryStmt);
+
 #[ast_node("ExpressionStatement")]
 #[derive(Eq, Hash, EqIgnoreSpan)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct ExprStmt {
     pub span: Span,
-    #[serde(rename = "expression")]
+    #[cfg_attr(feature = "serde-impl", serde(rename = "expression"))]
     pub expr: Box<Expr>,
 }
 
@@ -138,7 +175,7 @@ pub struct DebuggerStmt {
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct WithStmt {
     pub span: Span,
-    #[serde(rename = "object")]
+    #[cfg_attr(feature = "serde-impl", serde(rename = "object"))]
     pub obj: Box<Expr>,
     pub body: Box<Stmt>,
 }
@@ -148,7 +185,7 @@ pub struct WithStmt {
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct ReturnStmt {
     pub span: Span,
-    #[serde(default, rename = "argument")]
+    #[cfg_attr(feature = "serde-impl", serde(default, rename = "argument"))]
     pub arg: Option<Box<Expr>>,
 }
 
@@ -166,7 +203,7 @@ pub struct LabeledStmt {
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct BreakStmt {
     pub span: Span,
-    #[serde(default)]
+    #[cfg_attr(feature = "serde-impl", serde(default))]
     pub label: Option<Ident>,
 }
 
@@ -175,7 +212,7 @@ pub struct BreakStmt {
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct ContinueStmt {
     pub span: Span,
-    #[serde(default)]
+    #[cfg_attr(feature = "serde-impl", serde(default))]
     pub label: Option<Ident>,
 }
 
@@ -186,10 +223,10 @@ pub struct IfStmt {
     pub span: Span,
     pub test: Box<Expr>,
 
-    #[serde(rename = "consequent")]
+    #[cfg_attr(feature = "serde-impl", serde(rename = "consequent"))]
     pub cons: Box<Stmt>,
 
-    #[serde(default, rename = "alternate")]
+    #[cfg_attr(feature = "serde-impl", serde(default, rename = "alternate"))]
     pub alt: Option<Box<Stmt>>,
 }
 
@@ -207,7 +244,7 @@ pub struct SwitchStmt {
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct ThrowStmt {
     pub span: Span,
-    #[serde(rename = "argument")]
+    #[cfg_attr(feature = "serde-impl", serde(rename = "argument"))]
     pub arg: Box<Expr>,
 }
 
@@ -219,10 +256,10 @@ pub struct TryStmt {
 
     pub block: BlockStmt,
 
-    #[serde(default)]
+    #[cfg_attr(feature = "serde-impl", serde(default))]
     pub handler: Option<CatchClause>,
 
-    #[serde(default)]
+    #[cfg_attr(feature = "serde-impl", serde(default))]
     pub finalizer: Option<BlockStmt>,
 }
 
@@ -250,13 +287,13 @@ pub struct DoWhileStmt {
 pub struct ForStmt {
     pub span: Span,
 
-    #[serde(default)]
+    #[cfg_attr(feature = "serde-impl", serde(default))]
     pub init: Option<VarDeclOrExpr>,
 
-    #[serde(default)]
+    #[cfg_attr(feature = "serde-impl", serde(default))]
     pub test: Option<Box<Expr>>,
 
-    #[serde(default)]
+    #[cfg_attr(feature = "serde-impl", serde(default))]
     pub update: Option<Box<Expr>>,
 
     pub body: Box<Stmt>,
@@ -267,7 +304,7 @@ pub struct ForStmt {
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct ForInStmt {
     pub span: Span,
-    pub left: VarDeclOrPat,
+    pub left: ForHead,
     pub right: Box<Expr>,
     pub body: Box<Stmt>,
 }
@@ -282,9 +319,9 @@ pub struct ForOfStmt {
     /// es2018
     ///
     /// for-await-of statements, e.g., `for await (const x of xs) {`
-    #[serde(default, rename = "await")]
-    pub await_token: Option<Span>,
-    pub left: VarDeclOrPat,
+    #[cfg_attr(feature = "serde-impl", serde(default, rename = "await"))]
+    pub is_await: bool,
+    pub left: ForHead,
     pub right: Box<Expr>,
     pub body: Box<Stmt>,
 }
@@ -293,7 +330,7 @@ impl Take for ForOfStmt {
     fn dummy() -> Self {
         ForOfStmt {
             span: DUMMY_SP,
-            await_token: Default::default(),
+            is_await: Default::default(),
             left: Take::dummy(),
             right: Take::dummy(),
             body: Take::dummy(),
@@ -308,11 +345,21 @@ pub struct SwitchCase {
     pub span: Span,
 
     /// None for `default:`
-    #[serde(default)]
+    #[cfg_attr(feature = "serde-impl", serde(default))]
     pub test: Option<Box<Expr>>,
 
-    #[serde(rename = "consequent")]
+    #[cfg_attr(feature = "serde-impl", serde(rename = "consequent"))]
     pub cons: Vec<Stmt>,
+}
+
+impl Take for SwitchCase {
+    fn dummy() -> Self {
+        Self {
+            span: DUMMY_SP,
+            test: None,
+            cons: Vec::new(),
+        }
+    }
 }
 
 #[ast_node("CatchClause")]
@@ -324,26 +371,33 @@ pub struct CatchClause {
     ///
     /// The param is null if the catch binding is omitted. E.g., try { foo() }
     /// catch { bar() }
-    #[serde(default)]
+    #[cfg_attr(feature = "serde-impl", serde(default))]
     pub param: Option<Pat>,
 
     pub body: BlockStmt,
 }
 
+/// A head for for-in and for-of loop.
 #[ast_node]
 #[derive(Eq, Hash, Is, EqIgnoreSpan)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
-pub enum VarDeclOrPat {
+pub enum ForHead {
     #[tag("VariableDeclaration")]
-    VarDecl(VarDecl),
+    VarDecl(Box<VarDecl>),
+
+    #[tag("UsingDeclaration")]
+    UsingDecl(Box<UsingDecl>),
 
     #[tag("*")]
-    Pat(Pat),
+    Pat(Box<Pat>),
 }
 
-impl Take for VarDeclOrPat {
+bridge_from!(ForHead, Box<VarDecl>, VarDecl);
+bridge_from!(ForHead, Box<Pat>, Pat);
+
+impl Take for ForHead {
     fn dummy() -> Self {
-        VarDeclOrPat::Pat(Take::dummy())
+        ForHead::Pat(Take::dummy())
     }
 }
 
@@ -353,11 +407,14 @@ impl Take for VarDeclOrPat {
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub enum VarDeclOrExpr {
     #[tag("VariableDeclaration")]
-    VarDecl(VarDecl),
+    VarDecl(Box<VarDecl>),
 
     #[tag("*")]
     Expr(Box<Expr>),
 }
+
+bridge_from!(VarDeclOrExpr, Box<VarDecl>, VarDecl);
+bridge_from!(VarDeclOrExpr, Box<Expr>, Expr);
 
 impl Take for VarDeclOrExpr {
     fn dummy() -> Self {

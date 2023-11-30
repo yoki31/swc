@@ -1,43 +1,42 @@
+#![deny(warnings)]
+
 use std::path::PathBuf;
-use swc_common::{input::SourceFileInput, Mark, SyntaxContext, DUMMY_SP};
+
+use swc_common::{Mark, SyntaxContext};
 use swc_ecma_ast::*;
-use swc_ecma_parser::{lexer::Lexer, Parser, Syntax, TsConfig};
-use swc_ecma_transforms_base::resolver::ts_resolver;
-use swc_ecma_visit::{FoldWith, Node, Visit, VisitWith};
+use swc_ecma_parser::{parse_file_as_module, Syntax, TsConfig};
+use swc_ecma_transforms_base::resolver;
+use swc_ecma_visit::{FoldWith, Visit, VisitWith};
 use testing::fixture;
 
-#[fixture("../swc_ecma_parser/tests/typescript/**/*.ts")]
-#[fixture("../swc_ecma_parser/tests/typescript/**/*.tsx")]
+#[fixture("../swc_ecma_parser/tests/**/*.ts")]
+#[fixture("../swc_ecma_parser/tests/**/*.tsx")]
 fn no_empty(input: PathBuf) {
     eprintln!("{}", input.display());
 
     testing::run_test2(false, |cm, _handler| {
         let fm = cm.load_file(&input).expect("failed to load file");
 
-        let lexer = Lexer::new(
+        let module = match parse_file_as_module(
+            &fm,
             Syntax::Typescript(TsConfig {
                 tsx: input.ends_with("tsx"),
                 decorators: true,
-                dynamic_import: true,
                 no_early_errors: true,
-                import_assertions: true,
                 ..Default::default()
             }),
             EsVersion::latest(),
-            SourceFileInput::from(&*fm),
             None,
-        );
-
-        let mut parser = Parser::new_from(lexer);
-        let module = match parser.parse_module() {
+            &mut vec![],
+        ) {
             Ok(v) => v,
             // We are not testing parser
             Err(..) => return Ok(()),
         };
 
-        let module = module.fold_with(&mut ts_resolver(Mark::fresh(Mark::root())));
+        let module = module.fold_with(&mut resolver(Mark::new(), Mark::new(), true));
 
-        module.visit_with(&Invalid { span: DUMMY_SP }, &mut AssertNoEmptyCtxt);
+        module.visit_with(&mut AssertNoEmptyCtxt);
 
         Ok(())
     })
@@ -47,87 +46,64 @@ fn no_empty(input: PathBuf) {
 struct AssertNoEmptyCtxt;
 
 impl Visit for AssertNoEmptyCtxt {
-    fn visit_class_prop(&mut self, n: &ClassProp, _: &dyn Node) {
-        if n.computed {
-            n.key.visit_with(n, self);
-        }
-
-        n.value.visit_with(n, self);
-        n.type_ann.visit_with(n, self);
-        n.decorators.visit_with(n, self);
-    }
-
-    fn visit_expr(&mut self, n: &Expr, _: &dyn Node) {
+    fn visit_expr(&mut self, n: &Expr) {
         n.visit_children_with(self);
 
-        match n {
-            Expr::Ident(i) => {
-                if i.span.ctxt == SyntaxContext::empty() {
-                    unreachable!("ts_resolver has a bug")
-                }
+        if let Expr::Ident(i) = n {
+            if i.span.ctxt == SyntaxContext::empty() {
+                unreachable!("ts_resolver has a bug")
             }
-            _ => {}
         }
     }
 
-    fn visit_member_expr(&mut self, n: &MemberExpr, _: &dyn Node) {
-        n.obj.visit_with(n, self);
-        if n.computed {
-            n.prop.visit_with(n, self);
-        }
-    }
-
-    fn visit_pat(&mut self, n: &Pat, _: &dyn Node) {
+    fn visit_pat(&mut self, n: &Pat) {
         n.visit_children_with(self);
 
-        match n {
-            Pat::Ident(i) => {
-                if i.id.span.ctxt == SyntaxContext::empty() {
-                    unreachable!("ts_resolver has a bug")
-                }
+        if let Pat::Ident(i) = n {
+            if i.id.span.ctxt == SyntaxContext::empty() {
+                unreachable!("ts_resolver has a bug")
             }
-            _ => {}
         }
     }
 
-    fn visit_ts_getter_signature(&mut self, n: &TsGetterSignature, _: &dyn Node) {
+    fn visit_ts_getter_signature(&mut self, n: &TsGetterSignature) {
         if n.computed {
-            n.key.visit_with(n, self);
+            n.key.visit_with(self);
         }
 
-        n.type_ann.visit_with(n, self);
+        n.type_ann.visit_with(self);
     }
 
-    fn visit_ts_method_signature(&mut self, n: &TsMethodSignature, _: &dyn Node) {
+    fn visit_ts_method_signature(&mut self, n: &TsMethodSignature) {
         if n.computed {
-            n.key.visit_with(n, self);
+            n.key.visit_with(self);
         }
 
-        n.params.visit_with(n, self);
-        n.type_ann.visit_with(n, self);
-        n.type_params.visit_with(n, self);
+        n.params.visit_with(self);
+        n.type_ann.visit_with(self);
+        n.type_params.visit_with(self);
     }
 
-    fn visit_ts_property_signature(&mut self, n: &TsPropertySignature, _: &dyn Node) {
+    fn visit_ts_property_signature(&mut self, n: &TsPropertySignature) {
         if n.computed {
-            n.key.visit_with(n, self);
+            n.key.visit_with(self);
         }
 
-        n.init.visit_with(n, self);
-        n.params.visit_with(n, self);
-        n.type_ann.visit_with(n, self);
-        n.type_params.visit_with(n, self);
+        n.init.visit_with(self);
+        n.params.visit_with(self);
+        n.type_ann.visit_with(self);
+        n.type_params.visit_with(self);
     }
 
-    fn visit_ts_setter_signature(&mut self, n: &TsSetterSignature, _: &dyn Node) {
+    fn visit_ts_setter_signature(&mut self, n: &TsSetterSignature) {
         if n.computed {
-            n.key.visit_with(n, self);
+            n.key.visit_with(self);
         }
 
-        n.param.visit_with(n, self);
+        n.param.visit_with(self);
     }
 
-    fn visit_ts_tuple_element(&mut self, n: &TsTupleElement, _: &dyn Node) {
-        n.ty.visit_with(n, self);
+    fn visit_ts_tuple_element(&mut self, n: &TsTupleElement) {
+        n.ty.visit_with(self);
     }
 }

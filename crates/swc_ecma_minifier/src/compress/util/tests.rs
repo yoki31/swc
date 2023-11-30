@@ -1,8 +1,13 @@
-use super::negate_cost;
-use swc_common::{input::SourceFileInput, util::take::Take, FileName};
+use swc_common::{util::take::Take, FileName, Mark, SyntaxContext};
 use swc_ecma_ast::*;
-use swc_ecma_parser::{lexer::Lexer, Parser};
-use swc_ecma_visit::{noop_visit_mut_type, VisitMut, VisitMutWith};
+use swc_ecma_parser::parse_file_as_expr;
+use swc_ecma_transforms_base::fixer::fixer;
+use swc_ecma_utils::ExprCtx;
+use swc_ecma_visit::{noop_visit_mut_type, FoldWith, VisitMut, VisitMutWith};
+use tracing::{info, warn};
+
+use super::negate_cost;
+use crate::{compress::util::negate, debug::dump};
 
 struct UnwrapParen;
 impl VisitMut for UnwrapParen {
@@ -11,11 +16,8 @@ impl VisitMut for UnwrapParen {
     fn visit_mut_expr(&mut self, e: &mut Expr) {
         e.visit_mut_children_with(self);
 
-        match e {
-            Expr::Paren(p) => {
-                *e = *p.expr.take();
-            }
-            _ => {}
+        if let Expr::Paren(p) = e {
+            *e = *p.expr.take();
         }
     }
 }
@@ -24,22 +26,49 @@ fn assert_negate_cost(s: &str, in_bool_ctx: bool, is_ret_val_ignored: bool, expe
     testing::run_test2(false, |cm, handler| {
         let fm = cm.new_source_file(FileName::Anon, s.to_string());
 
-        let lexer = Lexer::new(
+        let mut e = parse_file_as_expr(
+            &fm,
             Default::default(),
             swc_ecma_ast::EsVersion::latest(),
-            SourceFileInput::from(&*fm),
             None,
-        );
-
-        let mut parser = Parser::new_from(lexer);
-
-        let mut e = parser.parse_expr().map_err(|e| {
+            &mut vec![],
+        )
+        .map_err(|e| {
             e.into_diagnostic(&handler).emit();
         })?;
 
         e.visit_mut_with(&mut UnwrapParen);
 
-        let actual = negate_cost(&e, in_bool_ctx, is_ret_val_ignored).unwrap();
+        let input = {
+            let e = e.clone();
+            let e = e.fold_with(&mut fixer(None));
+            dump(&e, true)
+        };
+
+        let expr_ctx = ExprCtx {
+            unresolved_ctxt: SyntaxContext::empty().apply_mark(Mark::new()),
+            is_unresolved_ref_safe: false,
+        };
+
+        let real = {
+            let mut real = e.clone();
+            negate(&expr_ctx, &mut real, in_bool_ctx, is_ret_val_ignored);
+            let real = real.fold_with(&mut fixer(None));
+            dump(&real, true)
+        };
+
+        {
+            warn!(
+                "Actual: {} ;Input = {}, Real = {}",
+                real.len() as isize - input.len() as isize,
+                input.len(),
+                real.len()
+            );
+            info!("Real: {}", real);
+            info!("Input: {}", input);
+        }
+
+        let actual = negate_cost(&expr_ctx, &e, in_bool_ctx, is_ret_val_ignored);
 
         assert_eq!(
             actual, expected,
@@ -210,5 +239,31 @@ fn negate_cost_6_2() {
         true,
         false,
         -1,
+    );
+}
+
+#[test]
+#[ignore]
+fn next_31077_1() {
+    assert_negate_cost(
+        "((!a || !(a instanceof TextViewDesc1) || /\\n$/.test(a.node.text)) && ((result1.safari \
+         || result1.chrome) && a && 'false' == a.dom.contentEditable && this.addHackNode('IMG'), \
+         this.addHackNode('BR')))",
+        true,
+        true,
+        0,
+    );
+}
+
+#[test]
+#[ignore]
+fn next_31077_2() {
+    assert_negate_cost(
+        "!((!a || !(a instanceof TextViewDesc1) || /\\n$/.test(a.node.text)) || ((result1.safari \
+         || result1.chrome) && a && 'false' == a.dom.contentEditable && this.addHackNode('IMG'), \
+         this.addHackNode('BR')))",
+        true,
+        true,
+        -3,
     );
 }

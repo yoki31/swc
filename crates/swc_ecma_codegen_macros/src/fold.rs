@@ -103,7 +103,7 @@ impl Fold for InjectSelf {
 
             //TODO: Collect expect and give that list to unexpected
             "keyword" | "emit" | "punct" | "semi" | "formatting_semi" | "space"
-            | "formatting_space" | "operator" | "opt" | "opt_leading_space" => {
+            | "formatting_space" | "operator" | "opt" | "opt_leading_space" | "srcmap" => {
                 let tokens = if i.tokens.is_empty() {
                     quote_spanned!(span => #parser)
                 } else {
@@ -111,8 +111,7 @@ impl Fold for InjectSelf {
                     let args = args
                         .into_pairs()
                         .map(|el| el.map_item(|expr| self.fold_expr(expr)))
-                        .map(|arg| arg.dump())
-                        .flatten();
+                        .flat_map(|arg| arg.dump());
 
                     quote_spanned!(span => #parser,)
                         .into_iter()

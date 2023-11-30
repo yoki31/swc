@@ -1,4 +1,3 @@
-use crate::babelify::{extract_class_body_span, Babelify, Context};
 use copyless::BoxHelper;
 use serde_json::value::Value;
 use swc_ecma_ast::{
@@ -11,12 +10,14 @@ use swc_estree_ast::{
     StaticBlock as BabelStaticBlock,
 };
 
+use crate::babelify::{extract_class_body_span, Babelify, Context};
+
 impl Babelify for Class {
     type Output = ClassExpression;
 
     fn babelify(self, ctx: &Context) -> Self::Output {
         let body = ClassBody {
-            base: ctx.base(extract_class_body_span(&self, &ctx)),
+            base: ctx.base(extract_class_body_span(&self, ctx)),
             body: self.body.babelify(ctx),
         };
 
@@ -59,6 +60,7 @@ impl Babelify for ClassMember {
                 &self
             ),
             ClassMember::StaticBlock(s) => ClassBodyEl::StaticBlock(s.babelify(ctx)),
+            ClassMember::AutoAccessor(..) => todo!("auto accessor"),
         }
     }
 }
@@ -67,9 +69,11 @@ impl Babelify for ClassProp {
     type Output = ClassProperty;
 
     fn babelify(self, ctx: &Context) -> Self::Output {
+        let computed = Some(self.key.is_computed());
+
         ClassProperty {
             base: ctx.base(self.span),
-            key: self.key.babelify(ctx).into(),
+            key: self.key.babelify(ctx),
             value: self
                 .value
                 .map(|val| Box::alloc().init(val.babelify(ctx).into())),
@@ -78,7 +82,7 @@ impl Babelify for ClassProp {
                 .map(|ann| Box::alloc().init(ann.babelify(ctx).into())),
             is_static: Some(self.is_static),
             decorators: Some(self.decorators.babelify(ctx)),
-            computed: Some(self.computed),
+            computed,
             accessibility: self.accessibility.map(|access| access.babelify(ctx)),
             is_abstract: Some(self.is_abstract),
             optional: Some(self.is_optional),
@@ -114,7 +118,7 @@ impl Babelify for ClassMethod {
     fn babelify(self, ctx: &Context) -> Self::Output {
         BabelClassMethod {
             base: ctx.base(self.span),
-            key: self.key.babelify(ctx).into(),
+            key: self.key.babelify(ctx),
             kind: Some(self.kind.babelify(ctx)),
             is_static: Some(self.is_static),
             access: self.accessibility.map(|access| access.babelify(ctx)),
@@ -171,7 +175,7 @@ impl Babelify for Constructor {
         BabelClassMethod {
             base: ctx.base(self.span),
             kind: Some(ClassMethodKind::Constructor),
-            key: self.key.babelify(ctx).into(),
+            key: self.key.babelify(ctx),
             params: self.params.babelify(ctx),
             body: self.body.unwrap().babelify(ctx),
             access: self.accessibility.map(|access| access.babelify(ctx)),

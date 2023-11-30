@@ -1,21 +1,32 @@
-use super::Rc;
-use crate::Options;
-use serde_json;
+use crate::parse_swcrc;
 
 #[test]
 fn object() {
-    let _: Rc = serde_json::from_str(include_str!("object.json")).expect("failed to parse");
+    let rc = parse_swcrc(include_str!("object.json")).expect("failed to parse");
+    dbg!(&rc);
 }
 
 #[test]
 fn array() {
-    let _: Rc = serde_json::from_str(include_str!("array.json")).expect("failed to parse");
+    let rc = parse_swcrc(include_str!("array.json")).expect("failed to parse");
+
+    dbg!(&rc);
 }
 
 #[test]
-fn issue_1532() {
-    let res = serde_json::from_str::<Options>(include_str!("issue-1532.json"));
+fn issue_4390() {
+    let rc = parse_swcrc(include_str!("issue-4390.json")).expect("failed to parse");
+    dbg!(&rc);
+}
 
-    let err = res.expect_err("should fail");
-    assert!(err.to_string().contains("unknown variant `esnext`"));
+#[test]
+fn jsonc() {
+    let rc = parse_swcrc(include_str!("jsonc.json")).expect("failed to parse");
+    dbg!(&rc);
+}
+
+#[test]
+fn issue_6996() {
+    let rc = parse_swcrc(include_str!("issue-6996.json")).expect("failed to parse");
+    dbg!(&rc);
 }

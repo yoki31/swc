@@ -5,7 +5,7 @@ extern crate proc_macro;
 use pmutil::{smart_quote, Quote};
 use quote::quote_spanned;
 use swc_macros_common::prelude::*;
-use syn::{self, *};
+use syn::{self, parse::Parse, *};
 
 /// Creates `.as_str()` and then implements `Debug` and `Display` using it.
 ///
@@ -28,8 +28,8 @@ use syn::{self, *};
 ///# Output
 ///
 ///  - `pub fn as_str(&self) -> &'static str`
-///  - `impl serde::Serialize`
-///  - `impl serde::Deserialize`
+///  - `impl serde::Serialize` with `cfg(feature = "serde")`
+///  - `impl serde::Deserialize` with `cfg(feature = "serde")`
 ///  - `impl FromStr`
 ///  - `impl Debug`
 ///  - `impl Display`
@@ -62,7 +62,7 @@ use syn::{self, *};
 ///
 ///
 /// All formatting flags are handled correctly.
-#[proc_macro_derive(StringEnum)]
+#[proc_macro_derive(StringEnum, attributes(string_enum))]
 pub fn derive_string_enum(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse::<syn::DeriveInput>(input)
         .map(From::from)
@@ -75,8 +75,12 @@ pub fn derive_string_enum(input: proc_macro::TokenStream) -> proc_macro::TokenSt
     make_serialize(&input).to_tokens(&mut tts);
     make_deserialize(&input).to_tokens(&mut tts);
 
-    derive_fmt(&input, quote_spanned!(call_site() => std::fmt::Debug)).to_tokens(&mut tts);
-    derive_fmt(&input, quote_spanned!(call_site() => std::fmt::Display)).to_tokens(&mut tts);
+    derive_fmt(&input, quote_spanned!(Span::call_site() => std::fmt::Debug)).to_tokens(&mut tts);
+    derive_fmt(
+        &input,
+        quote_spanned!(Span::call_site() => std::fmt::Display),
+    )
+    .to_tokens(&mut tts);
 
     print("derive(StringEnum)", tts)
 }
@@ -104,7 +108,7 @@ fn derive_fmt(i: &DeriveInput, trait_path: TokenStream) -> ItemImpl {
 
 fn get_str_value(attrs: &[Attribute]) -> String {
     // TODO: Accept multiline string
-    let docs: Vec<_> = attrs.iter().map(doc_str).filter_map(|o| o).collect();
+    let docs: Vec<_> = attrs.iter().filter_map(doc_str).collect();
     for raw_line in docs {
         let line = raw_line.trim();
         if line.starts_with('`') && line.ends_with('`') {
@@ -119,18 +123,51 @@ fn get_str_value(attrs: &[Attribute]) -> String {
 }
 
 fn make_from_str(i: &DeriveInput) -> ItemImpl {
-    let arms = Binder::new_from(&i)
+    let arms = Binder::new_from(i)
         .variants()
         .into_iter()
         .map(|v| {
             // Qualified path of variant.
             let qual_name = v.qual_path();
 
-            let str_value = get_str_value(&v.attrs());
+            let str_value = get_str_value(v.attrs());
 
-            let pat: Pat = Quote::new(def_site::<Span>())
-                .quote_with(smart_quote!(Vars { str_value }, { str_value }))
-                .parse();
+            let mut pat: Pat = Pat::Lit(ExprLit {
+                attrs: Default::default(),
+                lit: Lit::Str(LitStr::new(&str_value, Span::call_site())),
+            });
+
+            // Handle `string_enum(alias("foo"))`
+            for attr in v
+                .attrs()
+                .iter()
+                .filter(|attr| is_attr_name(attr, "string_enum"))
+            {
+                if let Meta::List(meta) = &attr.meta {
+                    let mut cases = Punctuated::default();
+
+                    cases.push(pat);
+
+                    for item in parse2::<FieldAttr>(meta.tokens.clone())
+                        .expect("failed to parse `#[string_enum]`")
+                        .aliases
+                    {
+                        cases.push(Pat::Lit(PatLit {
+                            attrs: Default::default(),
+                            lit: Lit::Str(item.alias),
+                        }));
+                    }
+
+                    pat = Pat::Or(PatOr {
+                        attrs: Default::default(),
+                        leading_vert: None,
+                        cases,
+                    });
+                    continue;
+                }
+
+                panic!("Unsupported meta: {:#?}", attr.meta);
+            }
 
             let body = match *v.data() {
                 Fields::Unit => Box::new(
@@ -185,6 +222,7 @@ fn make_from_str(i: &DeriveInput) -> ItemImpl {
             {
                 impl ::std::str::FromStr for Type {
                     type Err = ();
+
                     fn from_str(s: &str) -> Result<Self, ()> {
                         body
                     }
@@ -196,14 +234,14 @@ fn make_from_str(i: &DeriveInput) -> ItemImpl {
 }
 
 fn make_as_str(i: &DeriveInput) -> ItemImpl {
-    let arms = Binder::new_from(&i)
+    let arms = Binder::new_from(i)
         .variants()
         .into_iter()
         .map(|v| {
             // Qualified path of variant.
             let qual_name = v.qual_path();
 
-            let str_value = get_str_value(&v.attrs());
+            let str_value = get_str_value(v.attrs());
 
             let body = Box::new(
                 Quote::new(def_site::<Span>())
@@ -217,11 +255,17 @@ fn make_as_str(i: &DeriveInput) -> ItemImpl {
                     path: qual_name,
                     attrs: Default::default(),
                 })),
-                _ => Box::new(
-                    Quote::new(def_site::<Span>())
-                        .quote_with(smart_quote!(Vars { qual_name }, { qual_name { .. } }))
-                        .parse(),
-                ),
+                _ => Box::new(Pat::Struct(PatStruct {
+                    attrs: Default::default(),
+                    qself: None,
+                    path: qual_name,
+                    brace_token: Default::default(),
+                    fields: Default::default(),
+                    rest: Some(PatRest {
+                        attrs: Default::default(),
+                        dot2_token: def_site(),
+                    }),
+                })),
             };
 
             Arm {
@@ -283,6 +327,7 @@ fn make_as_str_ident() -> Ident {
 fn make_serialize(i: &DeriveInput) -> ItemImpl {
     Quote::new_call_site()
         .quote_with(smart_quote!(Vars { Type: &i.ident }, {
+            #[cfg(feature = "serde")]
             impl ::serde::Serialize for Type {
                 fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
                 where
@@ -299,6 +344,7 @@ fn make_serialize(i: &DeriveInput) -> ItemImpl {
 fn make_deserialize(i: &DeriveInput) -> ItemImpl {
     Quote::new_call_site()
         .quote_with(smart_quote!(Vars { Type: &i.ident }, {
+            #[cfg(feature = "serde")]
             impl<'de> ::serde::Deserialize<'de> for Type {
                 fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
                 where
@@ -329,4 +375,39 @@ fn make_deserialize(i: &DeriveInput) -> ItemImpl {
         }))
         .parse::<ItemImpl>()
         .with_generics(i.generics.clone())
+}
+
+struct FieldAttr {
+    aliases: Punctuated<FieldAttrItem, Token![,]>,
+}
+
+impl Parse for FieldAttr {
+    fn parse(input: parse::ParseStream) -> Result<Self> {
+        Ok(Self {
+            aliases: input.call(Punctuated::parse_terminated)?,
+        })
+    }
+}
+
+/// `alias("text")` in `#[string_enum(alias("text"))]`.
+struct FieldAttrItem {
+    alias: LitStr,
+}
+
+impl Parse for FieldAttrItem {
+    fn parse(input: parse::ParseStream) -> Result<Self> {
+        let name: Ident = input.parse()?;
+
+        assert!(
+            name == "alias",
+            "#[derive(StringEnum) only supports `#[string_enum(alias(\"text\"))]]"
+        );
+
+        let alias;
+        parenthesized!(alias in input);
+
+        Ok(Self {
+            alias: alias.parse()?,
+        })
+    }
 }

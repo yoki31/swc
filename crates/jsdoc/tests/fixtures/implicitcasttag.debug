@@ -2,70 +2,70 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                19,
+                20,
             ),
             hi: BytePos(
-                19,
+                20,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    19,
+                    20,
                 ),
                 hi: BytePos(
-                    19,
+                    20,
                 ),
                 ctxt: #0,
             },
-            value: Atom('' type=static),
+            value: "",
         },
         tags: [
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        19,
+                        20,
                     ),
                     hi: BytePos(
-                        23,
+                        24,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            19,
+                            20,
                         ),
                         hi: BytePos(
-                            23,
+                            24,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('type' type=static),
+                    value: "type",
                 },
                 tag: Type(
                     TypeTag {
                         span: Span {
                             lo: BytePos(
-                                19,
+                                20,
                             ),
                             hi: BytePos(
-                                23,
+                                24,
                             ),
                             ctxt: #0,
                         },
                         name: Text {
                             span: Span {
                                 lo: BytePos(
-                                    19,
+                                    20,
                                 ),
                                 hi: BytePos(
-                                    27,
+                                    28,
                                 ),
                                 ctxt: #0,
                             },
-                            value: Atom('{string}' type=dynamic),
+                            value: "{string}",
                         },
                     },
                 ),
@@ -73,33 +73,33 @@
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        19,
+                        20,
                     ),
                     hi: BytePos(
-                        31,
+                        32,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            19,
+                            20,
                         ),
                         hi: BytePos(
-                            31,
+                            32,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('implicitCast' type=dynamic),
+                    value: "implicitCast",
                 },
                 tag: Unknown(
                     UnknownTag {
                         span: Span {
                             lo: BytePos(
-                                19,
+                                20,
                             ),
                             hi: BytePos(
-                                31,
+                                32,
                             ),
                             ctxt: #0,
                         },
@@ -113,7 +113,7 @@
                                 ),
                                 ctxt: #0,
                             },
-                            value: Atom('' type=static),
+                            value: "",
                         },
                     },
                 ),

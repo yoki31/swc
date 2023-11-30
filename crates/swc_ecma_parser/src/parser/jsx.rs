@@ -1,14 +1,16 @@
-use super::*;
 use either::Either;
 use swc_common::{Span, Spanned, SyntaxContext};
+
+use super::*;
 
 #[cfg(test)]
 mod tests;
 
-impl<'a, I: Tokens> Parser<I> {
+impl<I: Tokens> Parser<I> {
     /// Parse next token as JSX identifier
     pub(super) fn parse_jsx_ident(&mut self) -> PResult<Ident> {
         debug_assert!(self.input.syntax().jsx());
+        trace_cur!(self, parse_jsx_ident);
 
         let ctx = self.ctx();
         match *cur!(self, true)? {
@@ -27,6 +29,7 @@ impl<'a, I: Tokens> Parser<I> {
     /// Parse namespaced identifier.
     pub(super) fn parse_jsx_namespaced_name(&mut self) -> PResult<JSXAttrName> {
         debug_assert!(self.input.syntax().jsx());
+        trace_cur!(self, parse_jsx_namespaced_name);
 
         let ns = self.parse_jsx_ident()?;
         if !eat!(self, ':') {
@@ -44,8 +47,8 @@ impl<'a, I: Tokens> Parser<I> {
     /// identifier.
     pub(super) fn parse_jsx_element_name(&mut self) -> PResult<JSXElementName> {
         debug_assert!(self.input.syntax().jsx());
+        trace_cur!(self, parse_jsx_element_name);
 
-        let start_pos = cur_pos!(self);
         let mut node = match self.parse_jsx_namespaced_name()? {
             JSXAttrName::Ident(i) => JSXElementName::Ident(i),
             JSXAttrName::JSXNamespacedName(i) => JSXElementName::JSXNamespacedName(i),
@@ -70,6 +73,7 @@ impl<'a, I: Tokens> Parser<I> {
     /// TODO(kdy1): Change return type to JSXAttrValue
     pub(super) fn parse_jsx_attr_value(&mut self) -> PResult<JSXAttrValue> {
         debug_assert!(self.input.syntax().jsx());
+        trace_cur!(self, parse_jsx_attr_value);
 
         let start = cur_pos!(self);
 
@@ -131,7 +135,7 @@ impl<'a, I: Tokens> Parser<I> {
     }
 
     /// Parses JSX expression enclosed into curly brackets.
-    pub(super) fn parse_jsx_expr_container(&mut self, start: BytePos) -> PResult<JSXExprContainer> {
+    pub(super) fn parse_jsx_expr_container(&mut self, _: BytePos) -> PResult<JSXExprContainer> {
         debug_assert!(self.input.syntax().jsx());
 
         let start = cur_pos!(self);
@@ -139,6 +143,9 @@ impl<'a, I: Tokens> Parser<I> {
         let expr = if is!(self, '}') {
             self.parse_jsx_empty_expr().map(JSXExpr::JSXEmptyExpr)?
         } else {
+            if is!(self, "...") {
+                bump!(self);
+            }
             self.parse_expr().map(JSXExpr::Expr)?
         };
         expect!(self, '}');
@@ -153,6 +160,8 @@ impl<'a, I: Tokens> Parser<I> {
         debug_assert!(self.input.syntax().jsx());
         let start = cur_pos!(self);
 
+        let _tracing = debug_tracing!(self, "parse_jsx_attr");
+
         if eat!(self, '{') {
             let dot3_start = cur_pos!(self);
             expect!(self, "...");
@@ -164,7 +173,13 @@ impl<'a, I: Tokens> Parser<I> {
 
         let name = self.parse_jsx_namespaced_name()?;
         let value = if eat!(self, '=') {
-            self.parse_jsx_attr_value().map(Some)?
+            let ctx = Context {
+                in_cond_expr: false,
+                will_expect_colon_for_cond: false,
+                ..self.ctx()
+            };
+
+            self.with_ctx(ctx).parse_jsx_attr_value().map(Some)?
         } else {
             None
         };
@@ -190,7 +205,11 @@ impl<'a, I: Tokens> Parser<I> {
             }));
         }
 
-        let name = self.parse_jsx_element_name()?;
+        let ctx = Context {
+            should_not_lex_lt_or_gt_as_type: false,
+            ..self.ctx()
+        };
+        let name = self.with_ctx(ctx).parse_jsx_element_name()?;
         self.parse_jsx_opening_element_after_name(start, name)
             .map(Either::Right)
     }
@@ -210,7 +229,9 @@ impl<'a, I: Tokens> Parser<I> {
         };
 
         let mut attrs = vec![];
-        while let Ok(..) = cur!(self, false) {
+        while cur!(self, false).is_ok() {
+            trace_cur!(self, parse_jsx_opening__attrs_loop);
+
             if is!(self, '/') || is!(self, JSXTagEnd) {
                 break;
             }
@@ -272,10 +293,16 @@ impl<'a, I: Tokens> Parser<I> {
 
         let ctx = Context {
             in_forced_jsx_context: forced_jsx_context,
+            should_not_lex_lt_or_gt_as_type: false,
             ..self.ctx()
         };
         self.with_ctx(ctx).parse_with(|p| {
+            let _tracing = debug_tracing!(p, "parse_jsx_element");
+
             let opening_element = p.parse_jsx_opening_element_at(start_pos)?;
+
+            trace_cur!(p, parse_jsx_element__after_opening_element);
+
             let mut children = vec![];
             let mut closing_element = None;
 
@@ -327,7 +354,7 @@ impl<'a, I: Tokens> Parser<I> {
             let span = span!(p, start);
 
             Ok(match (opening_element, closing_element) {
-                (Either::Left(opening), Some(Either::Right(closing))) => {
+                (Either::Left(..), Some(Either::Right(closing))) => {
                     syntax_error!(p, closing.span(), SyntaxError::JSXExpectedClosingTagForLtGt);
                 }
                 (Either::Right(opening), Some(Either::Left(closing))) => {
@@ -382,26 +409,22 @@ impl<'a, I: Tokens> Parser<I> {
         trace_cur!(self, parse_jsx_element);
 
         debug_assert!(self.input.syntax().jsx());
-        debug_assert!({
-            match *cur!(self, true)? {
-                Token::JSXTagStart | tok!('<') => true,
-                _ => false,
-            }
-        });
+        debug_assert!({ matches!(*cur!(self, true)?, Token::JSXTagStart | tok!('<')) });
 
         let start_pos = cur_pos!(self);
 
-        self.parse_jsx_element_at(start_pos)
+        let ctx = Context {
+            in_cond_expr: false,
+            will_expect_colon_for_cond: false,
+            ..self.ctx()
+        };
+
+        self.with_ctx(ctx).parse_jsx_element_at(start_pos)
     }
 
     pub(super) fn parse_jsx_text(&mut self) -> PResult<JSXText> {
         debug_assert!(self.input.syntax().jsx());
-        debug_assert!({
-            match cur!(self, false) {
-                Ok(&Token::JSXText { .. }) => true,
-                _ => false,
-            }
-        });
+        debug_assert!(matches!(cur!(self, false), Ok(&Token::JSXText { .. })));
         let token = bump!(self);
         let span = self.input.prev_span();
         match token {
@@ -422,19 +445,13 @@ trait IsFragment {
 
 impl IsFragment for Either<JSXOpeningFragment, JSXOpeningElement> {
     fn is_fragment(&self) -> bool {
-        match *self {
-            Either::Left(..) => true,
-            _ => false,
-        }
+        matches!(*self, Either::Left(..))
     }
 }
 
 impl IsFragment for Either<JSXClosingFragment, JSXClosingElement> {
     fn is_fragment(&self) -> bool {
-        match *self {
-            Either::Left(..) => true,
-            _ => false,
-        }
+        matches!(*self, Either::Left(..))
     }
 }
 impl<T: IsFragment> IsFragment for Option<T> {

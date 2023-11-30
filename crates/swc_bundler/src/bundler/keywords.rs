@@ -1,9 +1,9 @@
-use crate::id::Id;
-use swc_atoms::js_word;
 use swc_common::{collections::AHashMap, util::take::Take};
 use swc_ecma_ast::*;
 use swc_ecma_utils::private_ident;
 use swc_ecma_visit::{noop_visit_mut_type, VisitMut, VisitMutWith};
+
+use crate::id::Id;
 
 #[derive(Default)]
 pub struct KeywordRenamer {
@@ -13,7 +13,7 @@ pub struct KeywordRenamer {
 impl KeywordRenamer {
     /// Returns `Some(new_ident)` if it should be renamed.
     fn renamed(&mut self, id: &Ident) -> Option<Ident> {
-        if id.sym == js_word!("import") {
+        if id.sym == "import" {
             return None;
         }
 
@@ -41,7 +41,7 @@ impl VisitMut for KeywordRenamer {
     }
 
     fn visit_mut_class_prop(&mut self, n: &mut ClassProp) {
-        if n.computed {
+        if n.key.is_computed() {
             n.key.visit_mut_with(self);
         }
 
@@ -50,20 +50,21 @@ impl VisitMut for KeywordRenamer {
     }
 
     fn visit_mut_export_named_specifier(&mut self, n: &mut ExportNamedSpecifier) {
-        if let Some(renamed) = self.renamed(&n.orig) {
-            n.orig = renamed;
+        let orig = match &n.orig {
+            ModuleExportName::Ident(ident) => ident,
+            ModuleExportName::Str(..) => unimplemented!("module string names unimplemented"),
+        };
+        if let Some(renamed) = self.renamed(orig) {
+            n.orig = ModuleExportName::Ident(renamed);
         }
     }
 
     fn visit_mut_expr(&mut self, n: &mut Expr) {
-        match n {
-            Expr::Ident(n) => {
-                if let Some(renamed) = self.renamed(&n) {
-                    *n = renamed;
-                }
-                return;
+        if let Expr::Ident(n) = n {
+            if let Some(renamed) = self.renamed(n) {
+                *n = renamed;
             }
-            _ => {}
+            return;
         }
 
         n.visit_mut_children_with(self);
@@ -76,64 +77,45 @@ impl VisitMut for KeywordRenamer {
         }
     }
 
-    fn visit_mut_member_expr(&mut self, n: &mut MemberExpr) {
-        n.obj.visit_mut_with(self);
-
-        if n.computed {
-            n.prop.visit_mut_with(self)
-        }
-    }
-
     fn visit_mut_object_pat_prop(&mut self, n: &mut ObjectPatProp) {
         n.visit_mut_children_with(self);
 
-        match n {
-            ObjectPatProp::Assign(pat) => {
-                if let Some(renamed) = self.renamed(&pat.key) {
-                    match &mut pat.value {
-                        Some(default) => {
-                            *n = ObjectPatProp::KeyValue(KeyValuePatProp {
-                                key: PropName::Ident(pat.key.take()),
-                                value: Box::new(Pat::Assign(AssignPat {
-                                    span: pat.span,
-                                    left: Box::new(Pat::Ident(renamed.into())),
-                                    right: default.take(),
-                                    type_ann: None,
-                                })),
-                            });
-                        }
-                        None => {
-                            *n = ObjectPatProp::KeyValue(KeyValuePatProp {
-                                key: PropName::Ident(pat.key.take()),
-                                value: Box::new(Pat::Ident(renamed.into())),
-                            })
-                        }
+        if let ObjectPatProp::Assign(pat) = n {
+            if let Some(renamed) = self.renamed(&pat.key) {
+                match &mut pat.value {
+                    Some(default) => {
+                        *n = ObjectPatProp::KeyValue(KeyValuePatProp {
+                            key: PropName::Ident(pat.key.take()),
+                            value: Box::new(Pat::Assign(AssignPat {
+                                span: pat.span,
+                                left: Box::new(Pat::Ident(renamed.into())),
+                                right: default.take(),
+                            })),
+                        });
+                    }
+                    None => {
+                        *n = ObjectPatProp::KeyValue(KeyValuePatProp {
+                            key: PropName::Ident(pat.key.take()),
+                            value: Box::new(Pat::Ident(renamed.into())),
+                        })
                     }
                 }
             }
-            _ => {}
         }
     }
 
     fn visit_mut_pat(&mut self, n: &mut Pat) {
-        match n {
-            Pat::Ident(n) => {
-                if let Some(renamed) = self.renamed(&n.id) {
-                    *n = renamed.into();
-                }
-
-                return;
+        if let Pat::Ident(n) = n {
+            if let Some(renamed) = self.renamed(&n.id) {
+                *n = renamed.into();
             }
-            _ => {}
+
+            return;
         }
         n.visit_mut_children_with(self);
     }
 
     fn visit_mut_private_prop(&mut self, n: &mut PrivateProp) {
-        if n.computed {
-            n.key.visit_mut_with(self);
-        }
-
         n.decorators.visit_mut_with(self);
         n.value.visit_mut_with(self);
     }
@@ -141,7 +123,7 @@ impl VisitMut for KeywordRenamer {
     fn visit_mut_prop(&mut self, n: &mut Prop) {
         match n {
             Prop::Shorthand(i) => {
-                if let Some(renamed) = self.renamed(&i) {
+                if let Some(renamed) = self.renamed(i) {
                     *n = Prop::KeyValue(KeyValueProp {
                         key: PropName::Ident(i.clone()),
                         value: Box::new(Expr::Ident(renamed)),

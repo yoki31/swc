@@ -1,18 +1,56 @@
-use crate::typescript::TsTypeAnn;
-use serde::{Deserialize, Serialize};
 use std::fmt::Display;
-use swc_atoms::{js_word, JsWord};
-use swc_common::{ast_node, util::take::Take, EqIgnoreSpan, Span, Spanned, DUMMY_SP};
 
-/// Identifer used as a pattern.
-#[derive(Spanned, Clone, Debug, PartialEq, Eq, Hash, EqIgnoreSpan, Serialize, Deserialize)]
+use phf::phf_set;
+use scoped_tls::scoped_thread_local;
+use swc_atoms::{js_word, Atom};
+use swc_common::{
+    ast_node, util::take::Take, BytePos, EqIgnoreSpan, Span, Spanned, SyntaxContext, DUMMY_SP,
+};
+use unicode_id::UnicodeID;
+
+use crate::typescript::TsTypeAnn;
+
+/// Identifier used as a pattern.
+#[derive(Spanned, Clone, Debug, PartialEq, Eq, Hash, EqIgnoreSpan)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
+#[cfg_attr(
+    any(feature = "rkyv-impl"),
+    derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)
+)]
+#[cfg_attr(
+    any(feature = "rkyv-impl"),
+    archive(bound(
+        serialize = "__S: rkyv::ser::Serializer + rkyv::ser::ScratchSpace + \
+                     rkyv::ser::SharedSerializeRegistry",
+        deserialize = "__D: rkyv::de::SharedDeserializeRegistry"
+    ))
+)]
+#[cfg_attr(feature = "rkyv-impl", archive(check_bytes))]
+#[cfg_attr(feature = "rkyv-impl", archive_attr(repr(C)))]
+#[cfg_attr(feature = "serde-impl", derive(serde::Serialize, serde::Deserialize))]
 pub struct BindingIdent {
     #[span]
-    #[serde(flatten)]
+    #[cfg_attr(feature = "serde-impl", serde(flatten))]
+    #[cfg_attr(feature = "__rkyv", omit_bounds)]
     pub id: Ident,
-    #[serde(default, rename = "typeAnnotation")]
-    pub type_ann: Option<TsTypeAnn>,
+    #[cfg_attr(feature = "serde-impl", serde(default, rename = "typeAnnotation"))]
+    #[cfg_attr(feature = "__rkyv", omit_bounds)]
+    pub type_ann: Option<Box<TsTypeAnn>>,
+}
+
+impl std::ops::Deref for BindingIdent {
+    type Target = Ident;
+
+    fn deref(&self) -> &Self::Target {
+        &self.id
+    }
+}
+
+impl BindingIdent {
+    /// See [`Ident::to_id`] for documentation.
+    pub fn to_id(&self) -> Id {
+        self.id.to_id()
+    }
 }
 
 impl From<Ident> for BindingIdent {
@@ -21,10 +59,12 @@ impl From<Ident> for BindingIdent {
     }
 }
 
+bridge_from!(BindingIdent, Ident, Id);
+
 /// A complete identifier with span.
 ///
 /// Identifier of swc consists of two parts. The first one is symbol, which is
-/// stored using an interned string, [JsWord] . The second
+/// stored using an interned string, [Atom] . The second
 /// one is [SyntaxContext][swc_common::SyntaxContext], which can be
 /// used to distinguish identifier with same symbol.
 ///
@@ -43,7 +83,7 @@ impl From<Ident> for BindingIdent {
 /// in rust, type like `Scope`  requires [Arc<Mutex<Scope>>] so swc uses
 /// different approach. Instead of passing scopes, swc annotates two variables
 /// with different tag, which is named
-/// [SyntaxContext][swc_common::SyntaxContext]. The notation for the syntax
+/// [SyntaxContext]. The notation for the syntax
 /// context is #n where n is a number. e.g. `foo#1`
 ///
 /// For the example above, after applying resolver pass, it becomes.
@@ -57,20 +97,189 @@ impl From<Ident> for BindingIdent {
 ///
 /// Thanks to the `tag` we attached, we can now distinguish them.
 ///
-/// ([JsWord], [SyntaxContext][swc_common::SyntaxContext])
+/// ([Atom], [SyntaxContext])
+///
+/// See [Id], which is a type alias for this.
 ///
 /// This can be used to store all variables in a module to single hash map.
+///
+/// # Comparison
+///
+/// While comparing two identifiers, you can use `.to_id()`.
+///
+/// # HashMap
+///
+/// There's a type named [Id] which only contains minimal information to
+/// distinguish identifiers.
 #[ast_node("Identifier")]
-#[derive(Eq, Hash, EqIgnoreSpan)]
+#[derive(Eq, Hash)]
 pub struct Ident {
     pub span: Span,
-    #[serde(rename = "value")]
-    pub sym: JsWord,
+    #[cfg_attr(feature = "serde-impl", serde(rename = "value"))]
+    pub sym: Atom,
 
     /// TypeScript only. Used in case of an optional parameter.
-    #[serde(default)]
+    #[cfg_attr(feature = "serde-impl", serde(default))]
     pub optional: bool,
 }
+
+scoped_thread_local!(static EQ_IGNORE_SPAN_IGNORE_CTXT: ());
+
+impl EqIgnoreSpan for Ident {
+    fn eq_ignore_span(&self, other: &Self) -> bool {
+        if self.sym != other.sym {
+            return false;
+        }
+
+        if self.span.ctxt == other.span.ctxt {
+            return true;
+        }
+
+        EQ_IGNORE_SPAN_IGNORE_CTXT.is_set()
+    }
+}
+
+impl From<Id> for Ident {
+    fn from(id: Id) -> Self {
+        Ident::new(id.0, DUMMY_SP.with_ctxt(id.1))
+    }
+}
+
+impl From<Ident> for Id {
+    fn from(i: Ident) -> Self {
+        (i.sym, i.span.ctxt)
+    }
+}
+
+#[repr(C, align(64))]
+struct Align64<T>(pub(crate) T);
+
+const T: bool = true;
+const F: bool = false;
+
+impl Ident {
+    /// In `op`, [EqIgnoreSpan] of [Ident] will ignore the syntax context.
+    pub fn within_ignored_ctxt<F, Ret>(op: F) -> Ret
+    where
+        F: FnOnce() -> Ret,
+    {
+        EQ_IGNORE_SPAN_IGNORE_CTXT.set(&(), op)
+    }
+
+    /// Preserve syntax context while drop `span.lo` and `span.hi`.
+    pub fn without_loc(mut self) -> Ident {
+        self.span.lo = BytePos::DUMMY;
+        self.span.hi = BytePos::DUMMY;
+        self
+    }
+
+    /// Creates `Id` using `Atom` and `SyntaxContext` of `self`.
+    pub fn to_id(&self) -> Id {
+        (self.sym.clone(), self.span.ctxt)
+    }
+
+    /// Returns true if `c` is a valid character for an identifier start.
+    #[inline]
+    pub fn is_valid_start(c: char) -> bool {
+        // This contains `$` (36) and `_` (95)
+        const ASCII_START: Align64<[bool; 128]> = Align64([
+            F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F,
+            F, F, F, F, F, F, F, T, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F,
+            F, F, F, F, F, F, F, T, T, T, T, T, T, T, T, T, T, T, T, T, T, T, T, T, T, T, T, T, T,
+            T, T, T, T, F, F, F, F, T, F, T, T, T, T, T, T, T, T, T, T, T, T, T, T, T, T, T, T, T,
+            T, T, T, T, T, T, T, F, F, F, F, F,
+        ]);
+
+        if c.is_ascii() {
+            return ASCII_START.0[c as usize];
+        }
+
+        UnicodeID::is_id_start(c)
+    }
+
+    /// Returns true if `c` is a valid character for an identifier part after
+    /// start.
+    #[inline]
+    pub fn is_valid_continue(c: char) -> bool {
+        // This contains `$` (36)
+        const ASCII_CONTINUE: Align64<[bool; 128]> = Align64([
+            F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F, F,
+            F, F, F, F, F, F, F, T, F, F, F, F, F, F, F, F, F, F, F, T, T, T, T, T, T, T, T, T, T,
+            F, F, F, F, F, F, F, T, T, T, T, T, T, T, T, T, T, T, T, T, T, T, T, T, T, T, T, T, T,
+            T, T, T, T, F, F, F, F, T, F, T, T, T, T, T, T, T, T, T, T, T, T, T, T, T, T, T, T, T,
+            T, T, T, T, T, T, T, F, F, F, F, F,
+        ]);
+
+        if c.is_ascii() {
+            return ASCII_CONTINUE.0[c as usize];
+        }
+
+        UnicodeID::is_id_continue(c) || c == '\u{200c}' || c == '\u{200d}'
+    }
+
+    /// Alternative for `toIdentifier` of babel.
+    ///
+    /// Returns [Ok] if it's a valid identifier and [Err] if it's not valid.
+    /// The returned [Err] contains the valid symbol.
+    pub fn verify_symbol(s: &str) -> Result<(), String> {
+        fn is_reserved_symbol(s: &str) -> bool {
+            s.is_reserved() || s.is_reserved_in_strict_mode(true) || s.is_reserved_in_strict_bind()
+        }
+
+        if is_reserved_symbol(s) {
+            let mut buf = String::with_capacity(s.len() + 1);
+            buf.push('_');
+            buf.push_str(s);
+            return Err(buf);
+        }
+
+        {
+            let mut chars = s.chars();
+
+            if let Some(first) = chars.next() {
+                if Self::is_valid_start(first) && chars.all(Self::is_valid_continue) {
+                    return Ok(());
+                }
+            }
+        }
+
+        let mut buf = String::with_capacity(s.len() + 2);
+        let mut has_start = false;
+
+        for c in s.chars() {
+            if !has_start && Self::is_valid_start(c) {
+                has_start = true;
+                buf.push(c);
+                continue;
+            }
+
+            if Self::is_valid_continue(c) {
+                buf.push(c);
+            }
+        }
+
+        if buf.is_empty() {
+            buf.push('_');
+        }
+
+        if is_reserved_symbol(&buf) {
+            let mut new_buf = String::with_capacity(buf.len() + 1);
+            new_buf.push('_');
+            new_buf.push_str(&buf);
+            buf = new_buf;
+        }
+
+        Err(buf)
+    }
+
+    #[inline]
+    pub fn is_dummy(&self) -> bool {
+        self.sym == js_word!("") && self.span.is_dummy()
+    }
+}
+
+/// See [Ident] for documentation.
+pub type Id = (Atom, SyntaxContext);
 
 impl Take for Ident {
     fn dummy() -> Self {
@@ -85,6 +294,7 @@ impl Display for Ident {
 }
 
 #[cfg(feature = "arbitrary")]
+#[cfg_attr(docsrs, doc(cfg(feature = "arbitrary")))]
 impl<'a> arbitrary::Arbitrary<'a> for Ident {
     fn arbitrary(u: &mut arbitrary::Unstructured<'_>) -> arbitrary::Result<Self> {
         let span = u.arbitrary()?;
@@ -119,7 +329,7 @@ impl AsRef<str> for Ident {
 }
 
 impl Ident {
-    pub const fn new(sym: JsWord, span: Span) -> Self {
+    pub const fn new(sym: Atom, span: Span) -> Self {
         Ident {
             span,
             sym,
@@ -128,66 +338,87 @@ impl Ident {
     }
 }
 
+static RESERVED: phf::Set<&str> = phf_set!(
+    "break",
+    "case",
+    "catch",
+    "class",
+    "const",
+    "continue",
+    "debugger",
+    "default",
+    "delete",
+    "do",
+    "else",
+    "enum",
+    "export",
+    "extends",
+    "false",
+    "finally",
+    "for",
+    "function",
+    "if",
+    "import",
+    "in",
+    "instanceof",
+    "new",
+    "null",
+    "package",
+    "return",
+    "super",
+    "switch",
+    "this",
+    "throw",
+    "true",
+    "try",
+    "typeof",
+    "var",
+    "void",
+    "while",
+    "with",
+);
+
+static RESSERVED_IN_STRICT_MODE: phf::Set<&str> = phf_set!(
+    "implements",
+    "interface",
+    "let",
+    "package",
+    "private",
+    "protected",
+    "public",
+    "static",
+    "yield",
+);
+
+static RESERVED_IN_ES3: phf::Set<&str> = phf_set!(
+    "abstract",
+    "boolean",
+    "byte",
+    "char",
+    "double",
+    "final",
+    "float",
+    "goto",
+    "int",
+    "long",
+    "native",
+    "short",
+    "synchronized",
+    "throws",
+    "transient",
+    "volatile",
+);
+
 pub trait IdentExt: AsRef<str> {
     fn is_reserved(&self) -> bool {
-        [
-            "break",
-            "case",
-            "catch",
-            "class",
-            "const",
-            "continue",
-            "debugger",
-            "default",
-            "delete",
-            "do",
-            "else",
-            "enum",
-            "export",
-            "extends",
-            "false",
-            "finally",
-            "for",
-            "function",
-            "if",
-            "import",
-            "in",
-            "instanceof",
-            "new",
-            "null",
-            "package",
-            "return",
-            "super",
-            "switch",
-            "this",
-            "throw",
-            "true",
-            "try",
-            "typeof",
-            "var",
-            "void",
-            "while",
-            "with",
-        ]
-        .contains(&self.as_ref())
+        RESERVED.contains(self.as_ref())
     }
 
     fn is_reserved_in_strict_mode(&self, is_module: bool) -> bool {
         if is_module && self.as_ref() == "await" {
             return true;
         }
-        [
-            "implements",
-            "interface",
-            "let",
-            "package",
-            "private",
-            "protected",
-            "public",
-            "static",
-            "yield",
-        ]
-        .contains(&self.as_ref())
+        RESSERVED_IN_STRICT_MODE.contains(self.as_ref())
     }
 
     fn is_reserved_in_strict_bind(&self) -> bool {
@@ -195,29 +426,11 @@ pub trait IdentExt: AsRef<str> {
     }
 
     fn is_reserved_in_es3(&self) -> bool {
-        [
-            "abstract",
-            "boolean",
-            "byte",
-            "char",
-            "double",
-            "final",
-            "float",
-            "goto",
-            "int",
-            "long",
-            "native",
-            "short",
-            "synchronized",
-            "throws",
-            "transient",
-            "volatile",
-        ]
-        .contains(&self.as_ref())
+        RESERVED_IN_ES3.contains(self.as_ref())
     }
 }
 
-impl IdentExt for JsWord {}
+impl IdentExt for Atom {}
 impl IdentExt for Ident {}
 impl IdentExt for &'_ str {}
 impl IdentExt for String {}

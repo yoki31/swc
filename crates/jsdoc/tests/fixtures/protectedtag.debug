@@ -2,56 +2,56 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                0,
+                1,
             ),
             hi: BytePos(
-                0,
+                1,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    0,
+                    1,
                 ),
                 hi: BytePos(
-                    0,
+                    1,
                 ),
                 ctxt: #0,
             },
-            value: Atom('' type=static),
+            value: "",
         },
         tags: [
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        0,
+                        1,
                     ),
                     hi: BytePos(
-                        6,
+                        7,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            0,
+                            1,
                         ),
                         hi: BytePos(
-                            6,
+                            7,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('module' type=static),
+                    value: "module",
                 },
                 tag: Module(
                     ModuleTag {
                         span: Span {
                             lo: BytePos(
-                                0,
+                                1,
                             ),
                             hi: BytePos(
-                                6,
+                                7,
                             ),
                             ctxt: #0,
                         },
@@ -65,19 +65,19 @@
                                 ),
                                 ctxt: #0,
                             },
-                            value: Atom('' type=static),
+                            value: "",
                         },
                         ty: Text {
                             span: Span {
                                 lo: BytePos(
-                                    0,
+                                    1,
                                 ),
                                 hi: BytePos(
-                                    3,
+                                    4,
                                 ),
                                 ctxt: #0,
                             },
-                            value: Atom('uid' type=inline),
+                            value: "uid",
                         },
                     },
                 ),
@@ -90,53 +90,53 @@
                 0,
             ),
             hi: BytePos(
-                20,
+                21,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    20,
+                    21,
                 ),
                 hi: BytePos(
-                    20,
+                    21,
                 ),
                 ctxt: #0,
             },
-            value: Atom('' type=static),
+            value: "",
         },
         tags: [
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        20,
+                        21,
                     ),
                     hi: BytePos(
-                        29,
+                        30,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            20,
+                            21,
                         ),
                         hi: BytePos(
-                            29,
+                            30,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('protected' type=static),
+                    value: "protected",
                 },
                 tag: Protected(
                     ProtectedTag {
                         span: Span {
                             lo: BytePos(
-                                20,
+                                21,
                             ),
                             hi: BytePos(
-                                29,
+                                30,
                             ),
                             ctxt: #0,
                         },
@@ -152,53 +152,53 @@
                 0,
             ),
             hi: BytePos(
-                59,
+                60,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    59,
+                    60,
                 ),
                 hi: BytePos(
-                    59,
+                    60,
                 ),
                 ctxt: #0,
             },
-            value: Atom('' type=static),
+            value: "",
         },
         tags: [
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        59,
+                        60,
                     ),
                     hi: BytePos(
-                        68,
+                        69,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            59,
+                            60,
                         ),
                         hi: BytePos(
-                            68,
+                            69,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('protected' type=static),
+                    value: "protected",
                 },
                 tag: Protected(
                     ProtectedTag {
                         span: Span {
                             lo: BytePos(
-                                59,
+                                60,
                             ),
                             hi: BytePos(
-                                68,
+                                69,
                             ),
                             ctxt: #0,
                         },
@@ -211,72 +211,72 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                100,
+                101,
             ),
             hi: BytePos(
-                100,
+                101,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    100,
+                    101,
                 ),
                 hi: BytePos(
-                    112,
+                    113,
                 ),
                 ctxt: #0,
             },
-            value: Atom('Root object.' type=dynamic),
+            value: "Root object.",
         },
         tags: [],
     },
     JsDoc {
         span: Span {
             lo: BytePos(
-                137,
+                138,
             ),
             hi: BytePos(
-                137,
+                138,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    137,
+                    138,
                 ),
                 hi: BytePos(
-                    156,
+                    157,
                 ),
                 ctxt: #0,
             },
-            value: Atom('Obtain a unique ID.' type=dynamic),
+            value: "Obtain a unique ID.",
         },
         tags: [],
     },
     JsDoc {
         span: Span {
             lo: BytePos(
-                230,
+                231,
             ),
             hi: BytePos(
-                230,
+                231,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    230,
+                    231,
                 ),
                 hi: BytePos(
-                    267,
+                    268,
                 ),
                 ctxt: #0,
             },
-            value: Atom('Associate an object with a unique ID.' type=dynamic),
+            value: "Associate an object with a unique ID.",
         },
         tags: [],
     },

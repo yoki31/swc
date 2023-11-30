@@ -8,9 +8,10 @@ use std::{
     path::Path,
     sync::{Arc, RwLock},
 };
+
 use swc_ecma_ast::*;
 use swc_ecma_codegen::{self, Emitter};
-use swc_ecma_parser::{lexer::Lexer, Parser, StringInput, Syntax};
+use swc_ecma_parser::{lexer::Lexer, Parser, Syntax};
 use swc_ecma_transforms_base::fixer::fixer;
 use swc_ecma_utils::DropSpan;
 use swc_ecma_visit::{Fold, FoldWith, VisitMutWith};
@@ -91,7 +92,7 @@ const IGNORED_PASS_TESTS: &[&str] = &[
     "c06df922631aeabc.js",
 ];
 
-fn add_test<F: FnOnce() + Send + 'static>(
+fn add_test<F: FnOnce() -> Result<(), String> + Send + 'static>(
     tests: &mut Vec<TestDescAndFn>,
     name: String,
     ignore: bool,
@@ -103,9 +104,14 @@ fn add_test<F: FnOnce() + Send + 'static>(
             name: TestName::DynTestName(name),
             ignore,
             should_panic: No,
-            allow_fail: false,
             compile_fail: false,
             no_run: false,
+            ignore_message: Default::default(),
+            source_file: Default::default(),
+            start_line: 0,
+            start_col: 0,
+            end_line: 0,
+            end_col: 0,
         },
         testfn: DynTestFn(Box::new(f)),
     });
@@ -164,12 +170,12 @@ fn identity_tests(tests: &mut Vec<TestDescAndFn>) -> Result<(), io::Error> {
                     let mut wr = Buf(Arc::new(RwLock::new(vec![])));
                     let mut wr2 = Buf(Arc::new(RwLock::new(vec![])));
 
-                    let mut parser: Parser<Lexer<StringInput>> =
+                    let mut parser: Parser<Lexer> =
                         Parser::new(Syntax::default(), (&*src).into(), None);
 
                     {
                         let mut emitter = Emitter {
-                            cfg: swc_ecma_codegen::Config { minify: false },
+                            cfg: swc_ecma_codegen::Config::default(),
                             cm: cm.clone(),
                             wr: Box::new(swc_ecma_codegen::text_writer::JsWriter::new(
                                 cm.clone(),
@@ -180,7 +186,7 @@ fn identity_tests(tests: &mut Vec<TestDescAndFn>) -> Result<(), io::Error> {
                             comments: None,
                         };
                         let mut expected_emitter = Emitter {
-                            cfg: swc_ecma_codegen::Config { minify: false },
+                            cfg: swc_ecma_codegen::Config::default(),
                             cm: cm.clone(),
                             wr: Box::new(swc_ecma_codegen::text_writer::JsWriter::new(
                                 cm, "\n", &mut wr2, None,
@@ -190,7 +196,7 @@ fn identity_tests(tests: &mut Vec<TestDescAndFn>) -> Result<(), io::Error> {
 
                         // Parse source
 
-                        let mut e_parser: Parser<Lexer<StringInput>> =
+                        let mut e_parser: Parser<Lexer> =
                             Parser::new(Syntax::default(), (&*expected).into(), None);
 
                         if module {
@@ -219,14 +225,14 @@ fn identity_tests(tests: &mut Vec<TestDescAndFn>) -> Result<(), io::Error> {
                                 .map(normalize)
                                 .map(|p| p.fold_with(&mut fixer(None)))
                                 .map_err(|e| {
-                                    e.into_diagnostic(&handler).emit();
+                                    e.into_diagnostic(handler).emit();
                                 })?;
                             let script2 = e_parser
                                 .parse_script()
                                 .map(normalize)
                                 .map(|p| p.fold_with(&mut fixer(None)))
                                 .map_err(|e| {
-                                    e.into_diagnostic(&handler).emit();
+                                    e.into_diagnostic(handler).emit();
                                 })?;
 
                             if script == script2 {
@@ -241,8 +247,8 @@ fn identity_tests(tests: &mut Vec<TestDescAndFn>) -> Result<(), io::Error> {
                         e.into_diagnostic(handler).emit();
                     }
 
-                    let output = String::from_utf8_lossy(&*wr.0.read().unwrap()).to_string();
-                    let expected = String::from_utf8_lossy(&*wr2.0.read().unwrap()).to_string();
+                    let output = String::from_utf8_lossy(&wr.0.read().unwrap()).to_string();
+                    let expected = String::from_utf8_lossy(&wr2.0.read().unwrap()).to_string();
                     if output == expected {
                         return Ok(());
                     }
@@ -251,6 +257,8 @@ fn identity_tests(tests: &mut Vec<TestDescAndFn>) -> Result<(), io::Error> {
                     Err(())
                 })
                 .expect("failed to run test");
+
+                Ok(())
             }
         });
     }
@@ -296,12 +304,9 @@ impl Fold for Normalizer {
 
         match name {
             PropName::Ident(i) => PropName::Str(Str {
+                raw: None,
                 value: i.sym,
                 span: i.span,
-                has_escape: false,
-                kind: StrKind::Normal {
-                    contains_quote: false,
-                },
             }),
             PropName::Num(n) => {
                 let s = if n.value.is_infinite() {
@@ -314,10 +319,9 @@ impl Fold for Normalizer {
                     format!("{}", n.value)
                 };
                 PropName::Str(Str {
+                    raw: None,
                     value: s.into(),
                     span: n.span,
-                    has_escape: false,
-                    kind: Default::default(),
                 })
             }
             _ => name,
@@ -333,6 +337,22 @@ impl Fold for Normalizer {
                 _ => Stmt::Expr(ExprStmt { span, expr }),
             },
             _ => stmt,
+        }
+    }
+
+    fn fold_str(&mut self, s: Str) -> Str {
+        Str {
+            span: s.span,
+            value: s.value,
+            raw: None,
+        }
+    }
+
+    fn fold_number(&mut self, n: Number) -> Number {
+        Number {
+            span: n.span,
+            value: n.value,
+            raw: None,
         }
     }
 }

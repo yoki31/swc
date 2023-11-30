@@ -2,58 +2,56 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                15,
+                16,
             ),
             hi: BytePos(
-                15,
+                16,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    15,
+                    16,
                 ),
                 hi: BytePos(
-                    58,
+                    59,
                 ),
                 ctxt: #0,
             },
-            value: Atom('Set the list of users who are admins.
-             *
-             *' type=dynamic),
+            value: "Set the list of users who are admins.\n *\n *",
         },
         tags: [
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        15,
+                        16,
                     ),
                     hi: BytePos(
-                        20,
+                        21,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            15,
+                            16,
                         ),
                         hi: BytePos(
-                            20,
+                            21,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('param' type=inline),
+                    value: "param",
                 },
                 tag: Parameter(
                     ParameterTag {
                         span: Span {
                             lo: BytePos(
-                                15,
+                                16,
                             ),
                             hi: BytePos(
-                                20,
+                                21,
                             ),
                             ctxt: #0,
                         },
@@ -62,27 +60,27 @@
                             Text {
                                 span: Span {
                                     lo: BytePos(
-                                        15,
+                                        16,
                                     ),
                                     hi: BytePos(
-                                        21,
+                                        22,
                                     ),
                                     ctxt: #0,
                                 },
-                                value: Atom('{User}' type=inline),
+                                value: "{User}",
                             },
                         ),
                         desc: Text {
                             span: Span {
                                 lo: BytePos(
-                                    15,
+                                    16,
                                 ),
                                 hi: BytePos(
-                                    63,
+                                    64,
                                 ),
                                 ctxt: #0,
                             },
-                            value: Atom('users - The users who will receive admin rights.' type=dynamic),
+                            value: "users - The users who will receive admin rights.",
                         },
                     },
                 ),
@@ -92,58 +90,56 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                166,
+                167,
             ),
             hi: BytePos(
-                166,
+                167,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    166,
+                    167,
                 ),
                 hi: BytePos(
-                    218,
+                    219,
                 ),
                 ctxt: #0,
             },
-            value: Atom('Set the list of users who can access a widget.
-             *
-             *' type=dynamic),
+            value: "Set the list of users who can access a widget.\n *\n *",
         },
         tags: [
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        166,
+                        167,
                     ),
                     hi: BytePos(
-                        171,
+                        172,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            166,
+                            167,
                         ),
                         hi: BytePos(
-                            171,
+                            172,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('param' type=inline),
+                    value: "param",
                 },
                 tag: Parameter(
                     ParameterTag {
                         span: Span {
                             lo: BytePos(
-                                166,
+                                167,
                             ),
                             hi: BytePos(
-                                171,
+                                172,
                             ),
                             ctxt: #0,
                         },
@@ -152,27 +148,27 @@
                             Text {
                                 span: Span {
                                     lo: BytePos(
-                                        166,
+                                        167,
                                     ),
                                     hi: BytePos(
-                                        174,
+                                        175,
                                     ),
                                     ctxt: #0,
                                 },
-                                value: Atom('{Widget}' type=dynamic),
+                                value: "{Widget}",
                             },
                         ),
                         desc: Text {
                             span: Span {
                                 lo: BytePos(
-                                    166,
+                                    167,
                                 ),
                                 hi: BytePos(
-                                    186,
+                                    187,
                                 ),
                                 ctxt: #0,
                             },
-                            value: Atom('widget - The widget.' type=dynamic),
+                            value: "widget - The widget.",
                         },
                     },
                 ),
@@ -180,33 +176,33 @@
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        166,
+                        167,
                     ),
                     hi: BytePos(
-                        171,
+                        172,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            166,
+                            167,
                         ),
                         hi: BytePos(
-                            171,
+                            172,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('param' type=inline),
+                    value: "param",
                 },
                 tag: Parameter(
                     ParameterTag {
                         span: Span {
                             lo: BytePos(
-                                166,
+                                167,
                             ),
                             hi: BytePos(
-                                171,
+                                172,
                             ),
                             ctxt: #0,
                         },
@@ -215,27 +211,27 @@
                             Text {
                                 span: Span {
                                     lo: BytePos(
-                                        166,
+                                        167,
                                     ),
                                     hi: BytePos(
-                                        172,
+                                        173,
                                     ),
                                     ctxt: #0,
                                 },
-                                value: Atom('{User}' type=inline),
+                                value: "{User}",
                             },
                         ),
                         desc: Text {
                             span: Span {
                                 lo: BytePos(
-                                    166,
+                                    167,
                                 ),
                                 hi: BytePos(
-                                    229,
+                                    230,
                                 ),
                                 ctxt: #0,
                             },
-                            value: Atom('users - The users who will receive rights to access the widget.' type=dynamic),
+                            value: "users - The users who will receive rights to access the widget.",
                         },
                     },
                 ),
@@ -245,58 +241,56 @@
     JsDoc {
         span: Span {
             lo: BytePos(
-                395,
+                396,
             ),
             hi: BytePos(
-                395,
+                396,
             ),
             ctxt: #0,
         },
         description: Text {
             span: Span {
                 lo: BytePos(
-                    395,
+                    396,
                 ),
                 hi: BytePos(
-                    440,
+                    441,
                 ),
                 ctxt: #0,
             },
-            value: Atom('Set the list of users who are managers.
-             *
-             *' type=dynamic),
+            value: "Set the list of users who are managers.\n *\n *",
         },
         tags: [
             TagItem {
                 span: Span {
                     lo: BytePos(
-                        395,
+                        396,
                     ),
                     hi: BytePos(
-                        400,
+                        401,
                     ),
                     ctxt: #0,
                 },
                 tag_name: Text {
                     span: Span {
                         lo: BytePos(
-                            395,
+                            396,
                         ),
                         hi: BytePos(
-                            400,
+                            401,
                         ),
                         ctxt: #0,
                     },
-                    value: Atom('param' type=inline),
+                    value: "param",
                 },
                 tag: Parameter(
                     ParameterTag {
                         span: Span {
                             lo: BytePos(
-                                395,
+                                396,
                             ),
                             hi: BytePos(
-                                400,
+                                401,
                             ),
                             ctxt: #0,
                         },
@@ -305,27 +299,27 @@
                             Text {
                                 span: Span {
                                     lo: BytePos(
-                                        395,
+                                        396,
                                     ),
                                     hi: BytePos(
-                                        401,
+                                        402,
                                     ),
                                     ctxt: #0,
                                 },
-                                value: Atom('{User}' type=inline),
+                                value: "{User}",
                             },
                         ),
                         desc: Text {
                             span: Span {
                                 lo: BytePos(
-                                    395,
+                                    396,
                                 ),
                                 hi: BytePos(
-                                    430,
+                                    431,
                                 ),
                                 ctxt: #0,
                             },
-                            value: Atom('users - The users who are managers.' type=dynamic),
+                            value: "users - The users who are managers.",
                         },
                     },
                 ),
